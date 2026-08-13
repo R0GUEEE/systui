@@ -570,18 +570,53 @@ host_debarch() {
         aarch64)       echo arm64 ;;
         armv7l|armv6l) echo armhf ;;
         i686|i386)     echo i386 ;;
+        riscv64)       echo riscv64 ;;
         *)             uname -m ;;
     esac
 }
 
 qemu_bin_for() { # deb arch -> qemu-user-static binary name
     case "$1" in
-        amd64) echo qemu-x86_64-static ;;
-        arm64) echo qemu-aarch64-static ;;
-        armhf) echo qemu-arm-static ;;
-        i386)  echo qemu-i386-static ;;
-        *)     echo "" ;;
+        amd64)   echo qemu-x86_64-static ;;
+        arm64)   echo qemu-aarch64-static ;;
+        armhf)   echo qemu-arm-static ;;
+        i386)    echo qemu-i386-static ;;
+        riscv64) echo qemu-riscv64-static ;;
+        *)       echo "" ;;
     esac
+}
+
+# Which target architectures a distribution actually publishes.
+#
+# riscv64 is deliberately NOT offered everywhere: it is a recent addition and
+# only some suites carry it (see rootfs_arch_release_hint). Offering it for a
+# distro that has no riscv64 archive produces a rootfs that bootstraps into a
+# 404 rather than a clear refusal.
+rootfs_distro_arches() { # <distro>
+    case "$1" in
+        debian|devuan|ubuntu) printf '%s\n' amd64 arm64 armhf i386 riscv64 ;;
+        alpine)               printf '%s\n' amd64 arm64 armhf i386 riscv64 ;;
+        *)                    printf '%s\n' amd64 arm64 armhf i386 ;;
+    esac
+}
+
+# Human-readable note about which suites carry a given arch, shown when the
+# selected combination is not available. Kept as a hint rather than a hard
+# table: the authoritative check is rootfs_probe_arch_release below, which asks
+# the mirror. This text only explains the refusal.
+rootfs_arch_release_hint() { # <distro> <arch>
+    [ "$2" = riscv64 ] || return 0
+    case "$1" in
+        debian) printf 'Debian publishes riscv64 from trixie (13) onward.' ;;
+        devuan) printf 'Devuan publishes riscv64 from excalibur (6) onward.' ;;
+        ubuntu) printf 'Ubuntu publishes riscv64 on ports.ubuntu.com.' ;;
+        alpine) printf 'Alpine publishes riscv64 from v3.20 onward.' ;;
+    esac
+}
+
+# Ubuntu serves everything except amd64/i386 from the Ports archive.
+rootfs_ubuntu_is_ports_arch() { # <arch>
+    case "$1" in arm64|armhf|riscv64) return 0 ;; *) return 1 ;; esac
 }
 
 # Returns 0 if <target debarch> needs qemu on this host.
@@ -894,7 +929,7 @@ rootfs_release_candidates() { # <distro> <arch>
         debian) url="http://deb.debian.org/debian/dists/" ;;
         devuan) url="http://deb.devuan.org/merged/dists/" ;;
         ubuntu)
-            case "$arch" in arm64|armhf) url="http://ports.ubuntu.com/ubuntu-ports/dists/" ;; *) url="http://archive.ubuntu.com/ubuntu/dists/" ;; esac ;;
+            if rootfs_ubuntu_is_ports_arch "$arch"; then url="http://ports.ubuntu.com/ubuntu-ports/dists/"; else url="http://archive.ubuntu.com/ubuntu/dists/"; fi ;;
         alpine) url="https://dl-cdn.alpinelinux.org/alpine/" ;;
         fedora) url="https://download.fedoraproject.org/pub/fedora/linux/releases/" ;;
         kali) printf '%s\n' kali-rolling kali-last-snapshot; return 0 ;;
@@ -2595,24 +2630,56 @@ rootfs_builder_impl() {
         arch="amd64"
         tui_msg "Architecture" "Arch Linux official repos are x86_64 only.\n(For ARM, see Arch Linux ARM — not covered here.)"
     else
+        local -a arch_opts=() a
+        local host_arch; host_arch=$(host_debarch)
+        while IFS= read -r a; do
+            [ -n "$a" ] || continue
+            local label on=off
+            case "$a" in
+                amd64)   label="x86_64 / amd64" ;;
+                arm64)   label="aarch64 / arm64" ;;
+                armhf)   label="ARM 32-bit hard-float" ;;
+                i386)    label="x86 32-bit" ;;
+                riscv64) label="RISC-V 64-bit (rv64gc)" ;;
+                *)       label="$a" ;;
+            esac
+            # Default to the host's own architecture when the distro offers it:
+            # a same-arch build needs no emulation for its chroot steps.
+            [ "$a" = "$host_arch" ] && on=on
+            arch_opts+=("$a" "$label" "$on")
+        done < <(rootfs_distro_arches "$distro")
+        # Fall back to amd64-on if the host arch isn't among the options.
+        case " ${arch_opts[*]} " in *" on "*) ;; *) arch_opts[2]=on ;; esac
         arch=$(tui_radio "Rootfs Builder 3/13" "Target architecture (SPACE to select):" \
-            amd64 "x86_64 / amd64" on \
-            arm64 "aarch64 / arm64" off \
-            armhf "ARM 32-bit hard-float" off \
-            i386  "x86 32-bit" off) || return 0
+            "${arch_opts[@]}") || return 0
         [ -z "$arch" ] && return
     fi
     # Per-distro arch labels
     local alpine_arch fedora_arch void_arch
     case "$arch" in
-        amd64) alpine_arch="x86_64";  fedora_arch="x86_64";  void_arch="x86_64" ;;
-        arm64) alpine_arch="aarch64"; fedora_arch="aarch64"; void_arch="aarch64" ;;
-        armhf) alpine_arch="armv7";   fedora_arch="armhfp";  void_arch="armv7l" ;;
-        i386)  alpine_arch="x86";     fedora_arch="i386";    void_arch="i686" ;;
+        amd64)   alpine_arch="x86_64";  fedora_arch="x86_64";  void_arch="x86_64" ;;
+        arm64)   alpine_arch="aarch64"; fedora_arch="aarch64"; void_arch="aarch64" ;;
+        armhf)   alpine_arch="armv7";   fedora_arch="armhfp";  void_arch="armv7l" ;;
+        i386)    alpine_arch="x86";     fedora_arch="i386";    void_arch="i686" ;;
+        riscv64) alpine_arch="riscv64"; fedora_arch="riscv64"; void_arch="riscv64" ;;
     esac
 
     # ---- release (repository-backed, architecture-aware) ----
     release=$(rootfs_release_menu "$distro" "$arch") || return 0
+
+    # Not every suite carries every architecture (riscv64 in particular is a
+    # recent addition). Ask the mirror before spending minutes bootstrapping
+    # into a 404, and say which suites do have it.
+    if ! rootfs_probe_arch_release "$distro" "$release" "$arch"; then
+        local hint; hint=$(rootfs_arch_release_hint "$distro" "$arch")
+        tui_msg "Architecture not in this release" \
+"$distro $release does not publish $arch.
+
+${hint:+$hint
+
+}Pick a different release, or a different architecture."
+        return 0
+    fi
     if needs_qemu "$arch"; then
         use_qemu=1
         tui_msg "Foreign architecture" \
@@ -2766,7 +2833,7 @@ user creation). Install on the host first if you haven't:
         debian) def_mirror="http://deb.debian.org/debian" ;;
         devuan) def_mirror="http://deb.devuan.org/merged" ;;
         ubuntu)
-            if [ "$arch" = "arm64" ] || [ "$arch" = "armhf" ]; then
+            if rootfs_ubuntu_is_ports_arch "$arch"; then
                 def_mirror="https://ports.ubuntu.com/ubuntu-ports"
             else
                 def_mirror="https://archive.ubuntu.com/ubuntu"
@@ -3083,26 +3150,81 @@ rootfs_probe_deb_mirror() { # mirror release
     fi
 }
 
+# Does <distro> <release> actually publish <arch>? Asks the mirror rather than
+# carrying a hardcoded table, which would rot every time a port is promoted.
+# Returns 0 when present, 1 when the archive says no, and 0 (benefit of the
+# doubt) when the check itself could not run -- a network problem must not
+# masquerade as "this architecture does not exist".
+rootfs_probe_arch_release() { # <distro> <release> <arch>
+    local distro="$1" release="$2" arch="$3" base="" probe="" control=""
+    case "$distro" in
+        debian) base="http://deb.debian.org/debian" ;;
+        devuan) base="http://deb.devuan.org/merged" ;;
+        kali)   base="http://http.kali.org/kali" ;;
+        ubuntu)
+            if rootfs_ubuntu_is_ports_arch "$arch"; then
+                base="http://ports.ubuntu.com/ubuntu-ports"
+            else
+                base="http://archive.ubuntu.com/ubuntu"
+            fi ;;
+        alpine)
+            # Alpine indexes by repository, not by a dists/ Release file.
+            probe="https://dl-cdn.alpinelinux.org/alpine/${release}/main/${arch}/APKINDEX.tar.gz"
+            # x86_64 exists in every Alpine release, so it is the control that
+            # says whether the CDN is reachable at all.
+            control="https://dl-cdn.alpinelinux.org/alpine/${release}/main/x86_64/APKINDEX.tar.gz" ;;
+        *)  return 0 ;;   # non-apt/apk distros are handled by their own backends
+    esac
+    [ -n "$probe" ] || probe="$base/dists/$release/main/binary-$arch/Release"
+
+    rootfs_url_reachable() { # <url>
+        if command -v curl >/dev/null 2>&1; then
+            curl -4 -LfsS --connect-timeout 8 --max-time 20 --range 0-255 "$1" -o /dev/null 2>>"$LOGFILE"
+        elif command -v wget >/dev/null 2>&1; then
+            wget -4 -q --spider --timeout=20 --tries=1 "$1" 2>>"$LOGFILE"
+        else
+            return 0
+        fi
+    }
+
+    rootfs_url_reachable "$probe" && return 0
+
+    # Distinguish "archive says no" from "could not reach the archive" by
+    # re-probing a combination known to exist on the same mirror. Without this
+    # a transient network failure would be reported to the user as "this
+    # architecture does not exist", which is both wrong and hard to argue with.
+    if [ -n "$control" ]; then
+        rootfs_url_reachable "$control" || {
+            log "rootfs: arch probe inconclusive for $distro/$release/$arch (mirror unreachable)"
+            return 0
+        }
+    elif [ -n "$base" ] && ! rootfs_probe_deb_mirror "$base" "$release"; then
+        log "rootfs: arch probe inconclusive for $distro/$release/$arch (mirror unreachable)"
+        return 0
+    fi
+    log "rootfs: $distro/$release does not publish $arch"
+    return 1
+}
+
 # Select a reachable Ubuntu endpoint. The selected architecture determines
 # whether the regular archive or Ubuntu Ports archive is valid.
 rootfs_select_ubuntu_mirror() { # requested arch release
     local requested="${1%/}" arch="$2" release="$3" candidate
     local candidates=()
     [ -n "$requested" ] && candidates+=("$requested")
-    case "$arch" in
-        arm64|armhf)
-            candidates+=(
-                "https://ports.ubuntu.com/ubuntu-ports"
-                "http://ports.ubuntu.com/ubuntu-ports"
-            ) ;;
-        *)
-            candidates+=(
-                "https://archive.ubuntu.com/ubuntu"
-                "https://us.archive.ubuntu.com/ubuntu"
-                "http://archive.ubuntu.com/ubuntu"
-                "http://us.archive.ubuntu.com/ubuntu"
-            ) ;;
-    esac
+    if rootfs_ubuntu_is_ports_arch "$arch"; then
+        candidates+=(
+            "https://ports.ubuntu.com/ubuntu-ports"
+            "http://ports.ubuntu.com/ubuntu-ports"
+        )
+    else
+        candidates+=(
+            "https://archive.ubuntu.com/ubuntu"
+            "https://us.archive.ubuntu.com/ubuntu"
+            "http://archive.ubuntu.com/ubuntu"
+            "http://us.archive.ubuntu.com/ubuntu"
+        )
+    fi
     local seen=" "
     for candidate in "${candidates[@]}"; do
         candidate=${candidate%/}
