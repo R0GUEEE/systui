@@ -127,6 +127,12 @@ rootfs_backend_available() { # <backend>
             command -v tar >/dev/null 2>&1 && command -v zstd >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
             ;;
+        alarm-bootstrap)
+            # Arch Linux ARM ships .tar.gz, so unlike arch-bootstrap this
+            # needs gzip rather than zstd.
+            command -v tar >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1 &&
+                { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
+            ;;
         gentoo-stage3|void-tarball)
             command -v tar >/dev/null 2>&1 && command -v xz >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
@@ -145,7 +151,7 @@ rootfs_backend_supported() { # <distro> <backend>
         devuan:mmdebstrap|devuan:debootstrap|devuan:cdebootstrap|devuan:qemu-debootstrap|devuan:multistrap|\
         ubuntu:mmdebstrap|ubuntu:debootstrap|ubuntu:cdebootstrap|ubuntu:qemu-debootstrap|ubuntu:multistrap|\
         kali:mmdebstrap|kali:debootstrap|kali:cdebootstrap|kali:qemu-debootstrap|kali:multistrap|\
-        alpine:apk-static|arch:pacstrap|arch:arch-bootstrap|fedora:dnf|\
+        alpine:apk-static|arch:pacstrap|arch:arch-bootstrap|arch:alarm-bootstrap|fedora:dnf|\
         opensuse:zypper|tumbleweed:zypper|gentoo:gentoo-stage3|void:void-tarball)
             return 0
             ;;
@@ -195,9 +201,10 @@ rootfs_backend_menu() { # <distro>
             ;;
         arch)
             selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — prefer pacstrap, then official bootstrap tarball" on \
-                pacstrap "pacstrap — arch-install-scripts ($(rootfs_backend_status pacstrap))" off \
-                arch-bootstrap "Official Arch bootstrap tarball ($(rootfs_backend_status arch-bootstrap))" off) || return 1
+                auto "Automatic — pacstrap or bootstrap tarball on x86_64, Arch Linux ARM on arm64/armhf" on \
+                pacstrap "pacstrap — arch-install-scripts, x86_64 ($(rootfs_backend_status pacstrap))" off \
+                arch-bootstrap "Official Arch bootstrap tarball, x86_64 ($(rootfs_backend_status arch-bootstrap))" off \
+                alarm-bootstrap "Arch Linux ARM tarball, arm64/armhf ($(rootfs_backend_status alarm-bootstrap))" off) || return 1
             ;;
         alpine)
             selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
@@ -596,8 +603,20 @@ rootfs_distro_arches() { # <distro>
     case "$1" in
         debian|devuan|ubuntu) printf '%s\n' amd64 arm64 armhf i386 riscv64 ;;
         alpine)               printf '%s\n' amd64 arm64 armhf i386 riscv64 ;;
+        # Arch proper is x86_64 only; arm64/armhf come from Arch Linux ARM,
+        # a separate project with its own archive (see rootfs_arch_is_alarm).
+        # Neither publishes riscv64 officially.
+        arch)                 printf '%s\n' amd64 arm64 armhf ;;
         *)                    printf '%s\n' amd64 arm64 armhf i386 ;;
     esac
+}
+
+# Arch Linux (x86_64, archlinux.org) and Arch Linux ARM (arm64/armhf,
+# archlinuxarm.org) are different projects with different archives and
+# different release models. Returns 0 when the target arch is served by the
+# Arch Linux ARM side.
+rootfs_arch_is_alarm() { # <arch>
+    case "$1" in arm64|armhf) return 0 ;; *) return 1 ;; esac
 }
 
 # Human-readable note about which suites carry a given arch, shown when the
@@ -2626,34 +2645,32 @@ rootfs_builder_impl() {
     # ---- 2/3: architecture then release ----
     # Architecture must be selected before Ubuntu release discovery so ARM
     # builds query ports.ubuntu.com rather than the amd64 archive.
-    if [ "$distro" = "arch" ]; then
-        arch="amd64"
-        tui_msg "Architecture" "Arch Linux official repos are x86_64 only.\n(For ARM, see Arch Linux ARM — not covered here.)"
-    else
-        local -a arch_opts=() a
-        local host_arch; host_arch=$(host_debarch)
-        while IFS= read -r a; do
-            [ -n "$a" ] || continue
-            local label on=off
-            case "$a" in
-                amd64)   label="x86_64 / amd64" ;;
-                arm64)   label="aarch64 / arm64" ;;
-                armhf)   label="ARM 32-bit hard-float" ;;
-                i386)    label="x86 32-bit" ;;
-                riscv64) label="RISC-V 64-bit (rv64gc)" ;;
-                *)       label="$a" ;;
-            esac
-            # Default to the host's own architecture when the distro offers it:
-            # a same-arch build needs no emulation for its chroot steps.
-            [ "$a" = "$host_arch" ] && on=on
-            arch_opts+=("$a" "$label" "$on")
-        done < <(rootfs_distro_arches "$distro")
-        # Fall back to amd64-on if the host arch isn't among the options.
-        case " ${arch_opts[*]} " in *" on "*) ;; *) arch_opts[2]=on ;; esac
-        arch=$(tui_radio "Rootfs Builder 3/13" "Target architecture (SPACE to select):" \
-            "${arch_opts[@]}") || return 0
-        [ -z "$arch" ] && return
-    fi
+    local -a arch_opts=() a
+    local host_arch; host_arch=$(host_debarch)
+    while IFS= read -r a; do
+        [ -n "$a" ] || continue
+        local label on=off
+        case "$a" in
+            amd64)   label="x86_64 / amd64" ;;
+            arm64)   label="aarch64 / arm64" ;;
+            armhf)   label="ARM 32-bit hard-float" ;;
+            i386)    label="x86 32-bit" ;;
+            riscv64) label="RISC-V 64-bit (rv64gc)" ;;
+            *)       label="$a" ;;
+        esac
+        # Arch proper and Arch Linux ARM are separate archives; say so in the
+        # menu rather than letting the user discover it at download time.
+        [ "$distro" = arch ] && rootfs_arch_is_alarm "$a" && label="$label (Arch Linux ARM)"
+        # Default to the host's own architecture when the distro offers it:
+        # a same-arch build needs no emulation for its chroot steps.
+        [ "$a" = "$host_arch" ] && on=on
+        arch_opts+=("$a" "$label" "$on")
+    done < <(rootfs_distro_arches "$distro")
+    # Fall back to amd64-on if the host arch isn't among the options.
+    case " ${arch_opts[*]} " in *" on "*) ;; *) arch_opts[2]=on ;; esac
+    arch=$(tui_radio "Rootfs Builder 3/13" "Target architecture (SPACE to select):" \
+        "${arch_opts[@]}") || return 0
+    [ -z "$arch" ] && return
     # Per-distro arch labels
     local alpine_arch fedora_arch void_arch
     case "$arch" in
@@ -2839,7 +2856,12 @@ user creation). Install on the host first if you haven't:
                 def_mirror="https://archive.ubuntu.com/ubuntu"
             fi ;;
         alpine) def_mirror="http://dl-cdn.alpinelinux.org/alpine" ;;
-        arch)   def_mirror="https://geo.mirror.pkgbuild.com" ;;
+        arch)
+            if rootfs_arch_is_alarm "$arch"; then
+                def_mirror="http://os.archlinuxarm.org/os"
+            else
+                def_mirror="https://geo.mirror.pkgbuild.com"
+            fi ;;
         fedora) def_mirror="https://dl.fedoraproject.org/pub/fedora/linux" ;;
         kali) def_mirror="http://http.kali.org/kali" ;;
         opensuse) def_mirror="https://download.opensuse.org/distribution/leap" ;;
@@ -2936,7 +2958,7 @@ Proceed?" || return 0
     case "$distro" in
         debian|devuan|ubuntu|kali) build_debfamily "$distro" "$release" "$arch" "$mirror" "$target" "$pkgs" "$use_qemu" "$backend" ;;
         alpine)               build_alpine "$release" "$alpine_arch" "$mirror" "$target" "$pkgs" ;;
-        arch)                 build_arch "$mirror" "$target" "$pkgs" "$backend" ;;
+        arch)                 build_arch "$mirror" "$target" "$pkgs" "$backend" "$arch" ;;
         fedora)               build_fedora "$release" "$fedora_arch" "$mirror" "$target" "$pkgs" ;;
         opensuse|tumbleweed)  build_opensuse "$distro" "$release" "$arch" "$mirror" "$target" "$pkgs" ;;
         gentoo)               build_gentoo "$release" "$arch" "$mirror" "$target" "$pkgs" ;;
@@ -3629,10 +3651,26 @@ build_alpine() { # release arch mirror target pkgs
     return 0
 }
 
-build_arch() { # mirror target pkgs backend
-    local mirror="$1" target="$2" pkgs="$3" backend="${4:-auto}"
+build_arch() { # mirror target pkgs backend arch
+    local mirror="$1" target="$2" pkgs="$3" backend="${4:-auto}" arch="${5:-amd64}"
     local mapped; mapped=$(map_packages arch $pkgs)
-    [ "$backend" = auto ] && backend=$(rootfs_resolve_backend arch auto)
+
+    # Neither pacstrap nor the archlinux.org bootstrap tarball can produce an
+    # ARM rootfs -- that archive is x86_64 only. The backend is chosen at step
+    # 2 and the architecture at step 3, so a user who picked pacstrap before
+    # picking arm64 lands here with an impossible combination; redirect rather
+    # than fail, since Arch Linux ARM is unambiguously what was meant.
+    if rootfs_arch_is_alarm "$arch"; then
+        case "$backend" in
+            alarm-bootstrap) ;;
+            auto) backend=alarm-bootstrap ;;
+            *)  log "rootfs: $backend cannot build $arch; using the Arch Linux ARM tarball instead"
+                backend=alarm-bootstrap ;;
+        esac
+    elif [ "$backend" = auto ]; then
+        backend=$(rootfs_resolve_backend arch auto)
+    fi
+
     if [ "$backend" = pacstrap ]; then
         command -v pacstrap >/dev/null 2>&1 || { tui_msg "Missing tool" "pacstrap is not installed."; return 1; }
         run_cmd "pacstrap (Arch)" pacstrap -c "$target" base $mapped
@@ -3641,10 +3679,41 @@ build_arch() { # mirror target pkgs backend
         local tarball="archlinux-bootstrap-x86_64.tar.zst" workdir; workdir=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-arch.XXXXXX") || return 1
         run_cmd "Downloading Arch bootstrap tarball" \
             rootfs_fetch_file "$mirror/iso/latest/$tarball" "$workdir/$tarball" || { rm -rf "$workdir"; return 1; }
+        # The archlinux.org tarball wraps everything in a root.x86_64/ prefix.
         run_cmd "Extracting bootstrap tarball" \
             tar -C "$target" --strip-components=1 --numeric-owner \
                 -xf "$workdir/$tarball" || { rm -rf "$workdir"; return 1; }
         rm -rf "$workdir"
+        [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
+    elif [ "$backend" = alarm-bootstrap ]; then
+        rootfs_backend_available alarm-bootstrap || { tui_msg "Missing tools" "The Arch Linux ARM tarball backend requires tar, gzip, and curl or wget."; return 1; }
+        local alarm_arch tarball workdir
+        case "$arch" in
+            arm64) alarm_arch=aarch64 ;;
+            armhf) alarm_arch=armv7 ;;
+            *)     tui_msg "Unsupported architecture" "Arch Linux ARM does not publish $arch."; return 1 ;;
+        esac
+        tarball="ArchLinuxARM-${alarm_arch}-latest.tar.gz"
+        workdir=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-alarm.XXXXXX") || return 1
+        run_cmd "Downloading Arch Linux ARM tarball ($alarm_arch)" \
+            rootfs_fetch_file "${ALARM_MIRROR:-http://os.archlinuxarm.org/os}/$tarball" "$workdir/$tarball" \
+            || { rm -rf "$workdir"; return 1; }
+        # No --strip-components here. Unlike the archlinux.org tarball, which
+        # wraps everything in root.x86_64/, this one is rooted at ./ with no
+        # wrapper directory, so there is nothing to strip.
+        #
+        # Stripping one component happens to be harmless on GNU tar 1.35,
+        # bsdtar 3.5.3 and BusyBox 1.37 (all three read "./bin" as two
+        # components and yield "bin"), but that is only true while the leading
+        # "./" survives. A tar that normalizes it away would see one component
+        # and drop every entry. Not stripping is correct either way.
+        run_cmd "Extracting Arch Linux ARM tarball" \
+            tar -C "$target" --numeric-owner -xf "$workdir/$tarball" \
+            || { rm -rf "$workdir"; return 1; }
+        rm -rf "$workdir"
+        # It is a full base install including a kernel and device trees, none
+        # of which a container or an emulated userspace can use.
+        [ -d "$target/boot" ] && rm -rf "$target/boot"/* 2>/dev/null
         [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
     else
         tui_msg "Unsupported backend" "'$backend' cannot build an Arch rootfs."
@@ -3916,7 +3985,7 @@ rootfs_ensure_keyrings() { # <target> <pm>
             # master keys.
             if [ -z "$(rootfs_exec_raw "$t" sh -c 'ls -A /etc/pacman.d/gnupg 2>/dev/null')" ]; then
                 rootfs_chroot_exec "$t" "Initializing pacman keyring" \
-                    "pacman-key --init && pacman-key --populate archlinux 2>/dev/null || pacman-key --populate 2>/dev/null; pacman -Syu --noconfirm archlinux-keyring 2>/dev/null || true"
+                    "pacman-key --init && { pacman-key --populate archlinux 2>/dev/null || pacman-key --populate archlinuxarm 2>/dev/null || pacman-key --populate 2>/dev/null; }; pacman -Syu --noconfirm archlinux-keyring 2>/dev/null || pacman -Syu --noconfirm archlinuxarm-keyring 2>/dev/null || true"
             fi
             ;;
         dnf|yum)
