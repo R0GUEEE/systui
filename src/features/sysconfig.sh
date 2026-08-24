@@ -2268,7 +2268,7 @@ browse_category() {
             args+=("$key" "$name — $desc" "$st")
         done <<< "$data"
         [ ${#args[@]} -gt 0 ] || { tui_msg "Empty" "No software is listed in this category."; return 0; }
-        args+=(__details "» Show the details page for one item (does not apply changes)" off)
+        args+=(show-details "» Show the details page for one item (does not apply changes)" off)
 
         picks=$(tui_check "$(cat_title "$cat")" \
 "SPACE toggles. Checked entries are installed, entries you uncheck are offered for removal.
@@ -2278,13 +2278,13 @@ Checked items are already installed." "${args[@]}") || return 0
         # The details escape hatch is handled on its own so a stray selection
         # cannot silently install something the user only wanted to read about.
         case " $picks " in
-            *" __details "*)
+            *" show-details "*)
                 local dargs=() sel
                 while IFS='|' read -r key name desc; do
                     [ -z "$key" ] && continue
                     dargs+=("$key" "$name")
                 done <<< "$data"
-                sel=$(tui_menu "Details" "Select an item to inspect:" "${dargs[@]}" __back "Back") || continue
+                sel=$(tui_menu_no_tags "Details" "Select an item to inspect:" "${dargs[@]}" __back "Back") || continue
                 [ "$sel" = __back ] && continue
                 line=$(grep -m1 "^$sel|" <<< "$data")
                 [ -n "$line" ] && app_page "$sel" "$(cut -d'|' -f2 <<<"$line")" "$(cut -d'|' -f3- <<<"$line")"
@@ -2294,7 +2294,7 @@ Checked items are already installed." "${args[@]}") || return 0
         # Install everything newly checked.
         local to_install="" to_remove="" n
         for k in $picks; do
-            [ "$k" = __details ] && continue
+            [ "$k" = show-details ] && continue
             case " $installed " in *" $k "*) ;; *)
                 n=$(app_native_name "$k"); [ "$n" != SKIP ] && to_install="$to_install $n" ;;
             esac
@@ -4243,7 +4243,13 @@ menu_package_operations() {
 menu_packages() {
     while true; do
         local c
-        c=$(tui_menu "Package Configuration [$PM]" "Select a section:" managers "Package Managers" repos "Repos" catalogue "Catalogue" packages "Packages" advanced "Advanced" back "Back") || return 0
+        c=$(tui_menu_no_tags "Package Configuration [$PM]" "Select a section:" \
+            packages "Install, remove, search and update packages" \
+            catalogue "Browse the application catalogue" \
+            repos "Repositories and keys" \
+            managers "Package managers (native, Flatpak, Snap, language)" \
+            advanced "Advanced package management" \
+            back "Back") || return 0
         case "$c" in managers) menu_package_managers || true;; repos) menu_repos || true;; catalogue) pkg_catalogue || true;; packages) menu_package_operations || true;; advanced) menu_pkg_advanced || true;; back|"") return 0;; esac
     done
 }
@@ -4509,22 +4515,10 @@ menu_cfg_native() {
     esac
 }
 
-menu_pm_config() {
-    while true; do
-        local c
-        c=$(tui_menu "Package manager configuration" "Configure the tools themselves:" \
-            native  "Native PM tuning ($PM) — reflects current settings" \
-            aptfast "apt-fast $(st apt-fast) — install & configure" \
-            nala    "nala $(st nala) — install & configure" \
-            back    "Back") || return 0
-        case "$c" in
-            native)  menu_cfg_native ;;
-            aptfast) [ "$PM" = apt ] && menu_cfg_aptfast || tui_msg "N/A" "apt-fast is Debian-family only." ;;
-            nala)    [ "$PM" = apt ] && menu_cfg_nala || tui_msg "N/A" "nala is Debian-family only." ;;
-            back)    return ;;
-        esac
-    done
-}
+# menu_pm_config() used to live here. It was unreachable — nothing in the menu
+# tree called it — and every entry it offered duplicated Package Managers:
+# "native" is menu_cfg_native_full > tune, and aptfast/nala are their own
+# entries there with the same install-and-configure behaviour.
 
 # ---- Shell -> plugin manager -> plugins hierarchy ---------------------------
 # Popular plugin catalogues (curated from current GitHub ecosystems).
@@ -6565,7 +6559,7 @@ menu_editor_mappings() {
     done
 }
 
-fm_mapping_file() { local fm="$1" h="$2"; case "$fm" in lf) echo "$h/.config/lf/lfrc";; tere) echo "$h/.config/tere/keybindings.conf";; yazi) echo "$h/.config/yazi/keymap.toml";; ranger) echo "$h/.config/ranger/rc.conf";; nnn) echo "$h/.config/nnn/keybinds.conf";; vifm) echo "$h/.config/vifm/vifmrc";; broot) echo "$h/.config/broot/conf.hjson";; xplr) echo "$h/.config/xplr/init.lua";; esac; }
+fm_mapping_file() { local fm="$1" h="$2"; case "$fm" in mc) echo "$h/.config/mc/mc.keymap";; lf) echo "$h/.config/lf/lfrc";; tere) echo "$h/.config/tere/keybindings.conf";; yazi) echo "$h/.config/yazi/keymap.toml";; ranger) echo "$h/.config/ranger/rc.conf";; nnn) echo "$h/.config/nnn/keybinds.conf";; vifm) echo "$h/.config/vifm/vifmrc";; broot) echo "$h/.config/broot/conf.hjson";; xplr) echo "$h/.config/xplr/init.lua";; esac; }
 menu_file_manager_mappings() {
     local fm="$1" target u h f c key action line
     target=$(keymap_target_user) || return 0; u=${target%%|*}; h=${target#*|}; f=$(fm_mapping_file "$fm" "$h")
@@ -6639,17 +6633,19 @@ menu_shells() {
             aliases "Alias manager (catalog, custom aliases, import and validation)" \
             mappings "Key mapping configuration (Bash, Zsh, Fish, Readline)" \
             plugins "Plugins (Starship, fzf, completions and more)" \
-            history "History settings" readline "Readline/inputrc tuning" bashopts "Bash options" \
+            readline "Readline/inputrc tuning" \
             default "Set default shell" advanced "Advanced shell settings" back "Back") || return 0
         case "$c" in
             managers) menu_shell_hierarchy ;;
+            # "history" and "bashopts" used to be separate entries here: the
+            # first only printed a message pointing at this menu item, and the
+            # second called menu_shell_config too. Both are covered by
+            # "Populate common configuration entries" inside it.
             config) menu_shell_config ;;
             aliases) menu_aliases ;;
             mappings) menu_shell_mappings ;;
             plugins) menu_shell_plugins ;;
-            history) tui_msg "History" "Use Shell config files → Populate common configuration entries to manage persistent history." ;;
             readline) safe_edit /etc/inputrc || true ;;
-            bashopts) menu_shell_config ;;
             default) menu_set_default_shell ;;
             advanced) menu_shell_advanced ;;
             back|"") return 0 ;;
@@ -6877,6 +6873,29 @@ SFTP_EOF
 }
 
 # ---- 2.4 Network -----------------------------------------------------------
+# Extracted from menu_network so the quick-task menu can call them directly
+# instead of duplicating the logic or forcing a three-level walk.
+sysconfig_set_hostname() {
+    local h
+    h=$(tui_input "Hostname" "New hostname:" "$(hostname)") || return 0
+    [ -n "$h" ] || return 0
+    valid_safe_name "$h" || { tui_msg "Invalid hostname" "Use letters, digits, dots, dashes and underscores only."; return 0; }
+    if command -v hostnamectl >/dev/null; then hostnamectl set-hostname "$h"
+    else echo "$h" > /etc/hostname && hostname "$h"; fi
+    tui_msg "Hostname" "Hostname set to $h.\nCheck /etc/hosts for a matching 127.0.1.1 entry."
+}
+
+sysconfig_set_timezone() {
+    local tz
+    tz=$(tui_input "Timezone" "IANA timezone (e.g. Europe/London, America/New_York,\nsee /usr/share/zoneinfo):" \
+        "$(cat /etc/timezone 2>/dev/null || readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || echo UTC)") || return 0
+    [ -n "$tz" ] || return 0
+    [ -f "/usr/share/zoneinfo/$tz" ] || { tui_msg "Error" "Unknown timezone: $tz"; return 0; }
+    if command -v timedatectl >/dev/null; then timedatectl set-timezone "$tz"
+    else ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime; echo "$tz" > /etc/timezone 2>/dev/null; fi
+    tui_msg "Done" "Timezone set to $tz."
+}
+
 menu_network() {
     while true; do
         local c
@@ -7048,12 +7067,7 @@ EOF
                     ntp "Enable NTP time sync" \
                     show "Show current time status") || continue
                 case "$a" in
-                    tz)
-                        local tz; tz=$(tui_input "Timezone" "IANA timezone (e.g. Europe/London, America/New_York,\nsee /usr/share/zoneinfo):" "UTC") || continue
-                        [ -f "/usr/share/zoneinfo/$tz" ] || { tui_msg "Error" "Unknown timezone: $tz"; continue; }
-                        if command -v timedatectl >/dev/null; then timedatectl set-timezone "$tz"
-                        else ln -sf "/usr/share/zoneinfo/$tz" /etc/localtime; echo "$tz" > /etc/timezone 2>/dev/null; fi
-                        tui_msg "Done" "Timezone set to $tz." ;;
+                    tz) sysconfig_set_timezone ;;
                     ntp)
                         if command -v timedatectl >/dev/null; then
                             run_cmd "Enabling systemd NTP" timedatectl set-ntp true
@@ -7064,11 +7078,7 @@ EOF
                         { timedatectl 2>/dev/null || date; } > ${SYSTUI_TMP}/net
                         tui_text "Time status" ${SYSTUI_TMP}/net ;;
                 esac ;;
-            hostname)
-                local h; h=$(tui_input "Hostname" "New hostname:" "$(hostname)") || continue
-                if command -v hostnamectl >/dev/null; then hostnamectl set-hostname "$h"
-                else echo "$h" > /etc/hostname && hostname "$h"; fi
-                tui_msg "Hostname" "Hostname set to $h.\nCheck /etc/hosts for a matching 127.0.1.1 entry." ;;
+            hostname) sysconfig_set_hostname ;;
             hosts)
                 tui_text "/etc/hosts" /etc/hosts ;;
             ports)
@@ -7153,6 +7163,10 @@ menu_services() {
                 [ "$INIT" != systemd ] && { tui_msg "N/A" "Unit generator is systemd-only.\nFor OpenRC/runit/sysvinit, write scripts manually."; continue; }
                 local n d x u
                 n=$(tui_input "New service 1/4" "Service name (no spaces):" "myapp") || continue
+                # $n is interpolated into /etc/systemd/system/$n.service, so a
+                # name containing a slash or ".." wrote outside the unit dir.
+                valid_safe_name "$n" || { tui_msg "Invalid name" "Use letters, digits, dots, dashes and underscores only."; continue; }
+                [ -e "/etc/systemd/system/$n.service" ] && { tui_yesno "Overwrite?" "/etc/systemd/system/$n.service already exists.\n\nReplace it?" || continue; }
                 d=$(tui_input "New service 2/4" "Description:" "My application") || continue
                 x=$(tui_input "New service 3/4" "ExecStart (absolute path + args):" "/usr/local/bin/myapp") || continue
                 u=$(tui_input "New service 4/4" "Run as user:" "root") || continue
@@ -7525,8 +7539,13 @@ perf_tmpfs() {
 
 perf_writeback() {
     local dirty bg
-    dirty=$(tui_input "Writeback" "vm.dirty_ratio:" "10") || return 0
-    bg=$(tui_input "Writeback" "vm.dirty_background_ratio:" "5") || return 0
+    dirty=$(tui_input "Writeback" "vm.dirty_ratio (percent of RAM):" "10") || return 0
+    valid_uint "$dirty" || { tui_msg "Invalid value" "vm.dirty_ratio must be a whole number."; return 0; }
+    bg=$(tui_input "Writeback" "vm.dirty_background_ratio (percent of RAM):" "5") || return 0
+    valid_uint "$bg" || { tui_msg "Invalid value" "vm.dirty_background_ratio must be a whole number."; return 0; }
+    # This file is the single owner of the dirty-writeback keys. The general
+    # "sysctl tweaks" option no longer writes them, so the two options can no
+    # longer silently override each other depending on filename order.
     cat > /etc/sysctl.d/92-systui-writeback.conf <<EOF
 vm.dirty_ratio=$dirty
 vm.dirty_background_ratio=$bg
@@ -7573,10 +7592,17 @@ menu_performance() {
         case "$c" in
             ishaok)  perf_ish_aok ;;
             memory)
-                local sw cache; sw=$(tui_input "Memory" "vm.swappiness:" "10") || continue; cache=$(tui_input "Memory" "vm.vfs_cache_pressure:" "50") || continue
-                printf 'vm.swappiness=%s
-vm.vfs_cache_pressure=%s
-' "$sw" "$cache" > /etc/sysctl.d/91-systui-memory.conf; sysctl --system >/dev/null 2>&1 || true ;;
+                # Previously wrote vm.swappiness here as well as in the
+                # dedicated "swappiness" entry below. Because sysctl.d is
+                # applied in filename order, 91-systui-memory.conf silently
+                # overrode 90-systui-swappiness.conf on every boot. Each key
+                # now has exactly one owning file.
+                local cache
+                cache=$(tui_input "Memory" "vm.vfs_cache_pressure (100 = kernel default,\nlower keeps inode/dentry caches longer):" "50") || continue
+                valid_uint "$cache" || { tui_msg "Invalid value" "vm.vfs_cache_pressure must be a whole number."; continue; }
+                printf 'vm.vfs_cache_pressure=%s\n' "$cache" > /etc/sysctl.d/91-systui-memory.conf
+                sysctl --system >/dev/null 2>&1 || true
+                tui_msg "Done" "vm.vfs_cache_pressure=$cache persisted.\n\nSet vm.swappiness from the dedicated Performance entry." ;;
             writeback) perf_writeback ;;
             tmpfs) perf_tmpfs ;;
             dnscache) perf_dns_cache ;;
@@ -7586,6 +7612,7 @@ vm.vfs_cache_pressure=%s
             tuned)   perf_tuned ;;
             swappiness)
                 local v; v=$(tui_input "Swappiness" "vm.swappiness (0-200, default 60;\nlower = prefer RAM, 10 is common for desktops):" "10") || continue
+                valid_uint "$v" && [ "$v" -le 200 ] || { tui_msg "Invalid value" "vm.swappiness must be a whole number from 0 to 200."; continue; }
                 sysctl -w vm.swappiness="$v" >/dev/null
                 echo "vm.swappiness=$v" > /etc/sysctl.d/90-systui-swappiness.conf
                 tui_msg "Done" "vm.swappiness=$v (applied now and persisted)." ;;
@@ -7650,6 +7677,8 @@ vm.vfs_cache_pressure=%s
                     || tui_msg "Error" "Could not write THP setting." ;;
             limits)
                 local n; n=$(tui_input "nofile" "Max open files per process (soft & hard):" "65535") || continue
+                valid_uint "$n" || { tui_msg "Invalid value" "The open-file limit must be a whole number."; continue; }
+                mkdir -p /etc/security/limits.d
                 cat > /etc/security/limits.d/90-systui.conf <<EOF
 * soft nofile $n
 * hard nofile $n
@@ -7680,20 +7709,21 @@ EOF
                     tui_msg "Done" "Weekly fstrim cron job added (Sun 03:00)."
                 fi ;;
             sysctl)
+                # vm.vfs_cache_pressure and the dirty ratios used to be
+                # written here too, clobbering the Memory and Writeback
+                # entries. This option now only owns the queueing/congestion
+                # keys that nothing else sets.
                 tui_yesno "sysctl tweaks" \
 "Apply these to /etc/sysctl.d/91-systui-perf.conf?
 
-  vm.vfs_cache_pressure = 50
-  vm.dirty_ratio = 10
-  vm.dirty_background_ratio = 5
   net.core.default_qdisc = fq
   net.ipv4.tcp_congestion_control = bbr
 
-(BBR needs kernel >= 4.9; ignored if unavailable.)" || continue
+(BBR needs kernel >= 4.9; ignored if unavailable.)
+
+Cache pressure is set under Memory, and the dirty
+ratios under Writeback, so they are not repeated here." || continue
                 cat > /etc/sysctl.d/91-systui-perf.conf <<'EOF'
-vm.vfs_cache_pressure = 50
-vm.dirty_ratio = 10
-vm.dirty_background_ratio = 5
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 EOF
@@ -8203,14 +8233,24 @@ menu_perf_cpu() {
                     on  "Enabled (default)" on \
                     off "Disabled — cooler, consistent clocks" off) || continue
                 [ -z "$v" ] && continue
+                # An "A && write-0 || write-1" chain wrote the OPPOSITE value
+                # whenever the first write failed, so a rejected enable became
+                # a disable. Pick the value first, then write it once.
+                local turbo_val
                 if [ -w /sys/devices/system/cpu/intel_pstate/no_turbo ]; then
-                    [ "$v" = on ] && echo 0 > /sys/devices/system/cpu/intel_pstate/no_turbo \
-                                  || echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo
-                    tui_msg "Done" "Turbo: $v (intel_pstate, runtime only)."
+                    [ "$v" = on ] && turbo_val=0 || turbo_val=1
+                    if echo "$turbo_val" > /sys/devices/system/cpu/intel_pstate/no_turbo 2>/dev/null; then
+                        tui_msg "Done" "Turbo: $v (intel_pstate, runtime only)."
+                    else
+                        tui_msg "Error" "Kernel refused the intel_pstate turbo change."
+                    fi
                 elif [ -w /sys/devices/system/cpu/cpufreq/boost ]; then
-                    [ "$v" = on ] && echo 1 > /sys/devices/system/cpu/cpufreq/boost \
-                                  || echo 0 > /sys/devices/system/cpu/cpufreq/boost
-                    tui_msg "Done" "Boost: $v (cpufreq, runtime only)."
+                    [ "$v" = on ] && turbo_val=1 || turbo_val=0
+                    if echo "$turbo_val" > /sys/devices/system/cpu/cpufreq/boost 2>/dev/null; then
+                        tui_msg "Done" "Boost: $v (cpufreq, runtime only)."
+                    else
+                        tui_msg "Error" "Kernel refused the cpufreq boost change."
+                    fi
                 else
                     tui_msg "N/A" "No turbo/boost control interface found\n(VM or unsupported driver)."
                 fi ;;
@@ -8341,6 +8381,7 @@ fm_as_user() { # fm_as_user <user> <command>
 
 fm_pkg_for() { # fm_pkg_for <manager>
     case "$1:$PM" in
+        mc:*) echo mc ;;
         lf:*) echo lf ;;
         tere:apt|tere:apk|tere:pacman|tere:dnf) echo tere ;;
         yazi:apt|yazi:apk|yazi:pacman|yazi:dnf) echo yazi ;;
@@ -8638,6 +8679,36 @@ cmd open \${{
 }}
 EOF"
             ;;
+        mc)
+            fm_as_user "$u" "mkdir -p ~/.config/mc ~/.local/share/mc/skins; cat > ~/.config/mc/ini <<'EOF'
+[Midnight-Commander]
+skin=default
+show_dot_files=1
+confirm_delete=1
+use_internal_edit=1
+use_internal_view=1
+auto_save_setup=1
+editor_line_numbers=1
+editor_syntax_highlighting=1
+editor_fill_tabs_with_spaces=1
+editor_return_does_auto_indent=1
+editor_tab_spacing=4
+
+[Layout]
+menubar_visible=1
+keybar_visible=1
+message_visible=1
+xterm_title=1
+free_space=1
+equal_split=1
+
+[Panels]
+show_mini_info=1
+filetype_mode=1
+mix_all_files=0
+navigate_with_arrows=1
+EOF"
+            ;;
         tere)
             fm_configure_tere_shells "$u"
             ;;
@@ -8701,6 +8772,258 @@ fm_backup_config() { # fm_backup_config <path>
     local f="$1"
     [ -f "$f" ] || return 0
     cp -p "$f" "$f.systui.bak.$(date +%Y%m%d%H%M%S)" 2>/dev/null || true
+}
+
+###############################################################################
+# Midnight Commander
+###############################################################################
+#
+# mc keeps its settings in an INI file with several sections, and rewrites that
+# file itself on exit when auto_save_setup is on. Rather than sed individual
+# keys (which mc would happily reorder or drop), systui regenerates the three
+# sections it manages and preserves anything else the user had.
+
+# The section a managed key belongs to. mc silently ignores keys placed in the
+# wrong section, which makes a misfiled setting look like it simply had no
+# effect, so this mapping is the important part.
+mc_ini_section() { # <key>
+    case "$1" in
+        menubar_visible|keybar_visible|message_visible|xterm_title|free_space|\
+        horizontal_split|equal_split|output_lines|command_prompt)
+            printf 'Layout\n' ;;
+        show_mini_info|kilobyte_si|mix_all_files|filetype_mode|permission_mode|\
+        quick_search_mode|navigate_with_arrows|panel_scroll_pages)
+            printf 'Panels\n' ;;
+        *)  printf 'Midnight-Commander\n' ;;
+    esac
+}
+
+# Read a key out of an existing ini regardless of which section it sits in.
+mc_ini_get() { # <file> <key> <default>
+    local v
+    v=$(sed -nE "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*$/\1/p" "$1" 2>/dev/null | head -n1)
+    printf '%s\n' "${v:-$3}"
+}
+
+mc_state() { # <file> <key> <on-value>  -> on|off for a checklist
+    [ "$(mc_ini_get "$1" "$2" "")" = "$3" ] && printf 'on\n' || printf 'off\n'
+}
+
+# Rewrite the managed keys, keeping every section and key systui does not own.
+mc_ini_write() { # <file> <"key=value" ...>
+    local f="$1"; shift
+    local tmp pair key val section
+    tmp=$(mktemp "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-mc.XXXXXX") || return 1
+
+    # Strip the keys we are about to set, from wherever they currently live,
+    # so a key that used to be misfiled does not shadow the new value.
+    cp -f "$f" "$tmp" 2>/dev/null || : > "$tmp"
+    for pair in "$@"; do
+        key=${pair%%=*}
+        sed -i -E "/^[[:space:]]*${key}[[:space:]]*=/d" "$tmp"
+    done
+
+    for pair in "$@"; do
+        key=${pair%%=*}; val=${pair#*=}
+        section=$(mc_ini_section "$key")
+        if grep -qF "[$section]" "$tmp"; then
+            # Insert directly after the section header.
+            sed -i "/^\[$section\]/a ${key}=${val}" "$tmp"
+        else
+            printf '\n[%s]\n%s=%s\n' "$section" "$key" "$val" >> "$tmp"
+        fi
+    done
+    # Collapse the blank lines repeated inserts can leave behind.
+    awk 'NF || prev { print } { prev = NF }' "$tmp" > "$f"
+    rm -f "$tmp"
+}
+
+# Skins live in the user's data dir; list whatever is installed plus the ones
+# mc ships with, so the picker reflects reality rather than a fixed list.
+mc_available_skins() { # <home>
+    local h="$1" d
+    {
+        printf '%s\n' default darkfar gotar julia762 modarcon16 modarin256 nicedark xoria256
+        for d in "$h/.local/share/mc/skins" /usr/share/mc/skins /usr/local/share/mc/skins; do
+            [ -d "$d" ] && find "$d" -maxdepth 1 -name '*.ini' -exec basename {} .ini \; 2>/dev/null
+        done
+    } | sort -u | grep -v '^$'
+}
+
+# Cloned skin repositories land in a subdirectory, but mc only reads *.ini
+# sitting directly in ~/.local/share/mc/skins. Link them up so a skin installed
+# through the plugin manager actually appears in mc's Appearance list.
+mc_link_skins() { # <user> <home>
+    local u="$1" h="$2" dir="$2/.local/share/mc/skins" ini name linked=0
+    [ -d "$dir" ] || return 0
+    while IFS= read -r ini; do
+        [ -n "$ini" ] || continue
+        name=$(basename "$ini")
+        # Never clobber a real skin file that lives at the top level.
+        [ -e "$dir/$name" ] && continue
+        ln -sf "$ini" "$dir/$name" 2>/dev/null && linked=$((linked + 1))
+    done < <(find "$dir" -mindepth 2 -name '*.ini' 2>/dev/null)
+    [ "$linked" -gt 0 ] && log "mc: linked $linked skin file(s) into $dir"
+    chown -h -R "$u":"$(id -gn "$u")" "$dir" 2>/dev/null || true
+    return 0
+}
+
+mc_skin_menu() { # <user> <home> <ini>
+    local u="$1" h="$2" f="$3" current skin
+    local -a args=()
+    mc_link_skins "$u" "$h"
+    current=$(mc_ini_get "$f" skin default)
+    while IFS= read -r skin; do
+        [ -n "$skin" ] || continue
+        args+=("$skin" "$skin" "$(_rootfs_radio_state "$current" "$skin")")
+    done < <(mc_available_skins "$h")
+    skin=$(tui_radio "Midnight Commander skin" \
+        "Installed and built-in skins (SPACE selects).\nInstall more from the plugin manager:" "${args[@]}") || return 0
+    [ -n "$skin" ] || return 0
+    mc_ini_write "$f" "skin=$skin"
+    chown -R "$u":"$(id -gn "$u")" "$h/.config/mc" 2>/dev/null || true
+    tui_msg "Skin" "Skin set to '$skin' for $u.\n\nIf mc is running, restart it — it rewrites this file on exit."
+}
+
+fm_configure_mc_menu() {
+    local u h f selected
+    u=$(fm_target_user) || return 0
+    h=$(fm_home "$u")
+    [ -n "$h" ] || { tui_msg "Error" "Could not resolve a home directory for $u."; return 0; }
+    f="$h/.config/mc/ini"
+    mkdir -p "$h/.config/mc" "$h/.local/share/mc/skins"
+    [ -f "$f" ] || : > "$f"
+
+    while true; do
+        local c
+        c=$(tui_menu "Midnight Commander — $u" \
+            "Configuration file: $f\nSkin: $(mc_ini_get "$f" skin default)" \
+            general  "General behaviour (SPACE toggles)" \
+            panels   "Panel display (SPACE toggles)" \
+            layout   "Layout and screen furniture (SPACE toggles)" \
+            editor   "Internal editor (mcedit) options" \
+            skin     "Choose a skin" \
+            shell    "Shell integration (cd-on-exit wrapper)" \
+            view     "View the generated configuration" \
+            back     "Back") || return 0
+        case "$c" in
+            general)
+                selected=$(tui_check "mc — general" "Current state pre-checked:" \
+                    show_dot_files "Show hidden files" "$(mc_state "$f" show_dot_files 1)" \
+                    confirm_delete "Confirm before deleting" "$(mc_state "$f" confirm_delete 1)" \
+                    confirm_exit "Confirm on exit" "$(mc_state "$f" confirm_exit 1)" \
+                    use_internal_edit "Use the internal editor (mcedit)" "$(mc_state "$f" use_internal_edit 1)" \
+                    use_internal_view "Use the internal viewer (mcview)" "$(mc_state "$f" use_internal_view 1)" \
+                    auto_save_setup "Save settings automatically on exit" "$(mc_state "$f" auto_save_setup 1)" \
+                    drop_menus "Drop menus on F9 without Enter" "$(mc_state "$f" drop_menus 1)" \
+                    verbose "Verbose operations" "$(mc_state "$f" verbose 1)") || continue
+                selected=" ${selected//\"/} "
+                mc_ini_write "$f" \
+                    "show_dot_files=$(fm_selection_has "$selected" show_dot_files && echo 1 || echo 0)" \
+                    "confirm_delete=$(fm_selection_has "$selected" confirm_delete && echo 1 || echo 0)" \
+                    "confirm_exit=$(fm_selection_has "$selected" confirm_exit && echo 1 || echo 0)" \
+                    "use_internal_edit=$(fm_selection_has "$selected" use_internal_edit && echo 1 || echo 0)" \
+                    "use_internal_view=$(fm_selection_has "$selected" use_internal_view && echo 1 || echo 0)" \
+                    "auto_save_setup=$(fm_selection_has "$selected" auto_save_setup && echo 1 || echo 0)" \
+                    "drop_menus=$(fm_selection_has "$selected" drop_menus && echo 1 || echo 0)" \
+                    "verbose=$(fm_selection_has "$selected" verbose && echo 1 || echo 0)"
+                tui_msg "Saved" "General options written to $f." ;;
+            panels)
+                selected=$(tui_check "mc — panels" "Current state pre-checked:" \
+                    show_mini_info "Show the mini status line" "$(mc_state "$f" show_mini_info 1)" \
+                    mix_all_files "Mix files and directories in listings" "$(mc_state "$f" mix_all_files 1)" \
+                    filetype_mode "Colour filenames by type" "$(mc_state "$f" filetype_mode 1)" \
+                    permission_mode "Highlight permissions" "$(mc_state "$f" permission_mode 1)" \
+                    kilobyte_si "Use SI units (kB = 1000)" "$(mc_state "$f" kilobyte_si 1)" \
+                    navigate_with_arrows "Navigate with plain arrow keys" "$(mc_state "$f" navigate_with_arrows 1)") || continue
+                selected=" ${selected//\"/} "
+                mc_ini_write "$f" \
+                    "show_mini_info=$(fm_selection_has "$selected" show_mini_info && echo 1 || echo 0)" \
+                    "mix_all_files=$(fm_selection_has "$selected" mix_all_files && echo 1 || echo 0)" \
+                    "filetype_mode=$(fm_selection_has "$selected" filetype_mode && echo 1 || echo 0)" \
+                    "permission_mode=$(fm_selection_has "$selected" permission_mode && echo 1 || echo 0)" \
+                    "kilobyte_si=$(fm_selection_has "$selected" kilobyte_si && echo 1 || echo 0)" \
+                    "navigate_with_arrows=$(fm_selection_has "$selected" navigate_with_arrows && echo 1 || echo 0)"
+                tui_msg "Saved" "Panel options written to $f." ;;
+            layout)
+                selected=$(tui_check "mc — layout" "Current state pre-checked:" \
+                    menubar_visible "Always show the menu bar" "$(mc_state "$f" menubar_visible 1)" \
+                    keybar_visible "Show the F-key bar" "$(mc_state "$f" keybar_visible 1)" \
+                    message_visible "Show the hint bar" "$(mc_state "$f" message_visible 1)" \
+                    command_prompt "Show the command prompt" "$(mc_state "$f" command_prompt 1)" \
+                    xterm_title "Update the terminal title" "$(mc_state "$f" xterm_title 1)" \
+                    free_space "Show free space on the status line" "$(mc_state "$f" free_space 1)" \
+                    equal_split "Split panels equally" "$(mc_state "$f" equal_split 1)") || continue
+                selected=" ${selected//\"/} "
+                mc_ini_write "$f" \
+                    "menubar_visible=$(fm_selection_has "$selected" menubar_visible && echo 1 || echo 0)" \
+                    "keybar_visible=$(fm_selection_has "$selected" keybar_visible && echo 1 || echo 0)" \
+                    "message_visible=$(fm_selection_has "$selected" message_visible && echo 1 || echo 0)" \
+                    "command_prompt=$(fm_selection_has "$selected" command_prompt && echo 1 || echo 0)" \
+                    "xterm_title=$(fm_selection_has "$selected" xterm_title && echo 1 || echo 0)" \
+                    "free_space=$(fm_selection_has "$selected" free_space && echo 1 || echo 0)" \
+                    "equal_split=$(fm_selection_has "$selected" equal_split && echo 1 || echo 0)"
+                tui_msg "Saved" "Layout options written to $f." ;;
+            editor)
+                local tabsize
+                selected=$(tui_check "mcedit" "Internal editor options:" \
+                    editor_line_numbers "Show line numbers" "$(mc_state "$f" editor_line_numbers 1)" \
+                    editor_syntax_highlighting "Syntax highlighting" "$(mc_state "$f" editor_syntax_highlighting 1)" \
+                    editor_fill_tabs_with_spaces "Insert spaces instead of tabs" "$(mc_state "$f" editor_fill_tabs_with_spaces 1)" \
+                    editor_return_does_auto_indent "Auto-indent on Enter" "$(mc_state "$f" editor_return_does_auto_indent 1)" \
+                    editor_visible_tabs "Show tab characters" "$(mc_state "$f" editor_visible_tabs 1)" \
+                    editor_visible_spaces "Show trailing spaces" "$(mc_state "$f" editor_visible_spaces 1)" \
+                    editor_backup_extension "Keep backups on save" "$(mc_state "$f" editor_backup_extension '~')") || continue
+                selected=" ${selected//\"/} "
+                tabsize=$(tui_input "mcedit" "Tab width (spaces):" "$(mc_ini_get "$f" editor_tab_spacing 4)") || continue
+                valid_uint "$tabsize" || { tui_msg "Invalid value" "Tab width must be a whole number."; continue; }
+                mc_ini_write "$f" \
+                    "editor_line_numbers=$(fm_selection_has "$selected" editor_line_numbers && echo 1 || echo 0)" \
+                    "editor_syntax_highlighting=$(fm_selection_has "$selected" editor_syntax_highlighting && echo 1 || echo 0)" \
+                    "editor_fill_tabs_with_spaces=$(fm_selection_has "$selected" editor_fill_tabs_with_spaces && echo 1 || echo 0)" \
+                    "editor_return_does_auto_indent=$(fm_selection_has "$selected" editor_return_does_auto_indent && echo 1 || echo 0)" \
+                    "editor_visible_tabs=$(fm_selection_has "$selected" editor_visible_tabs && echo 1 || echo 0)" \
+                    "editor_visible_spaces=$(fm_selection_has "$selected" editor_visible_spaces && echo 1 || echo 0)" \
+                    "editor_backup_extension=$(fm_selection_has "$selected" editor_backup_extension && echo '~' || echo '')" \
+                    "editor_tab_spacing=$tabsize"
+                tui_msg "Saved" "Editor options written to $f." ;;
+            skin) mc_skin_menu "$u" "$h" "$f" ;;
+            shell)
+                # mc cannot change the parent shell's directory itself; the
+                # shipped wrapper writes the last directory to a temp file and
+                # the shell function cd's to it.
+                if tui_yesno "Shell integration" \
+"Add an 'mcd' shell function for $u so leaving mc with F10
+returns the shell to the directory you were browsing?
+
+Uses mc's own --printwd mechanism." ; then
+                    fm_as_user "$u" "for rc in ~/.bashrc ~/.zshrc; do
+    [ -e \"\$rc\" ] || continue
+    grep -q '^# systui-mc-wrapper\$' \"\$rc\" 2>/dev/null && continue
+    cat >> \"\$rc\" <<'EOF'
+
+# systui-mc-wrapper
+mcd() {
+    local wd
+    wd=\$(mktemp -t mc-wd.XXXXXX) || return 1
+    command mc --printwd \"\$wd\" \"\$@\"
+    if [ -s \"\$wd\" ]; then
+        local d; d=\$(cat \"\$wd\")
+        [ -d \"\$d\" ] && cd -- \"\$d\"
+    fi
+    rm -f \"\$wd\"
+}
+EOF
+done"
+                    tui_msg "Done" "Added the 'mcd' function to $u's bashrc/zshrc.\n\nOpen a new shell and run: mcd"
+                fi ;;
+            view)
+                if [ -s "$f" ]; then tui_text "mc configuration" "$f"
+                else tui_msg "mc configuration" "$f is empty — nothing configured yet."; fi ;;
+            back|"") return 0 ;;
+        esac
+        chown -R "$u":"$(id -gn "$u")" "$h/.config/mc" 2>/dev/null || true
+    done
 }
 
 fm_configure_lf_menu() {
@@ -9501,6 +9824,7 @@ fm_configure_xplr_menu() {
 
 fm_configure_menu() {
     case "$1" in
+        mc) fm_configure_mc_menu ;;
         lf) fm_configure_lf_menu ;;
         tere) fm_configure_tere_menu ;;
         yazi) fm_configure_yazi_menu ;;
@@ -9517,6 +9841,7 @@ fm_edit_config() {
     u=$(fm_target_user) || return 0; h=$(fm_home "$u")
     case "$fm" in
         lf) f="$h/.config/lf/lfrc" ;;
+        mc)   f="$h/.config/mc/ini" ;;
         tere) f="$h/.bashrc" ;;
         yazi) f="$h/.config/yazi/yazi.toml" ;;
         ranger) f="$h/.config/ranger/rc.conf" ;;
@@ -9531,6 +9856,21 @@ fm_edit_config() {
 
 fm_plugin_catalog() { # tag|description|repo|destination-relative
     case "$1" in
+        mc)
+            # mc has no plugin API in the lf/yazi sense. What the ecosystem
+            # actually ships is skins (.ini colour schemes read from
+            # ~/.local/share/mc/skins), plus extension and syntax files under
+            # ~/.config/mc. These are the upstream repositories for those.
+            cat <<'EOF'
+mc-upstream|Official mc source: bundled skins, syntax and extfs helpers|MidnightCommander/mc|.local/share/mc/skins/mc-upstream
+mc-retro-skins|Norton, Volkov and Far Commander skins|kybl/midnight-commander-skins|.local/share/mc/skins/retro
+mc-solarized|Solarized skins for 256-colour and truecolour terminals|mstilkerich/mc-solarized-truecolor|.local/share/mc/skins/solarized
+mashdark|MashDark — modern dark skin with separate border colours|notnout/mashdark|.local/share/mc/skins/mashdark
+mc-skins-unobtec|Community skin collection|unobtec/mc-skins|.local/share/mc/skins/unobtec
+mc-skins-fsmulski|Skin collection tuned for solarized terminals|fsmulski/mc-skins|.local/share/mc/skins/fsmulski
+mc-skins-wang|Assorted community skins|wang95/mc-skins|.local/share/mc/skins/wang
+EOF
+            ;;
         lf)
             cat <<'EOF'
 lf-sixel|Sixel image preview helper|horriblename/lf-sixel|.config/lf/plugins/lf-sixel
@@ -10088,6 +10428,7 @@ menu_file_managers() {
     while true; do
         local c
         c=$(tui_menu "File Managers" "Terminal file managers and GitHub add-ons:" \
+            mc     "Midnight Commander — dual-pane, skins & extensions $(st mc)" \
             lf     "lf — fast Go file manager $(st lf)" \
             tere   "tere — fast directory navigator $(st tere)" \
             yazi   "Yazi — async Rust file manager $(st yazi)" \
@@ -10098,6 +10439,7 @@ menu_file_managers() {
             xplr   "xplr — hackable Lua file explorer $(st xplr)" \
             back   "Back") || return 0
         case "$c" in
+            mc) menu_file_manager_one mc "Midnight Commander" ;;
             lf) menu_file_manager_one lf "lf" ;;
             tere) menu_file_manager_one tere "tere" ;;
             yazi) menu_file_manager_one yazi "Yazi" ;;
@@ -10877,22 +11219,62 @@ menu_awesome_linux() {
 # SYSTEM CONFIGURATION MENU
 ###############################################################################
 
+# The section menus below are organised by subsystem, which is the right shape
+# for browsing but a poor shape for the handful of things people actually come
+# here to do — those sit two or three levels down. This menu is a flat front
+# door to them; every entry calls the same function the section menu does, so
+# there is one implementation of each action, not two.
+menu_sysconfig_common() {
+    while true; do
+        local c
+        c=$(tui_menu_no_tags "Common tasks" \
+            "Frequently used settings, without walking the section menus:" \
+            install   "Install or remove packages" \
+            update    "Update and upgrade all packages" \
+            hostname  "Set the system hostname ($(hostname))" \
+            timezone  "Set the timezone ($(cat /etc/timezone 2>/dev/null || readlink /etc/localtime 2>/dev/null | sed 's|.*/zoneinfo/||' || echo unknown))" \
+            user      "Add a user account" \
+            shell     "Set the default login shell" \
+            editor    "Install and configure editors" \
+            ssh       "Configure the SSH server" \
+            service   "Start, stop or enable a service" \
+            scan      "Run a full system scan" \
+            back      "Back") || return 0
+        case "$c" in
+            install)  menu_package_operations ;;
+            update)   pm_update || tui_msg "Not supported" "No update command is defined for $PM." ;;
+            hostname) sysconfig_set_hostname ;;
+            timezone) sysconfig_set_timezone ;;
+            user)     menu_users ;;
+            shell)    menu_set_default_shell ;;
+            editor)   menu_editors ;;
+            ssh)      menu_ssh_server ;;
+            service)  menu_services ;;
+            scan)     menu_scan_system ;;
+            back|"")  return 0 ;;
+        esac
+    done
+}
+
 menu_sysconfig() {
     while true; do
         local c
-        c=$(tui_menu "System Configuration" \
+        c=$(tui_menu_no_tags "System Configuration" \
             "Detected: package manager = $PM, init = $INIT" \
+            common      "Common tasks — packages, hostname, timezone, users, SSH" \
             packages    "Packages (catalogue, repositories, apt-fast...)" \
             shells      "Shells & plugins (frameworks, starship, history...)" \
             editors     "Editors (install + per-editor configuration)" \
-            filemanagers "File managers (lf, tere, Yazi, Ranger, plugins...)" \
+            filemanagers "File managers (Midnight Commander, lf, Yazi, Ranger...)" \
             network     "Network (SSH, fail2ban, DNS, proxy, time...)" \
             services    "Services ($INIT, logs, unit creator, init swap)" \
             users       "Users (passwords, sudoers, aging, SSH keys...)" \
             storage     "Storage (mounts, labels, format, SMART...)" \
             performance "Advanced performance tuning" \
+            scanner     "Scanner (system reports, package & file queries)" \
             back        "Back to main menu") || return 0
         case "$c" in
+            common)      menu_sysconfig_common ;;
             packages)    menu_packages ;;
             shells)      menu_shells ;;
             editors)     menu_editors ;;
@@ -10902,6 +11284,7 @@ menu_sysconfig() {
             users)       menu_users ;;
             storage)     menu_storage ;;
             performance) menu_performance ;;
+            scanner)     menu_scanner ;;
             back)        return 0 ;;
         esac
     done

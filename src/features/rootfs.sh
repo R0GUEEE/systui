@@ -45,15 +45,16 @@ rootfs_tar_supports() { # <option>
     tar "$1" --help >/dev/null 2>&1 || tar --help 2>&1 | grep -q -- "$1"
 }
 
-# rootfs_tar_create <format:gz|xz|zst> <src-dir> <archive-path>
+# rootfs_tar_create <format:gz|xz|zst> <src-dir> <archive-path> [extra tar args...]
 # Creates a rootfs archive that works on both GNU tar and BusyBox tar:
 #   - probes --numeric-owner (unsupported on BusyBox → omitted)
 #   - probes --sparse / -S (prevents "padding with zeros" on sparse files like
 #     /var/log/lastlog and /var/log/btmp whose stat size exceeds actual data)
 #   - falls back to pipe through xz/zstd when -J / --zstd aren't available
+# Extra arguments (for example --exclude=./var/cache/*) are passed to tar.
 rootfs_tar_create() {
-    local fmt="$1" src="$2" out="$3"
-    local -a flags=()
+    local fmt="$1" src="$2" out="$3"; shift 3
+    local -a flags=("$@")
 
     # --numeric-owner: BusyBox tar does not support this; skip when absent.
     rootfs_tar_supports --numeric-owner && flags+=(--numeric-owner)
@@ -66,6 +67,10 @@ rootfs_tar_create() {
         flags+=(-S)
     fi
 
+    # The piped fallbacks below must run with pipefail: without it the exit
+    # status is the compressor's, so a failing tar silently produces a
+    # truncated archive that the caller records as a successful build. The
+    # subshell keeps the option from leaking into the rest of the TUI.
     case "$fmt" in
         gz)
             tar -C "$src" "${flags[@]}" -czf "$out" .
@@ -75,7 +80,7 @@ rootfs_tar_create() {
                 tar -C "$src" "${flags[@]}" -cJf "$out" .
             else
                 # BusyBox tar without built-in xz: pipe through xz binary.
-                tar -C "$src" "${flags[@]}" -cf - . | xz -zc > "$out"
+                ( set -o pipefail; tar -C "$src" "${flags[@]}" -cf - . | xz -zc > "$out" )
             fi
             ;;
         zst)
@@ -83,9 +88,22 @@ rootfs_tar_create() {
                 tar --zstd -C "$src" "${flags[@]}" -cf "$out" .
             else
                 # Pipe through zstd when --zstd long option is unavailable.
-                tar -C "$src" "${flags[@]}" -cf - . | zstd -c > "$out"
+                ( set -o pipefail; tar -C "$src" "${flags[@]}" -cf - . | zstd -c > "$out" )
             fi
             ;;
+        *)
+            # Without this the function wrote no archive and still returned 0.
+            warn "Unsupported archive format: $fmt"
+            return 2
+            ;;
+    esac
+}
+
+# Host tools needed to produce <format>, or empty when tar alone is enough.
+rootfs_archive_missing_tool() { # <format:gz|xz|zst>
+    case "$1" in
+        xz)  rootfs_tar_supports -J     || command -v xz   >/dev/null 2>&1 || printf 'xz\n' ;;
+        zst) rootfs_tar_supports --zstd || command -v zstd >/dev/null 2>&1 || printf 'zstd\n' ;;
     esac
 }
 
@@ -111,8 +129,11 @@ rootfs_fetch_file() { # <url> <destination>
 
 rootfs_backend_available() { # <backend>
     case "$1" in
-        mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper)
+        mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap)
             command -v "$1" >/dev/null 2>&1
+            ;;
+        alpine-chroot-install)
+            command -v alpine-chroot-install >/dev/null 2>&1
             ;;
         qemu-debootstrap)
             command -v qemu-debootstrap >/dev/null 2>&1 &&
@@ -139,93 +160,223 @@ rootfs_backend_status() { # <backend>
     rootfs_backend_available "$1" && printf 'available\n' || printf 'missing prerequisites\n'
 }
 
-rootfs_backend_supported() { # <distro> <backend>
-    case "$1:$2" in
-        debian:mmdebstrap|debian:debootstrap|debian:cdebootstrap|debian:qemu-debootstrap|debian:multistrap|\
-        devuan:mmdebstrap|devuan:debootstrap|devuan:cdebootstrap|devuan:qemu-debootstrap|devuan:multistrap|\
-        ubuntu:mmdebstrap|ubuntu:debootstrap|ubuntu:cdebootstrap|ubuntu:qemu-debootstrap|ubuntu:multistrap|\
-        kali:mmdebstrap|kali:debootstrap|kali:cdebootstrap|kali:qemu-debootstrap|kali:multistrap|\
-        alpine:apk-static|arch:pacstrap|arch:arch-bootstrap|fedora:dnf|\
-        opensuse:zypper|tumbleweed:zypper|gentoo:gentoo-stage3|void:void-tarball)
-            return 0
+# What has to be installed on the HOST before a backend can be used. Shown when
+# a backend the user's distro supports has to be filtered out of the menu.
+rootfs_backend_requirements() { # <backend>
+    case "$1" in
+        mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap)
+            printf '%s\n' "$1" ;;
+        alpine-chroot-install) printf 'alpine-chroot-install (github.com/alpinelinux/alpine-chroot-install)\n' ;;
+        qemu-debootstrap) printf 'qemu-debootstrap (qemu-user-static) and debootstrap\n' ;;
+        apk-static)       printf 'tar, gzip, and curl or wget\n' ;;
+        arch-bootstrap)   printf 'tar, zstd, and curl or wget\n' ;;
+        gentoo-stage3|void-tarball) printf 'tar, xz, and curl or wget\n' ;;
+        *)                printf 'unknown prerequisites\n' ;;
+    esac
+}
+
+# Validate backend constraints that only become knowable after the release is
+# selected.  This keeps a tool out of the menu when it is installed but cannot
+# build the requested suite/version on this host.
+rootfs_backend_release_supported() { # <distro> <backend> <release> [arch]
+    local distro="$1" backend="$2" release="${3:-}" arch="${4:-}"
+    [ -n "$release" ] || return 0
+    case "$backend" in
+        debootstrap|qemu-debootstrap)
+            rootfs_validate_debootstrap_suite "$release"
+            ;;
+        rinse)
+            case "$arch" in amd64|i386|'') ;; *) return 1 ;; esac
+            command -v rinse >/dev/null 2>&1 || return 1
+            local dist
+            case "$distro" in
+                fedora) dist="fedora-core-$release" ;;
+                opensuse) dist="opensuse-$release" ;;
+                # Tumbleweed's rolling "current" identifier is not a rinse
+                # distribution profile; never offer rinse for it.
+                tumbleweed) return 1 ;;
+                *) return 1 ;;
+            esac
+            rinse --list-distributions 2>/dev/null | awk '{print $1}' | grep -qx -- "$dist"
+            ;;
+        *) return 0 ;;
+    esac
+}
+
+# Return components known to be valid for the selected Debian-family distro.
+# This is used both for defaults and for validating manual configuration.
+rootfs_backend_default_components() { # <distro>
+    case "$1" in
+        ubuntu) printf 'main,universe\n' ;;
+        kali)   printf 'main,contrib,non-free,non-free-firmware\n' ;;
+        debian) printf 'main\n' ;;
+        devuan) printf 'main\n' ;;
+        *)      printf 'main\n' ;;
+    esac
+}
+
+rootfs_backend_components_compatible() { # <distro> <csv>
+    local distro="$1" csv="$2" item allowed
+    rootfs_backend_valid_components "$csv" || return 1
+    case "$distro" in
+        ubuntu) allowed=' main restricted universe multiverse ' ;;
+        debian) allowed=' main contrib non-free non-free-firmware ' ;;
+        kali)   allowed=' main contrib non-free non-free-firmware ' ;;
+        devuan) allowed=' main contrib non-free non-free-firmware ' ;;
+        *) return 1 ;;
+    esac
+    while IFS= read -r item; do
+        [ -n "$item" ] || continue
+        case "$allowed" in *" $item "*) ;; *) return 1 ;; esac
+    done < <(printf '%s' "$csv" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Single source of truth for "which bootstrap tool can build which distro".
+#
+# Emits "tag|description" lines, most-preferred first, for the backends that
+# are capable of producing a rootfs for <distro>. Everything else that reasons
+# about backends (validation, auto-resolution, and the selection menu) is
+# derived from this list, so a distro can never be offered a tool that cannot
+# bootstrap it.
+#
+# <arch> is optional. When supplied, architecture-specific entries are filtered
+# too, so the menu only ever offers a genuinely usable combination.
+# ---------------------------------------------------------------------------
+rootfs_backend_catalog() { # <distro> [arch] [release]
+    local distro="$1" arch="${2:-}" release="${3:-}"
+    case "$distro" in
+        debian|devuan|ubuntu|kali)
+            printf 'mmdebstrap|mmdebstrap — modern APT bootstrap\n'
+            rootfs_backend_release_supported "$distro" debootstrap "$release" "$arch" &&
+                printf 'debootstrap|debootstrap — classic two-stage bootstrap\n'
+            printf 'cdebootstrap|cdebootstrap — compiled minimal bootstrap\n'
+            printf 'multistrap|multistrap — configuration-driven APT bootstrap\n'
+            # bdebstrap drives mmdebstrap from a config file; it can only work
+            # where mmdebstrap itself is present.
+            rootfs_backend_available mmdebstrap &&
+                printf 'bdebstrap|bdebstrap — YAML-driven mmdebstrap wrapper\n'
+            # qemu-debootstrap only ever printed a deprecation warning and
+            # re-executed debootstrap with the same arguments; it was dropped
+            # from qemu-user-static in Debian trixie / Ubuntu 23.10. It is
+            # therefore only worth offering for a genuinely foreign target,
+            # and only on hosts old enough to still ship it.
+            if [ -z "$arch" ] || needs_qemu "$arch"; then
+                rootfs_backend_release_supported "$distro" qemu-debootstrap "$release" "$arch" &&
+                    printf 'qemu-debootstrap|qemu-debootstrap — legacy foreign-arch wrapper\n'
+            fi
+            ;;
+        alpine)
+            printf 'apk-static|apk.static — official Alpine bootstrap\n'
+            printf 'alpine-chroot-install|alpine-chroot-install — upstream chroot installer\n'
+            ;;
+        arch)
+            # Official Arch repositories are x86_64 only; both backends inherit
+            # that restriction.
+            case "$arch" in ''|amd64|x86_64) ;; *) return 1 ;; esac
+            printf 'pacstrap|pacstrap — arch-install-scripts\n'
+            printf 'arch-bootstrap|Official Arch bootstrap tarball\n'
+            ;;
+        fedora)
+            printf 'dnf|dnf --installroot\n'
+            # rinse bootstraps RPM distributions FROM a Debian/Ubuntu host,
+            # which is exactly the case dnf --installroot cannot cover.
+            rootfs_backend_release_supported "$distro" rinse "$release" "$arch" &&
+                printf 'rinse|rinse — bootstrap RPM distros from a Debian host\n'
+            ;;
+        opensuse|tumbleweed)
+            printf 'zypper|zypper --root\n'
+            rootfs_backend_release_supported "$distro" rinse "$release" "$arch" &&
+                printf 'rinse|rinse — bootstrap RPM distros from a Debian host\n'
+            ;;
+        gentoo)
+            printf 'gentoo-stage3|Official Gentoo stage3 tarball\n'
+            ;;
+        void)
+            printf 'void-tarball|Official Void ROOTFS tarball\n'
             ;;
         *) return 1 ;;
     esac
 }
 
-rootfs_resolve_backend() { # <distro> <selected>
-    local distro="$1" selected="${2:-auto}"
+rootfs_backend_supported() { # <distro> <backend> [arch] [release]
+    [ -n "${2:-}" ] || return 1
+    rootfs_backend_catalog "$1" "${3:-}" "${4:-}" 2>/dev/null | cut -d'|' -f1 | grep -qx -- "$2"
+}
+
+# Resolve "auto" (or validate an explicit choice) into one concrete backend.
+#
+# An explicit selection is only checked for *compatibility*, never for
+# availability: the caller reports a missing tool with a far better message
+# than a bare non-zero exit, and resuming a recorded build must keep naming the
+# backend it was started with even on a host that has since lost the tool.
+rootfs_resolve_backend() { # <distro> <selected> [arch] [release]
+    local distro="$1" selected="${2:-auto}" arch="${3:-}" release="${4:-}" tag first=""
     if [ "$selected" != auto ]; then
-        rootfs_backend_supported "$distro" "$selected" || return 1
+        rootfs_backend_supported "$distro" "$selected" "$arch" "$release" || return 1
         printf '%s\n' "$selected"
         return 0
     fi
-    case "$distro" in
-        debian|devuan|ubuntu|kali)
-            if rootfs_backend_available mmdebstrap; then printf 'mmdebstrap\n'
-            elif rootfs_backend_available debootstrap; then printf 'debootstrap\n'
-            elif rootfs_backend_available cdebootstrap; then printf 'cdebootstrap\n'
-            elif rootfs_backend_available multistrap; then printf 'multistrap\n'
-            else return 1; fi
-            ;;
-        alpine) printf 'apk-static\n' ;;
-        arch)
-            if rootfs_backend_available pacstrap; then printf 'pacstrap\n'
-            else printf 'arch-bootstrap\n'; fi
-            ;;
-        fedora) printf 'dnf\n' ;;
-        opensuse|tumbleweed) printf 'zypper\n' ;;
-        gentoo) printf 'gentoo-stage3\n' ;;
-        void) printf 'void-tarball\n' ;;
-        *) return 1 ;;
-    esac
+    while IFS='|' read -r tag _; do
+        [ -n "$tag" ] || continue
+        [ -n "$first" ] || first="$tag"
+        if rootfs_backend_available "$tag"; then
+            printf '%s\n' "$tag"
+            return 0
+        fi
+    done < <(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)
+    # Nothing installed: still name the preferred backend for this distro so
+    # the caller can say which tool to install instead of failing anonymously.
+    [ -n "$first" ] || return 1
+    printf '%s\n' "$first"
 }
 
-rootfs_backend_menu() { # <distro>
-    local distro="$1" selected
-    case "$distro" in
-        debian|devuan|ubuntu|kali)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — mmdebstrap, debootstrap, cdebootstrap, then multistrap" on \
-                mmdebstrap "mmdebstrap — modern APT bootstrap ($(rootfs_backend_status mmdebstrap))" off \
-                debootstrap "debootstrap — classic two-stage bootstrap ($(rootfs_backend_status debootstrap))" off \
-                cdebootstrap "cdebootstrap — compiled minimal bootstrap ($(rootfs_backend_status cdebootstrap))" off \
-                qemu-debootstrap "qemu-debootstrap — foreign-architecture wrapper ($(rootfs_backend_status qemu-debootstrap))" off \
-                multistrap "multistrap — configuration-driven APT bootstrap ($(rootfs_backend_status multistrap))" off) || return 1
-            ;;
-        arch)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — prefer pacstrap, then official bootstrap tarball" on \
-                pacstrap "pacstrap — arch-install-scripts ($(rootfs_backend_status pacstrap))" off \
-                arch-bootstrap "Official Arch bootstrap tarball ($(rootfs_backend_status arch-bootstrap))" off) || return 1
-            ;;
-        alpine)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — apk.static" on \
-                apk-static "Downloaded apk.static ($(rootfs_backend_status apk-static))" off) || return 1
-            ;;
-        fedora)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — DNF installroot" on \
-                dnf "dnf --installroot ($(rootfs_backend_status dnf))" off) || return 1
-            ;;
-        opensuse|tumbleweed)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — Zypper root mode" on \
-                zypper "zypper --root ($(rootfs_backend_status zypper))" off) || return 1
-            ;;
-        gentoo)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — official stage3 tarball" on \
-                gentoo-stage3 "Official Gentoo stage3 ($(rootfs_backend_status gentoo-stage3))" off) || return 1
-            ;;
-        void)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — official ROOTFS tarball" on \
-                void-tarball "Official Void ROOTFS tarball ($(rootfs_backend_status void-tarball))" off) || return 1
-            ;;
-    esac
-    rootfs_resolve_backend "$distro" "$selected"
+# Present only the backends that can build <distro> for <arch> AND whose host
+# prerequisites are actually satisfied. Anything compatible but not installed
+# is reported as a "what to install" hint rather than offered as a dead choice.
+rootfs_backend_menu() { # <distro> [arch] [release]
+    local distro="$1" arch="${2:-}" release="${3:-}" tag desc selected
+    local -a args=() missing=()
+    local usable=0
+
+    while IFS='|' read -r tag desc; do
+        [ -n "$tag" ] || continue
+        if rootfs_backend_available "$tag"; then
+            args+=("$tag" "$desc" off)
+            usable=$((usable + 1))
+        else
+            missing+=("$tag — needs $(rootfs_backend_requirements "$tag")")
+        fi
+    done < <(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)
+
+    if [ "$usable" -eq 0 ]; then
+        local hint=""
+        if [ ${#missing[@]} -gt 0 ]; then
+            printf -v hint '  %s\n' "${missing[@]}"
+            hint="\n\nCompatible tools for $distro and what each one needs:\n$hint"
+        fi
+        tui_msg "No usable bootstrap backend" \
+            "None of the bootstrap tools that can build a $distro${release:+/$release}${arch:+/$arch} rootfs are installed on this host.$hint\nInstall one with Rootfs > Bootstrap tools, then retry."
+        return 1
+    fi
+
+    # "Automatic" is only a meaningful choice when there is more than one
+    # usable tool to choose between.
+    if [ "$usable" -gt 1 ]; then
+        args=(auto "Automatic — first available: $(rootfs_resolve_backend "$distro" auto "$arch" "$release")" on "${args[@]}")
+    else
+        args[2]=on
+    fi
+
+    local text="Bootstrap backend (SPACE selects).\nOnly tools that can build $distro${release:+/$release}${arch:+/$arch} and are installed here are listed:"
+    if [ ${#missing[@]} -gt 0 ]; then
+        text="$text\n\nNot installed: $(printf '%s, ' "${missing[@]%% —*}" | sed 's/, $//')"
+    fi
+
+    selected=$(tui_radio "Rootfs Builder 4/13" "$text" "${args[@]}") || return 1
+    [ -n "$selected" ] || return 1
+    rootfs_resolve_backend "$distro" "$selected" "$arch" "$release"
 }
 
 # Debian-family backend configuration is kept separate from the general build
@@ -233,8 +384,7 @@ rootfs_backend_menu() { # <distro>
 rootfs_backend_config_defaults() { # <distro> <backend>
     local distro="$1" backend="$2"
     ROOTFS_BACKEND_VARIANT=minbase
-    ROOTFS_BACKEND_COMPONENTS=main
-    [ "$distro" = ubuntu ] && ROOTFS_BACKEND_COMPONENTS="main,universe"
+    ROOTFS_BACKEND_COMPONENTS=$(rootfs_backend_default_components "$distro")
     ROOTFS_BACKEND_INCLUDE=""
     ROOTFS_BACKEND_EXCLUDE=""
     ROOTFS_BACKEND_KEYRING_MODE=auto
@@ -274,7 +424,7 @@ rootfs_backend_auto_optimize() { # <distro> <backend>
             ;;
         kali)
             # Kali distributes its tools across all three components.
-            ROOTFS_BACKEND_COMPONENTS="main,contrib,non-free"
+            ROOTFS_BACKEND_COMPONENTS="main,contrib,non-free,non-free-firmware"
             ;;
         devuan)
             # Devuan explicitly avoids a merged /usr for SysV init compatibility.
@@ -284,7 +434,7 @@ rootfs_backend_auto_optimize() { # <distro> <backend>
 
     # ---- Pass 2: backend-level overrides ----
     case "$backend" in
-        mmdebstrap)
+        mmdebstrap|bdebstrap)
             # 'root' mode is the only mode that works reliably on iSH-AOK: the
             # host kernel does not support user namespaces ('unshare' would fail).
             ROOTFS_MMDEBSTRAP_MODE=root
@@ -314,12 +464,12 @@ rootfs_backend_auto_optimize() { # <distro> <backend>
 
     # ---- Pass 3: combined distro+backend overrides (highest specificity) ----
     case "$distro:$backend" in
-        ubuntu:mmdebstrap)
+        ubuntu:mmdebstrap|ubuntu:bdebstrap)
             # The 'apt' variant is required so mmdebstrap can resolve universe
             # packages. 'minbase' only resolves Priority:required from main.
             ROOTFS_BACKEND_VARIANT=apt
             ;;
-        debian:mmdebstrap|devuan:mmdebstrap|kali:mmdebstrap)
+        debian:mmdebstrap|debian:bdebstrap|devuan:mmdebstrap|devuan:bdebstrap|kali:mmdebstrap|kali:bdebstrap)
             ROOTFS_BACKEND_VARIANT=minbase
             ;;
         ubuntu:debootstrap|ubuntu:qemu-debootstrap|ubuntu:cdebootstrap)
@@ -362,6 +512,17 @@ rootfs_backend_keyring_menu() {
     ROOTFS_BACKEND_KEYRING_MODE="$mode"
 }
 
+# Radio lists in the configuration menu below used to hard-code the first
+# option as "on" regardless of the value actually in effect. Opening a menu and
+# pressing ENTER therefore silently discarded whatever
+# rootfs_backend_auto_optimize had chosen (for example Ubuntu + mmdebstrap
+# resets variant=apt back to minbase). This prints on/off by comparing each
+# option against the current value, the way rootfs_backend_keyring_menu
+# already did.
+_rootfs_radio_state() { # <current> <option>
+    [ "$1" = "$2" ] && printf 'on\n' || printf 'off\n'
+}
+
 rootfs_backend_config_menu() { # <distro> <backend> [preserve]
     local distro="$1" backend="$2" c value
     [ "${3:-reset}" = preserve ] || rootfs_backend_config_defaults "$distro" "$backend"
@@ -378,17 +539,23 @@ rootfs_backend_config_menu() { # <distro> <backend> [preserve]
                     verbose "Verbose output: $ROOTFS_BACKEND_VERBOSE" \
                     "done" "Use these settings") || return 1
                 case "$c" in
-                    variant) value=$(tui_radio "debootstrap variant" "Base package set:" minbase "Required packages plus apt" on buildd "Build environment" off default "Required and important packages" off) || continue; ROOTFS_BACKEND_VARIANT="$value" ;;
-                    components) value=$(tui_input "Archive components" "Comma-separated components:" "$ROOTFS_BACKEND_COMPONENTS") || continue; rootfs_backend_valid_components "$value" && ROOTFS_BACKEND_COMPONENTS="${value// /,}" || tui_msg "Invalid components" "Use names separated by commas, such as main,contrib,non-free." ;;
+                    variant) value=$(tui_radio "debootstrap variant" "Base package set:" \
+                        minbase "Required packages plus apt" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" minbase)" \
+                        buildd "Build environment" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" buildd)" \
+                        default "Required and important packages" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" default)") || continue; ROOTFS_BACKEND_VARIANT="$value" ;;
+                    components) value=$(tui_input "Archive components" "Comma-separated components:" "$ROOTFS_BACKEND_COMPONENTS") || continue; rootfs_backend_components_compatible "$distro" "$value" && ROOTFS_BACKEND_COMPONENTS="${value// /,}" || tui_msg "Invalid components" "Those components are not valid for $distro. Use components supported by the selected distribution." ;;
                     include) value=$(rootfs_backend_edit_packages "Bootstrap include" "$ROOTFS_BACKEND_INCLUDE") && ROOTFS_BACKEND_INCLUDE="$value" ;;
                     exclude) value=$(rootfs_backend_edit_packages "Bootstrap exclude" "$ROOTFS_BACKEND_EXCLUDE") && ROOTFS_BACKEND_EXCLUDE="$value" ;;
-                    merged) value=$(tui_radio "Merged /usr" "Control /bin, /sbin and /lib symlinks:" auto "Tool/release default" on yes "Force merged /usr" off no "Force split /usr" off) || continue; ROOTFS_BACKEND_MERGED="$value" ;;
+                    merged) value=$(tui_radio "Merged /usr" "Control /bin, /sbin and /lib symlinks:" \
+                        auto "Tool/release default" "$(_rootfs_radio_state "$ROOTFS_BACKEND_MERGED" auto)" \
+                        yes "Force merged /usr" "$(_rootfs_radio_state "$ROOTFS_BACKEND_MERGED" yes)" \
+                        no "Force split /usr" "$(_rootfs_radio_state "$ROOTFS_BACKEND_MERGED" no)") || continue; ROOTFS_BACKEND_MERGED="$value" ;;
                     keyring) rootfs_backend_keyring_menu ;;
                     verbose) [ "$ROOTFS_BACKEND_VERBOSE" = yes ] && ROOTFS_BACKEND_VERBOSE=no || ROOTFS_BACKEND_VERBOSE=yes ;;
                     done) return 0 ;;
                 esac ;;
-            mmdebstrap)
-                c=$(tui_menu "mmdebstrap configuration" "Configure mmdebstrap:" \
+            mmdebstrap|bdebstrap)
+                c=$(tui_menu "$backend configuration" "Configure mmdebstrap:" \
                     variant "Variant: $ROOTFS_BACKEND_VARIANT" \
                     mode "Execution mode: $ROOTFS_MMDEBSTRAP_MODE" \
                     components "Archive components: $ROOTFS_BACKEND_COMPONENTS" \
@@ -399,9 +566,18 @@ rootfs_backend_config_menu() { # <distro> <backend> [preserve]
                     verbose "Verbose output: $ROOTFS_BACKEND_VERBOSE" \
                     "done" "Use these settings") || return 1
                 case "$c" in
-                    variant) value=$(tui_radio "mmdebstrap variant" "Base package set:" minbase "Minimal debootstrap-compatible root" on apt "Essential packages plus apt" off required "Required priority" off important "Required and important priority" off standard "Standard system" off buildd "Build environment" off) || continue; ROOTFS_BACKEND_VARIANT="$value" ;;
-                    mode) value=$(tui_radio "mmdebstrap mode" "Filesystem ownership/execution mode:" root "Run directly as root" on auto "Let mmdebstrap choose" off unshare "User namespace mode" off) || continue; ROOTFS_MMDEBSTRAP_MODE="$value" ;;
-                    components) value=$(tui_input "Archive components" "Comma-separated components:" "$ROOTFS_BACKEND_COMPONENTS") || continue; rootfs_backend_valid_components "$value" && ROOTFS_BACKEND_COMPONENTS="${value// /,}" || tui_msg "Invalid components" "Use names separated by commas." ;;
+                    variant) value=$(tui_radio "mmdebstrap variant" "Base package set:" \
+                        minbase "Minimal debootstrap-compatible root" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" minbase)" \
+                        apt "Essential packages plus apt" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" apt)" \
+                        required "Required priority" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" required)" \
+                        important "Required and important priority" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" important)" \
+                        standard "Standard system" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" standard)" \
+                        buildd "Build environment" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" buildd)") || continue; ROOTFS_BACKEND_VARIANT="$value" ;;
+                    mode) value=$(tui_radio "mmdebstrap mode" "Filesystem ownership/execution mode:" \
+                        root "Run directly as root" "$(_rootfs_radio_state "$ROOTFS_MMDEBSTRAP_MODE" root)" \
+                        auto "Let mmdebstrap choose" "$(_rootfs_radio_state "$ROOTFS_MMDEBSTRAP_MODE" auto)" \
+                        unshare "User namespace mode" "$(_rootfs_radio_state "$ROOTFS_MMDEBSTRAP_MODE" unshare)") || continue; ROOTFS_MMDEBSTRAP_MODE="$value" ;;
+                    components) value=$(tui_input "Archive components" "Comma-separated components:" "$ROOTFS_BACKEND_COMPONENTS") || continue; rootfs_backend_components_compatible "$distro" "$value" && ROOTFS_BACKEND_COMPONENTS="${value// /,}" || tui_msg "Invalid components" "Those components are not valid for $distro." ;;
                     include) value=$(rootfs_backend_edit_packages "Bootstrap include" "$ROOTFS_BACKEND_INCLUDE") && ROOTFS_BACKEND_INCLUDE="$value" ;;
                     exclude) value=$(rootfs_backend_edit_packages "APT remove patterns" "$ROOTFS_BACKEND_EXCLUDE") && ROOTFS_BACKEND_EXCLUDE="$value" ;;
                     keyring) rootfs_backend_keyring_menu ;;
@@ -420,7 +596,10 @@ rootfs_backend_config_menu() { # <distro> <backend> [preserve]
                     verbose "Verbose output: $ROOTFS_BACKEND_VERBOSE" \
                     "done" "Use these settings") || return 1
                 case "$c" in
-                    flavour) value=$(tui_radio "cdebootstrap flavour" "Base package set:" minimal "Essential packages plus apt" on standard "Required and important packages" off build "Build environment" off) || continue; ROOTFS_BACKEND_VARIANT="$value" ;;
+                    flavour) value=$(tui_radio "cdebootstrap flavour" "Base package set:" \
+                        minimal "Essential packages plus apt" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" minimal)" \
+                        standard "Required and important packages" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" standard)" \
+                        build "Build environment" "$(_rootfs_radio_state "$ROOTFS_BACKEND_VARIANT" build)") || continue; ROOTFS_BACKEND_VARIANT="$value" ;;
                     include) value=$(rootfs_backend_edit_packages "Bootstrap include" "$ROOTFS_BACKEND_INCLUDE") && ROOTFS_BACKEND_INCLUDE="$value" ;;
                     exclude) value=$(rootfs_backend_edit_packages "Bootstrap exclude" "$ROOTFS_BACKEND_EXCLUDE") && ROOTFS_BACKEND_EXCLUDE="$value" ;;
                     configdir) value=$(tui_input "cdebootstrap config" "Optional absolute configuration directory (blank for system default):" "$ROOTFS_CDEBOOTSTRAP_CONFIGDIR") || continue; if [ -z "$value" ]; then ROOTFS_CDEBOOTSTRAP_CONFIGDIR=""; elif [ "${value#/}" != "$value" ] && [ -d "$value" ]; then ROOTFS_CDEBOOTSTRAP_CONFIGDIR="$value"; else tui_msg "Invalid directory" "Select an existing absolute directory or leave blank."; fi ;;
@@ -447,6 +626,11 @@ rootfs_backend_config_menu() { # <distro> <backend> [preserve]
                     custom) value=$(tui_input "Custom multistrap config" "Absolute readable config file (blank to generate one):" "$ROOTFS_MULTISTRAP_CONFIG") || continue; if [ -z "$value" ]; then ROOTFS_MULTISTRAP_CONFIG=""; elif [ "${value#/}" != "$value" ] && [ -r "$value" ]; then ROOTFS_MULTISTRAP_CONFIG="$value"; else tui_msg "Invalid config" "Select an absolute readable file or leave blank."; fi ;;
                     done) return 0 ;;
                 esac ;;
+            *)
+                # No case matched previously, so the enclosing `while true`
+                # spun forever drawing nothing. Backends without tool options
+                # simply have nothing to configure.
+                return 0 ;;
         esac
     done
 }
@@ -936,13 +1120,21 @@ rootfs_release_menu() { # <distro> <arch>
         arch) def=rolling; candidates=rolling ;;
         void) def=current; candidates=current ;;
     esac
+    local have_default=0
     while IFS= read -r r; do
         [ -n "$r" ] || continue
-        state=off; [ "$r" = "$def" ] && state=on
+        state=off; [ "$r" = "$def" ] && { state=on; have_default=1; }
         tags+=("$r" "$distro $r" "$state")
     done <<< "$candidates"
+    # Repository discovery is trimmed to the last 12 entries, so $def is not
+    # guaranteed to survive. With nothing marked "on", dialog returns an empty
+    # string and the build aborts, so fall back to preselecting the first
+    # candidate instead.
+    if [ "$have_default" = 0 ] && [ ${#tags[@]} -ge 3 ]; then
+        tags[2]=on
+    fi
     tags+=(custom "Enter a release manually" off)
-    r=$(tui_radio "Rootfs Builder 4/13" "Release from the $distro repository (SPACE selects):" "${tags[@]}") || return 1
+    r=$(tui_radio "Rootfs Builder 3/13" "Release from the $distro repository (SPACE selects):" "${tags[@]}") || return 1
     if [ "$r" = custom ]; then
         r=$(tui_input "Custom release" "Release/branch name:" "$def") || return 1
         rootfs_valid_release "$r" || { tui_msg "Invalid release" "Use only letters, digits, and . _ + - characters."; return 1; }
@@ -1684,7 +1876,8 @@ _rootfs_bs_deb_deps() {
 # any remaining dependency/version/overwrite conflicts, then let apt-get -f
 # clean up whatever it still can.
 _rootfs_bs_force_install_deb() {
-    local debfile="$1" workdir="$2" label="${3:-$(basename "$debfile")}"
+    local debfile="$1" workdir="$2"
+    local label="${3:-$(basename "$debfile")}"
 
     [ -f "$debfile" ] || return 1
 
@@ -2472,6 +2665,1207 @@ _rootfs_bs_web_fallback() {
         skip|"") return 0 ;;
     esac
 }
+###############################################################################
+# CHROOT WORKBENCH — mount, modify and pack an existing root filesystem
+###############################################################################
+#
+# rootfs_manage operates on builds discovered under $ROOTFS_BASE. The workbench
+# is deliberately different: it works on ANY directory the user points it at,
+# including trees unpacked from someone else's tarball, and it exposes the
+# execution engine and the mount set as first-class, inspectable things.
+#
+# The central idea is that the engine determines the mounting strategy:
+#
+#   chroot / qemu-chroot  need real kernel mounts set up beforehand
+#   proot                 does its own binding in userspace; real mounts are
+#                         unnecessary and actively harmful (they would be left
+#                         behind inside a tree we are about to archive)
+#   nspawn / unshare      create and tear down their own namespace mounts
+#
+# So mounts are only ever established for the engines that need them, and
+# packing always verifies the tree is unmounted first — archiving a rootfs with
+# /proc or /dev bind-mounted captures the HOST's virtual filesystems, which at
+# best bloats the tarball and at worst leaks host state into a shipped image.
+
+# Canonical absolute path without resolving to something outside the tree.
+rootfs_wb_abspath() { # <path>
+    local p="$1"
+    [ -d "$p" ] || { printf '%s\n' "${p%/}"; return 0; }
+    ( cd "$p" 2>/dev/null && pwd -P ) || printf '%s\n' "${p%/}"
+}
+
+# ---- Execution engines ------------------------------------------------------
+
+rootfs_wb_engines() { # -> tag|label lines, most-preferred first
+    printf 'chroot|chroot — kernel chroot(2), needs root and explicit mounts\n'
+    printf 'proot|proot — userspace binding, works without root\n'
+    printf 'nspawn|systemd-nspawn — container-style, manages its own mounts\n'
+    printf 'unshare|unshare — private mount/PID namespace, then chroot\n'
+}
+
+rootfs_wb_engine_available() { # <engine>
+    case "$1" in
+        chroot)  command -v chroot >/dev/null 2>&1 ;;
+        proot)   command -v proot  >/dev/null 2>&1 ;;
+        nspawn)  command -v systemd-nspawn >/dev/null 2>&1 ;;
+        unshare) command -v unshare >/dev/null 2>&1 && command -v chroot >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Some engines additionally need real root; proot is the notable exception and
+# is the reason it is offered at all.
+rootfs_wb_engine_needs_root() { # <engine>
+    case "$1" in
+        chroot|nspawn) return 0 ;;
+        proot)         return 1 ;;
+        unshare)       [ "$(id -u)" = 0 ] ;;
+        *)             return 0 ;;
+    esac
+}
+
+# Whether this engine expects rootfs_mount_chroot_fs to have run first.
+rootfs_wb_engine_uses_kernel_mounts() { # <engine>
+    case "$1" in chroot) return 0 ;; *) return 1 ;; esac
+}
+
+rootfs_wb_engine_status() { # <engine>
+    if ! rootfs_wb_engine_available "$1"; then
+        printf 'not installed\n'
+    elif rootfs_wb_engine_needs_root "$1" && [ "$(id -u)" != 0 ]; then
+        printf 'installed, needs root\n'
+    else
+        printf 'ready\n'
+    fi
+}
+
+rootfs_wb_engine_default() { # <target>
+    local e
+    for e in chroot proot nspawn unshare; do
+        rootfs_wb_engine_available "$e" || continue
+        rootfs_wb_engine_needs_root "$e" && [ "$(id -u)" != 0 ] && continue
+        printf '%s\n' "$e"
+        return 0
+    done
+    printf 'chroot\n'
+}
+
+rootfs_wb_engine_get() { # <target>
+    local t="$1" e
+    e=$(rootfs_chroot_option_get "$t" ENGINE "")
+    [ -n "$e" ] && rootfs_wb_engine_available "$e" || e=$(rootfs_wb_engine_default "$t")
+    printf '%s\n' "$e"
+}
+
+rootfs_wb_engine_menu() { # <target>
+    local t="$1" current tag label sel
+    local -a args=()
+    current=$(rootfs_wb_engine_get "$t")
+    while IFS='|' read -r tag label; do
+        [ -n "$tag" ] || continue
+        rootfs_wb_engine_available "$tag" || continue
+        args+=("$tag" "$label [$(rootfs_wb_engine_status "$tag")]" \
+               "$(_rootfs_radio_state "$current" "$tag")")
+    done < <(rootfs_wb_engines)
+    if [ ${#args[@]} -eq 0 ]; then
+        tui_msg "No execution engine" \
+"None of chroot, proot, systemd-nspawn or unshare is installed.
+
+Install one (proot works without root) and retry."
+        return 0
+    fi
+    sel=$(tui_radio "Execution engine" \
+        "How commands are executed inside the rootfs (SPACE selects):" "${args[@]}") || return 0
+    [ -n "$sel" ] || return 0
+    if rootfs_wb_engine_needs_root "$sel" && [ "$(id -u)" != 0 ]; then
+        tui_msg "Needs root" "$sel requires root privileges.\n\nproot runs the same tree without them."
+        return 0
+    fi
+    rootfs_chroot_option_set "$t" ENGINE "$sel"
+    tui_msg "Execution engine" "Engine set to $sel for $(basename "$t")."
+}
+
+# Build the argv that runs "$@" inside <target> under <engine>.
+# Printed one argument per line so the caller can read it into an array safely.
+rootfs_wb_engine_argv() { # <target> <engine> <command> [args...]
+    local t="$1" engine="$2"; shift 2
+    local arch qbin bind a
+    arch=$(rootfs_target_arch "$t")
+    case "$engine" in
+        chroot)
+            if needs_qemu "$arch"; then
+                qbin=$(qemu_bin_for "$arch")
+                [ -n "$qbin" ] || return 126
+                printf '%s\n' chroot "$t" "/usr/bin/$qbin"
+            else
+                printf '%s\n' chroot "$t"
+            fi
+            ;;
+        proot)
+            # -0 presents a fake uid 0 inside the tree, which is what makes
+            # package managers work without real root. proot performs its own
+            # binding, so this must NOT be combined with kernel mounts.
+            printf '%s\n' proot -0 -r "$t"
+            for bind in /proc /sys /dev /dev/pts /run /etc/resolv.conf; do
+                [ -e "$bind" ] && printf '%s\n%s\n' -b "$bind"
+            done
+            while IFS= read -r bind; do
+                [ -n "$bind" ] || continue
+                printf '%s\n%s\n' -b "$bind"
+            done < <(rootfs_wb_binds_as_proot "$t")
+            if needs_qemu "$arch"; then
+                qbin=$(qemu_bin_for "$arch")
+                [ -n "$qbin" ] && command -v "$qbin" >/dev/null 2>&1 &&
+                    printf '%s\n%s\n' -q "$qbin"
+            fi
+            printf '%s\n' -w /root
+            ;;
+        nspawn)
+            printf '%s\n' systemd-nspawn -q -D "$t" --console=interactive
+            while IFS= read -r bind; do
+                [ -n "$bind" ] || continue
+                printf '%s\n%s\n' --bind "$bind"
+            done < <(rootfs_wb_binds_as_proot "$t")
+            ;;
+        unshare)
+            # --mount-proc gives the namespace its own /proc, so no host mount
+            # has to be created or cleaned up afterwards.
+            printf '%s\n' unshare --mount --uts --ipc --pid --fork --mount-proc
+            [ "$(id -u)" = 0 ] || printf '%s\n' --user --map-root-user
+            printf '%s\n' chroot "$t"
+            ;;
+        *) return 1 ;;
+    esac
+    for a in "$@"; do printf '%s\n' "$a"; done
+}
+
+# ---- Persistent bind mounts -------------------------------------------------
+#
+# Stored in the rootfs's own /etc/systui-chroot.conf as a space-separated list
+# of src>dst entries, so they survive across sessions and travel with the tree.
+
+rootfs_wb_bind_valid() { # <src> <dst>
+    [ -e "$1" ] || return 1
+    case "$1" in /*) ;; *) return 1 ;; esac
+    case "$2" in /*) ;; *) return 1 ;; esac
+    # A destination escaping the rootfs would bind-mount over the host.
+    case "$2" in *..*) return 1 ;; esac
+    return 0
+}
+
+rootfs_wb_binds_get() { # <target> -> "src>dst" per line
+    local t="$1" raw entry
+    raw=$(rootfs_chroot_option_get "$t" BINDS "")
+    for entry in $raw; do
+        [ -n "$entry" ] && printf '%s\n' "$entry"
+    done
+}
+
+# proot/nspawn take "src:dst" rather than our "src>dst" storage form.
+rootfs_wb_binds_as_proot() { # <target>
+    local entry src dst
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        src=${entry%%>*}; dst=${entry#*>}
+        printf '%s:%s\n' "$src" "$dst"
+    done < <(rootfs_wb_binds_get "$1")
+}
+
+rootfs_wb_binds_menu() { # <target>
+    local t="$1" c entry src dst
+    local -a args=()
+    while true; do
+        args=()
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            args+=("$entry" "${entry%%>*}  ->  ${entry#*>}")
+        done < <(rootfs_wb_binds_get "$t")
+        # tui_menu_no_tags hides the tag column, so the internal tags below
+        # are never shown; entries are always "src>dst" and cannot collide
+        # with the plain action words.
+        c=$(tui_menu_no_tags "Bind mounts" \
+            "Host directories made available inside $(basename "$t").\nApplied by the engine on entry; $((${#args[@]} / 2)) configured:" \
+            "${args[@]}" \
+            add "Add a bind mount" \
+            clear "Remove all bind mounts" \
+            back "Back") || return 0
+        case "$c" in
+            back|"") return 0 ;;
+            add)
+                src=$(tui_input "Bind mount" "Host path to expose (absolute):" "") || continue
+                [ -n "$src" ] || continue
+                dst=$(tui_input "Bind mount" "Path inside the rootfs (absolute):" "$src") || continue
+                [ -n "$dst" ] || continue
+                if ! rootfs_wb_bind_valid "$src" "$dst"; then
+                    tui_msg "Invalid bind" "Both paths must be absolute, the host path must exist, and the target must not contain '..'."
+                    continue
+                fi
+                rootfs_chroot_option_set "$t" BINDS "$(printf '%s %s>%s' \
+                    "$(rootfs_wb_binds_get "$t" | tr '\n' ' ')" "$src" "$dst" | tr -s ' ' | sed 's/^ //;s/ $//')"
+                ;;
+            clear)
+                tui_yesno "Bind mounts" "Remove every configured bind mount?" && rootfs_chroot_option_set "$t" BINDS ""
+                ;;
+            *)
+                tui_yesno "Bind mount" "Remove this bind mount?\n\n${c%%>*} -> ${c#*>}" || continue
+                rootfs_chroot_option_set "$t" BINDS \
+                    "$(rootfs_wb_binds_get "$t" | grep -vxF -- "$c" | tr '\n' ' ' | sed 's/ $//')"
+                ;;
+        esac
+    done
+}
+
+# ---- Live mount discovery ---------------------------------------------------
+#
+# rootfs_unmount_chroot_fs only knows about mounts IT created in this session.
+# If systui was killed, or a mount was made by hand, those are invisible to it
+# and silently leak — and a leaked /dev bind is exactly what ruins a tarball.
+# These helpers work from /proc/mounts instead, so they see everything.
+
+rootfs_wb_live_mounts() { # <target> -> mount points under target, deepest first
+    local t
+    t=$(rootfs_wb_abspath "$1")
+    [ -r /proc/mounts ] || return 0
+    awk -v root="$t" '
+        {
+            mp = $2
+            # /proc/mounts octal-escapes spaces and friends.
+            gsub(/\\040/, " ", mp)
+            gsub(/\\011/, "\t", mp)
+            gsub(/\\134/, "\\", mp)
+            if (mp == root || index(mp, root "/") == 1) print length(mp) "\t" mp
+        }
+    ' /proc/mounts | sort -rn | cut -f2-
+}
+
+rootfs_wb_mount_count() { # <target>
+    rootfs_wb_live_mounts "$1" | grep -c . || true
+}
+
+# Detach everything under the tree, deepest first, falling back to a lazy
+# umount for anything still busy.
+rootfs_wb_detach_all() { # <target>
+    local t="$1" mp failed=0
+    while IFS= read -r mp; do
+        [ -n "$mp" ] || continue
+        umount "$mp" 2>>"$LOGFILE" && continue
+        umount -l "$mp" 2>>"$LOGFILE" || { warn "Could not detach $mp"; failed=1; }
+    done < <(rootfs_wb_live_mounts "$t")
+    # Session bookkeeping is now stale; clear it so a later teardown does not
+    # try to unmount paths that are already gone.
+    ROOTFS_ACTIVE_MOUNTS=""
+    export ROOTFS_ACTIVE_MOUNTS
+    [ "$failed" = 0 ]
+}
+
+rootfs_wb_mount_report() { # <target>
+    local t="$1" f mp n
+    f="$(rootfs_report_file)"
+    n=$(rootfs_wb_mount_count "$t")
+    {
+        echo "Rootfs      : $t"
+        echo "Engine      : $(rootfs_wb_engine_get "$t")"
+        echo "Target arch : $(rootfs_target_arch "$t")"
+        echo "Live mounts : $n"
+        echo
+        if [ "$n" -gt 0 ]; then
+            echo "--- Active mounts (deepest first; this is the order they detach) ---"
+            while IFS= read -r mp; do [ -n "$mp" ] && echo "  $mp"; done < <(rootfs_wb_live_mounts "$t")
+        else
+            echo "--- Active mounts ---"
+            echo "  (none — the tree is safe to archive, move or delete)"
+        fi
+        echo
+        echo "--- Configured bind mounts ---"
+        if rootfs_wb_binds_get "$t" | grep -q .; then
+            while IFS= read -r mp; do
+                [ -n "$mp" ] && printf '  %s -> %s\n' "${mp%%>*}" "${mp#*>}"
+            done < <(rootfs_wb_binds_get "$t")
+        else
+            echo "  (none)"
+        fi
+        echo
+        echo "--- Virtual filesystem state inside the tree ---"
+        for mp in proc sys dev dev/pts run; do
+            if [ -d "$t/$mp" ]; then
+                printf '  /%-8s present%s\n' "$mp" \
+                    "$(mountpoint -q "$t/$mp" 2>/dev/null && echo ' (mounted)' || echo '')"
+            else
+                printf '  /%-8s missing\n' "$mp"
+            fi
+        done
+    } > "$f"
+    tui_text "Mount status: $(basename "$t")" "$f"
+}
+
+# Establish the kernel mounts for engines that need them and leave them up, so
+# the user can run several commands or work in another terminal.
+rootfs_wb_mount_persistent() { # <target>
+    local t="$1" entry src dst
+    rootfs_mount_chroot_fs "$t" || true
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        src=${entry%%>*}; dst=${entry#*>}
+        rootfs_wb_bind_valid "$src" "$dst" || { warn "Skipping invalid bind: $entry"; continue; }
+        mkdir -p "$t$dst" 2>/dev/null || true
+        mountpoint -q "$t$dst" 2>/dev/null && continue
+        mount --bind "$src" "$t$dst" 2>>"$LOGFILE" || warn "Could not bind $src -> $t$dst"
+    done < <(rootfs_wb_binds_get "$t")
+    tui_msg "Mounted" \
+"Virtual filesystems and configured binds are mounted under:
+$t
+
+They stay mounted until you detach them. Detach before packing,
+moving or deleting the tree."
+}
+
+# ---- Interactive and one-shot execution -------------------------------------
+
+rootfs_wb_enter() { # <target>
+    local t="$1" engine shell rc=0 owned=0
+    local -a argv=()
+    [ -x "$t/bin/sh" ] || { tui_msg "Not a rootfs" "$t has no executable /bin/sh."; return 1; }
+    engine=$(rootfs_wb_engine_get "$t")
+    if ! rootfs_wb_engine_available "$engine"; then
+        tui_msg "Engine unavailable" "$engine is not installed. Choose another engine."
+        return 1
+    fi
+    if rootfs_wb_engine_needs_root "$engine" && [ "$(id -u)" != 0 ]; then
+        tui_msg "Needs root" "$engine requires root. proot works without it."
+        return 1
+    fi
+    shell=$(rootfs_shell_path "$t" "$(rootfs_chroot_option_get "$t" SHELL /bin/bash)")
+
+    # Only chroot needs us to build the mounts; every other engine either binds
+    # in userspace or owns its namespace. Mounting for them would leave real
+    # host mounts inside a tree they think they are managing.
+    if rootfs_wb_engine_uses_kernel_mounts "$engine" && [ "$(rootfs_wb_mount_count "$t")" = 0 ]; then
+        rootfs_mount_chroot_fs "$t" || true
+        owned=1
+    fi
+
+    mapfile -t argv < <(rootfs_wb_engine_argv "$t" "$engine" "$shell" -l) || true
+    if [ ${#argv[@]} -eq 0 ]; then
+        [ "$owned" = 1 ] && rootfs_unmount_chroot_fs "$t" "${ROOTFS_ACTIVE_MOUNTS:-}"
+        tui_msg "Engine error" "Could not build a command line for engine '$engine'."
+        return 1
+    fi
+
+    clear
+    trap 'rootfs_unmount_chroot_fs "$t" "${ROOTFS_ACTIVE_MOUNTS:-}"; exit 130' INT
+    trap 'rootfs_unmount_chroot_fs "$t" "${ROOTFS_ACTIVE_MOUNTS:-}"; exit 143' TERM HUP
+    echo "==============================================================="
+    echo " Rootfs : $t"
+    echo " Engine : $engine    Shell: $shell"
+    echo " Mounts : $(rootfs_wb_mount_count "$t") live"
+    echo " Type 'exit' to leave."
+    echo "==============================================================="
+    "${argv[@]}" || rc=$?
+    trap - INT TERM HUP
+
+    if [ "$owned" = 1 ]; then
+        rootfs_unmount_chroot_fs "$t" "${ROOTFS_ACTIVE_MOUNTS:-}"
+        echo "Left rootfs; temporary mounts detached."
+    else
+        echo "Left rootfs; mounts left as they were."
+    fi
+    read -rp "(press Enter)" _ || true
+    return "$rc"
+}
+
+rootfs_wb_run_once() { # <target>
+    local t="$1" engine cmd rc=0 owned=0
+    local -a argv=()
+    cmd=$(tui_input "Run in rootfs" "Command to run inside $(basename "$t"):" "") || return 0
+    [ -n "$cmd" ] || return 0
+    engine=$(rootfs_wb_engine_get "$t")
+    rootfs_wb_engine_available "$engine" || { tui_msg "Engine unavailable" "$engine is not installed."; return 0; }
+    if rootfs_wb_engine_uses_kernel_mounts "$engine" && [ "$(rootfs_wb_mount_count "$t")" = 0 ]; then
+        rootfs_mount_chroot_fs "$t" || true
+        owned=1
+    fi
+    mapfile -t argv < <(rootfs_wb_engine_argv "$t" "$engine" /bin/sh -c "$cmd") || true
+    if [ ${#argv[@]} -gt 0 ]; then
+        run_cmd "[$engine] $cmd" "${argv[@]}" || rc=$?
+    else
+        tui_msg "Engine error" "Could not build a command line for engine '$engine'."
+    fi
+    [ "$owned" = 1 ] && rootfs_unmount_chroot_fs "$t" "${ROOTFS_ACTIVE_MOUNTS:-}"
+    return 0
+}
+
+# ---- Packing ----------------------------------------------------------------
+
+rootfs_wb_pack() { # <target>
+    local t="$1" fmt out sel excl missing_tool n
+    local -a taropts=()
+
+    # Packing a tree with /proc, /sys or /dev still bind-mounted archives the
+    # HOST's virtual filesystems. Refuse until the tree is clean.
+    n=$(rootfs_wb_mount_count "$t")
+    if [ "$n" -gt 0 ]; then
+        tui_yesno "Mounts are active" \
+"$n filesystem(s) are still mounted under this rootfs.
+
+Archiving now would capture the host's /proc, /sys and /dev
+contents instead of the rootfs's own empty directories.
+
+Detach them all and continue?" || return 0
+        rootfs_wb_detach_all "$t" || {
+            tui_msg "Detach failed" "Some mounts could not be detached. See $LOGFILE.\n\nPacking aborted."
+            return 0
+        }
+        [ "$(rootfs_wb_mount_count "$t")" = 0 ] || {
+            tui_msg "Still mounted" "Mounts remain under this rootfs. Packing aborted."
+            return 0
+        }
+    fi
+
+    fmt=$(tui_radio "Pack rootfs" "Archive format (SPACE selects):" \
+        gz  "tar.gz — maximum compatibility" on \
+        zst "tar.zst — faster, usually smaller" off \
+        xz  "tar.xz — smallest, slowest" off) || return 0
+    [ -n "$fmt" ] || return 0
+
+    missing_tool=$(rootfs_archive_missing_tool "$fmt")
+    [ -n "$missing_tool" ] && { tui_msg "Missing tool" "$missing_tool is required for tar.$fmt archives."; return 0; }
+
+    excl=$(tui_check "Pack rootfs" "Exclude from the archive (SPACE toggles):" \
+        caches "Package manager caches" on \
+        logs   "/var/log contents" off \
+        tmp    "/tmp and /var/tmp contents" on \
+        state  "systui build-state and backend files" off \
+        hist   "Root shell history" on) || return 0
+    excl=" ${excl//\"/} "
+    case "$excl" in *" caches "*) taropts+=(
+        --exclude=./var/cache/apt/archives --exclude=./var/lib/apt/lists
+        --exclude=./var/cache/apk --exclude=./var/cache/pacman/pkg
+        --exclude=./var/cache/dnf --exclude=./var/cache/zypp
+        --exclude=./var/cache/xbps --exclude=./var/cache/distfiles ) ;;
+    esac
+    case "$excl" in *" logs "*)  taropts+=(--exclude=./var/log/*) ;; esac
+    case "$excl" in *" tmp "*)   taropts+=(--exclude=./tmp/* --exclude=./var/tmp/*) ;; esac
+    case "$excl" in *" state "*) taropts+=(--exclude=./.systui-build-state --exclude=./.systui-backend.conf) ;; esac
+    case "$excl" in *" hist "*)  taropts+=(--exclude=./root/.bash_history --exclude=./root/.ash_history) ;; esac
+
+    out=$(tui_input "Pack rootfs" "Write the archive to:" "${t%/}.tar.$fmt") || return 0
+    [ -n "$out" ] || return 0
+    case "$out" in /*) ;; *) tui_msg "Invalid path" "Enter an absolute path for the archive."; return 0 ;; esac
+    # Writing the archive inside the tree being archived makes tar consume its
+    # own growing output.
+    case "$(rootfs_wb_abspath "$(dirname "$out")")/" in
+        "$(rootfs_wb_abspath "$t")"/*)
+            tui_msg "Invalid path" "The archive cannot be written inside the rootfs being packed."
+            return 0 ;;
+    esac
+    [ -e "$out" ] && { tui_yesno "Overwrite?" "$out already exists.\n\nReplace it?" || return 0; }
+
+    run_cmd "Packing $(basename "$t") -> $out" \
+        rootfs_tar_create "$fmt" "$t" "$out" "${taropts[@]}" || {
+            tui_msg "Pack failed" "The archive could not be created. See $LOGFILE."
+            rm -f "$out"
+            return 0
+        }
+    if tui_yesno "Checksum" "Archive written:\n$out\n\nGenerate a SHA-256 checksum file?"; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            ( cd "$(dirname "$out")" && sha256sum "$(basename "$out")" > "$(basename "$out").sha256" )
+            tui_msg "Done" "Archive and checksum written:\n$out\n$out.sha256"
+        else
+            tui_msg "Done" "Archive written:\n$out\n\n(sha256sum is not installed; no checksum generated.)"
+        fi
+    else
+        tui_msg "Done" "Archive written:\n$out\n\nSize: $(du -h "$out" 2>/dev/null | cut -f1)"
+    fi
+}
+
+rootfs_wb_unpack() { # -> prints the new rootfs directory, or nothing
+    local src dst
+    src=$(tui_input "Unpack rootfs" "Path to a rootfs tarball:" "") || return 1
+    [ -n "$src" ] || return 1
+    [ -r "$src" ] || { tui_msg "Not found" "$src is not readable."; return 1; }
+    dst=$(tui_input "Unpack rootfs" "Extract into (must be empty or new):" \
+        "$ROOTFS_BASE/$(basename "${src%%.tar*}")") || return 1
+    [ -n "$dst" ] || return 1
+    case "$dst" in /*) ;; *) tui_msg "Invalid path" "Enter an absolute directory path."; return 1 ;; esac
+    if [ -e "$dst" ] && [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
+        tui_msg "Not empty" "$dst already exists and is not empty."
+        return 1
+    fi
+    mkdir -p "$dst" || { tui_msg "Error" "Could not create $dst."; return 1; }
+    if ! run_cmd "Unpacking $(basename "$src")" tar -C "$dst" --numeric-owner -xpf "$src"; then
+        tui_msg "Unpack failed" "The archive could not be extracted. See $LOGFILE."
+        return 1
+    fi
+    tui_msg "Unpacked" "Extracted into:\n$dst"
+    printf '%s\n' "$dst"
+}
+
+# ---- Workbench menu ---------------------------------------------------------
+
+# Pick a rootfs: anything under $ROOTFS_BASE, an arbitrary path, or a tarball
+# unpacked on the spot.
+rootfs_wb_select() { # -> prints a target directory, or nothing
+    local base="$ROOTFS_BASE" d sel
+    local -a tags=()
+    if [ -d "$base" ]; then
+        for d in "$base"/*/; do
+            [ -d "$d" ] || continue
+            d=${d%/}
+            tags+=("$d" "$(basename "$d")  $(du -sh "$d" 2>/dev/null | cut -f1)")
+        done
+    fi
+    sel=$(tui_menu_no_tags "Chroot workbench" \
+        "Select a root filesystem to work on:" \
+        "${tags[@]}" \
+        browse "Enter a path to any rootfs directory" \
+        unpack "Unpack a tarball into a new rootfs" \
+        back   "Back") || return 1
+    case "$sel" in
+        ""|back) return 1 ;;
+        browse)
+            sel=$(tui_input "Rootfs path" "Absolute path to a rootfs directory:" "$base/") || return 1
+            [ -n "$sel" ] || return 1
+            [ -d "$sel" ] || { tui_msg "Not found" "$sel is not a directory."; return 1; }
+            printf '%s\n' "$(rootfs_wb_abspath "$sel")" ;;
+        unpack)
+            sel=$(rootfs_wb_unpack) || return 1
+            [ -n "$sel" ] && printf '%s\n' "$sel" || return 1 ;;
+        *) printf '%s\n' "$sel" ;;
+    esac
+}
+
+# The per-rootfs half of the workbench, split out so other menus (notably the
+# distro managers) can hand a tree straight to it.
+# Returns 0 to go back to the caller, 2 to ask for a different rootfs.
+rootfs_wb_menu_for() { # <target>
+    local t="$1" c engine mounts
+    [ -x "$t/bin/sh" ] || tui_msg "Warning" \
+"$t has no executable /bin/sh.
+
+You can still mount and pack it, but entering it will fail."
+    while true; do
+        engine=$(rootfs_wb_engine_get "$t")
+        mounts=$(rootfs_wb_mount_count "$t")
+        c=$(tui_menu "Workbench: $(basename "$t")" \
+            "Engine: $engine   Live mounts: $mounts   Arch: $(rootfs_target_arch "$t")" \
+            enter    "Enter an interactive session" \
+            run      "Run a single command" \
+            engine   "Execution engine (chroot, proot, nspawn, unshare)" \
+            mount    "Mount virtual filesystems and binds (persistent)" \
+            detach   "Detach every mount under this rootfs" \
+            binds    "Configure bind mounts" \
+            status   "Mount and engine status report" \
+            pack     "Pack into a tarball" \
+            pkg      "Package management inside the rootfs" \
+            config   "In-rootfs configuration" \
+            other    "Work on a different rootfs" \
+            back     "Back") || return 0
+        case "$c" in
+            enter)  rootfs_wb_enter "$t" || true ;;
+            run)    rootfs_wb_run_once "$t" ;;
+            engine) rootfs_wb_engine_menu "$t" ;;
+            mount)
+                if [ "$mounts" -gt 0 ]; then
+                    tui_msg "Already mounted" "$mounts filesystem(s) are already mounted under this rootfs."
+                else
+                    rootfs_wb_mount_persistent "$t"
+                fi ;;
+            detach)
+                if [ "$mounts" = 0 ]; then
+                    tui_msg "Nothing mounted" "No filesystems are mounted under this rootfs."
+                elif rootfs_wb_detach_all "$t"; then
+                    tui_msg "Detached" "All mounts under $(basename "$t") were detached."
+                else
+                    tui_msg "Partly detached" "Some mounts could not be detached. See $LOGFILE."
+                fi ;;
+            binds)  rootfs_wb_binds_menu "$t" ;;
+            status) rootfs_wb_mount_report "$t" ;;
+            pack)   rootfs_wb_pack "$t" ;;
+            pkg)    rootfs_pkg_menu "$t" ;;
+            config) rootfs_cfg_menu "$t" ;;
+            other)  return 2 ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+menu_rootfs_workbench() {
+    local t rc
+    while true; do
+        t=$(rootfs_wb_select) || return 0
+        [ -n "$t" ] || return 0
+        rootfs_wb_menu_for "$t"; rc=$?
+        # 2 means "pick another rootfs"; anything else leaves the workbench.
+        [ "$rc" = 2 ] || return 0
+    done
+}
+
+
+###############################################################################
+# DISTRO MANAGERS — proot-distro, chroot-distro, distrobox and friends
+###############################################################################
+#
+# These are deliberately NOT bootstrap backends in rootfs_backend_catalog, and
+# that is a correctness decision rather than a stylistic one. Every backend in
+# that catalogue accepts a target directory, a mirror, a release and an
+# architecture, and the builder promises the user those four things. A distro
+# manager accepts none of them: it owns its own rootfs store, ships one pinned
+# version per distribution, and picks its own mirrors. Wiring them into the
+# catalogue would mean silently ignoring four wizard steps.
+#
+# What they are genuinely good at is producing a working rootfs in one command.
+# So systui integrates them as installers, and then hands the resulting
+# directory to the chroot workbench, where the mount/modify/pack tooling lives.
+
+# tag|binary|label
+rootfs_dm_managers() {
+    printf 'proot-distro|proot-distro|proot-distro — rootless distro installer (PRoot)\n'
+    printf 'chroot-distro|chroot-distro|chroot-distro — chroot installer for rooted Android\n'
+    printf 'distrobox|distrobox|distrobox — containers sharing the host home\n'
+    printf 'toolbx|toolbox|Toolbx — Fedora'"'"'s container developer environments\n'
+    printf 'schroot|schroot|schroot — session-managed chroots with profiles\n'
+    printf 'udocker|udocker|udocker — run container images without root\n'
+    printf 'machinectl|machinectl|machinectl — systemd-nspawn machine images\n'
+    printf 'arch-chroot|arch-chroot|arch-chroot — Arch chroot helper (arch-install-scripts)\n'
+}
+
+rootfs_dm_binary() { # <tag>
+    local tag bin label
+    while IFS='|' read -r tag bin label; do
+        [ "$tag" = "$1" ] && { printf '%s\n' "$bin"; return 0; }
+    done < <(rootfs_dm_managers)
+    return 1
+}
+
+rootfs_dm_label() { # <tag>
+    local tag bin label
+    while IFS='|' read -r tag bin label; do
+        [ "$tag" = "$1" ] && { printf '%s\n' "$label"; return 0; }
+    done < <(rootfs_dm_managers)
+    printf '%s\n' "$1"
+}
+
+rootfs_dm_available() { # <tag>
+    local bin; bin=$(rootfs_dm_binary "$1") || return 1
+    command -v "$bin" >/dev/null 2>&1
+}
+
+# proot-distro refuses to run as uid 0 on purpose: running it as root corrupts
+# file ownership and SELinux labels in the tree it manages. distrobox and
+# udocker are likewise designed around an unprivileged user. systui itself
+# requires root, so those managers have to be dropped to a normal user.
+rootfs_dm_runs_as_root() { # <tag>
+    case "$1" in
+        proot-distro|distrobox|toolbx|udocker) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+rootfs_dm_target_user() { # <tag>
+    local tag="$1" u
+    rootfs_dm_runs_as_root "$tag" && { printf 'root\n'; return 0; }
+    u=$(get_config "dm_user_$tag" "" 2>/dev/null || true)
+    [ -n "$u" ] || u="${SUDO_USER:-}"
+    [ -n "$u" ] || u=$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd 2>/dev/null)
+    [ -n "$u" ] || u=root
+    printf '%s\n' "$u"
+}
+
+rootfs_dm_run() { # <tag> <description> <args...>
+    local tag="$1" desc="$2"; shift 2
+    local u bin quoted="" a
+    bin=$(rootfs_dm_binary "$tag") || return 1
+    u=$(rootfs_dm_target_user "$tag")
+    if [ "$u" = root ] || [ "$(id -u)" != 0 ]; then
+        run_cmd "$desc" "$bin" "$@"
+    else
+        # su -c takes a single string, so quote every argument individually.
+        for a in "$bin" "$@"; do quoted="$quoted $(printf '%q' "$a")"; done
+        run_cmd "$desc (as $u)" su - "$u" -c "$quoted"
+    fi
+}
+
+# Capture a manager's own output, honouring the run-as user.
+rootfs_dm_capture() { # <tag> <args...>
+    local tag="$1"; shift
+    local u bin quoted="" a
+    bin=$(rootfs_dm_binary "$tag") || return 1
+    u=$(rootfs_dm_target_user "$tag")
+    if [ "$u" = root ] || [ "$(id -u)" != 0 ]; then
+        "$bin" "$@" 2>&1
+    else
+        for a in "$bin" "$@"; do quoted="$quoted $(printf '%q' "$a")"; done
+        su - "$u" -c "$quoted" 2>&1
+    fi
+}
+
+# ---- Rootfs store location --------------------------------------------------
+#
+# Where each manager keeps the trees it installs. This is the bridge into the
+# workbench, so it is discovered rather than assumed: proot-distro lives under
+# Termux's $PREFIX on Android and elsewhere otherwise, and a user may have
+# relocated the store entirely. An explicit systui override always wins.
+
+rootfs_dm_store_default() { # <tag>
+    local tag="$1" u home d
+    u=$(rootfs_dm_target_user "$tag")
+    home=$(getent passwd "$u" 2>/dev/null | cut -d: -f6)
+    case "$tag" in
+        proot-distro)
+            for d in "${PREFIX:-}/var/lib/proot-distro/installed-rootfs" \
+                     /data/data/com.termux/files/usr/var/lib/proot-distro/installed-rootfs \
+                     "$home/.local/share/proot-distro/installed-rootfs" \
+                     /var/lib/proot-distro/installed-rootfs; do
+                [ -n "$d" ] && [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+            done ;;
+        chroot-distro)
+            # Upstream documents /data/local/chroot-distro as the fixed path.
+            for d in /data/local/chroot-distro /var/lib/chroot-distro; do
+                [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+            done ;;
+        schroot)
+            for d in /srv/chroot /var/lib/schroot/chroots; do
+                [ -d "$d" ] && { printf '%s\n' "$d"; return 0; }
+            done ;;
+        machinectl)
+            [ -d /var/lib/machines ] && { printf '%s\n' /var/lib/machines; return 0; } ;;
+        distrobox|toolbx|udocker)
+            # These keep their trees inside a container engine's layered
+            # storage, not as plain directories, so there is nothing to adopt.
+            return 1 ;;
+    esac
+    return 1
+}
+
+rootfs_dm_store() { # <tag>
+    local override
+    override=$(get_config "dm_store_$1" "" 2>/dev/null || true)
+    if [ -n "$override" ]; then
+        printf '%s\n' "$override"
+        return 0
+    fi
+    rootfs_dm_store_default "$1"
+}
+
+# ---- Installing the managers themselves -------------------------------------
+
+rootfs_dm_install_hint() { # <tag>
+    case "$1" in
+        proot-distro)  printf 'Termux: pkg install proot-distro — otherwise install from github.com/termux/proot-distro\n' ;;
+        chroot-distro) printf 'Magisk/KernelSU module from github.com/Magisk-Modules-Alt-Repo/chroot-distro (rooted Android, needs BusyBox NDK)\n' ;;
+        distrobox)     printf 'Package "distrobox", or the upstream installer from github.com/89luca89/distrobox\n' ;;
+        toolbx)        printf 'Package "toolbox" (Fedora and derivatives)\n' ;;
+        schroot)       printf 'Package "schroot"\n' ;;
+        udocker)       printf 'pip install udocker, or the package where available\n' ;;
+        machinectl)    printf 'Package "systemd-container"\n' ;;
+        arch-chroot)   printf 'Package "arch-install-scripts"\n' ;;
+    esac
+}
+
+# Native package name per manager, empty when there is no packaged form.
+rootfs_dm_package() { # <tag>
+    case "$1" in
+        proot-distro)  case "$PM" in apt) printf 'proot-distro\n' ;; esac ;;
+        distrobox)     printf 'distrobox\n' ;;
+        toolbx)        case "$PM" in dnf|yum) printf 'toolbox\n' ;; apt) printf 'podman-toolbox\n' ;; pacman) printf 'toolbox\n' ;; esac ;;
+        schroot)       printf 'schroot\n' ;;
+        udocker)       case "$PM" in apt) printf 'udocker\n' ;; esac ;;
+        machinectl)    case "$PM" in apt) printf 'systemd-container\n' ;; dnf|yum) printf 'systemd-container\n' ;; esac ;;
+        arch-chroot)   case "$PM" in pacman) printf 'arch-install-scripts\n' ;; apt) printf 'arch-install-scripts\n' ;; esac ;;
+        chroot-distro) : ;;
+    esac
+}
+
+# Install a manager from its upstream project when there is no usable package.
+rootfs_dm_install_upstream() { # <tag>
+    local tag="$1" tmp u prefix
+    prefix=$(get_config dm_install_prefix /usr/local)
+    case "$tag" in
+        proot-distro)
+            command -v git >/dev/null 2>&1 || pm_install git
+            tmp=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-pd.XXXXXX") || return 1
+            run_cmd "Clone termux/proot-distro" \
+                git clone --depth 1 https://github.com/termux/proot-distro "$tmp/proot-distro" || { rm -rf "$tmp"; return 1; }
+            if [ -x "$tmp/proot-distro/install.sh" ]; then
+                run_cmd "Run the proot-distro installer" sh -c "cd '$tmp/proot-distro' && ./install.sh" || { rm -rf "$tmp"; return 1; }
+            else
+                install -m 0755 "$tmp/proot-distro/proot-distro.sh" "$prefix/bin/proot-distro" 2>/dev/null ||
+                    { tui_msg "Install failed" "Could not place proot-distro into $prefix/bin."; rm -rf "$tmp"; return 1; }
+            fi
+            rm -rf "$tmp"
+            # proot-distro is a wrapper around proot and is useless without it.
+            command -v proot >/dev/null 2>&1 || pm_install proot
+            ;;
+        distrobox)
+            command -v curl >/dev/null 2>&1 || pm_install curl
+            run_cmd "Run the upstream distrobox installer" sh -c \
+                "curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix '$prefix'" || return 1
+            ;;
+        chroot-distro)
+            tui_msg "Manual installation required" \
+"chroot-distro is a Magisk/KernelSU module for rooted Android.
+
+It cannot be installed from here: flash the module from
+github.com/Magisk-Modules-Alt-Repo/chroot-distro and install
+the BusyBox for Android NDK module it depends on, then reboot.
+
+systui will detect it automatically once it is on PATH."
+            return 1 ;;
+        udocker)
+            command -v pip3 >/dev/null 2>&1 || pm_install python3-pip
+            run_cmd "Install udocker with pip" pip3 install --break-system-packages udocker || \
+                run_cmd "Install udocker with pip" pip3 install udocker || return 1
+            ;;
+        *)
+            tui_msg "No upstream installer" \
+"systui has no upstream installation method for $tag.
+
+$(rootfs_dm_install_hint "$tag")"
+            return 1 ;;
+    esac
+    return 0
+}
+
+rootfs_dm_install() { # <tag>
+    local tag="$1" pkg method
+    local -a args=()
+    pkg=$(rootfs_dm_package "$tag")
+    [ -n "$pkg" ] && args+=(package "Install the '$pkg' package with $PM")
+    case "$tag" in
+        proot-distro|distrobox|udocker) args+=(upstream "Install from the upstream project") ;;
+        chroot-distro) args+=(upstream "Show installation instructions") ;;
+    esac
+    if [ ${#args[@]} -eq 0 ]; then
+        tui_msg "Install $tag" \
+"systui has no automated installation method for $tag on this host.
+
+$(rootfs_dm_install_hint "$tag")"
+        return 0
+    fi
+    args+=(back "Back")
+    method=$(tui_menu_no_tags "Install $(rootfs_dm_label "$tag")" \
+        "How should $tag be installed?" "${args[@]}") || return 0
+    case "$method" in
+        package) pm_install "$pkg" ;;
+        upstream) rootfs_dm_install_upstream "$tag" || return 0 ;;
+        *) return 0 ;;
+    esac
+    if rootfs_dm_available "$tag"; then
+        tui_msg "Installed" "$tag is now available at $(command -v "$(rootfs_dm_binary "$tag")")."
+    else
+        tui_msg "Not detected" "$tag was not found on PATH after installation.\n\nSee $LOGFILE."
+    fi
+}
+
+rootfs_dm_remove() { # <tag>
+    local tag="$1" pkg bin
+    pkg=$(rootfs_dm_package "$tag")
+    bin=$(rootfs_dm_binary "$tag")
+    tui_yesno "Remove $tag" "Remove the $tag tool itself?\n\nDistributions it installed are NOT deleted." || return 0
+    if [ -n "$pkg" ] && command -v "$bin" >/dev/null 2>&1; then
+        pm_remove "$pkg" || true
+    fi
+    # Upstream installs land outside the package manager.
+    local p
+    for p in /usr/local/bin /usr/bin "$(get_config dm_install_prefix /usr/local)/bin"; do
+        [ -f "$p/$bin" ] && rm -f "$p/$bin"
+    done
+    tui_msg "Removed" "Removal completed for $tag."
+}
+
+# ---- Parsing the distributions a manager offers -----------------------------
+#
+# Each tool reports its catalogue differently, so parse the real output rather
+# than shipping a hardcoded list that would drift out of date with the tool.
+# Output: "alias|description" lines.
+
+rootfs_dm_parse_distros() { # <tag>
+    local tag="$1" out
+    out=$(rootfs_dm_capture "$tag" list 2>/dev/null || true)
+    [ -n "$out" ] || return 1
+    case "$tag" in
+        proot-distro)
+            # Blocks of "Name (version)" followed by an indented "Alias: x".
+            printf '%s\n' "$out" | awk '
+                /^[^[:space:]]/ { name = $0; sub(/[[:space:]]+$/, "", name) }
+                /^[[:space:]]*Alias:[[:space:]]*/ {
+                    alias = $0
+                    sub(/^[[:space:]]*Alias:[[:space:]]*/, "", alias)
+                    sub(/[[:space:]]+$/, "", alias)
+                    if (alias != "") printf "%s|%s\n", alias, (name != "" ? name : alias)
+                }
+            '
+            ;;
+        chroot-distro)
+            # "chroot-distro list" prints available distribution identifiers,
+            # documented as lowercase names.
+            printf '%s\n' "$out" | grep -oE '^[[:space:]]*[a-z][a-z0-9._-]{1,31}[[:space:]]*$' |
+                tr -d ' \t' | sort -u | sed 's/$/|/' | sed 's/|$/|available distribution/'
+            ;;
+        *)
+            # Generic: first whitespace-delimited token per non-header line.
+            printf '%s\n' "$out" | sed -E 's/^[[:space:]]+//' |
+                grep -oE '^[a-z][a-z0-9._:-]+' | sort -u | sed 's/$/|entry/'
+            ;;
+    esac
+}
+
+rootfs_dm_pick_distro() { # <tag> -> alias on stdout
+    local tag="$1" alias desc sel
+    local -a args=()
+    while IFS='|' read -r alias desc; do
+        [ -n "$alias" ] || continue
+        args+=("$alias" "$alias — ${desc:-distribution}")
+    done < <(rootfs_dm_parse_distros "$tag" 2>/dev/null || true)
+
+    if [ ${#args[@]} -eq 0 ]; then
+        # Parsing found nothing usable; never guess, just ask.
+        tui_input "$tag" "Distribution alias to install:\n(run 'List distributions' to see what $tag offers)" "debian"
+        return
+    fi
+    args+=(manual "Type an alias manually")
+    sel=$(tui_menu_no_tags "$(rootfs_dm_label "$tag")" \
+        "Distributions reported by $tag (${#args[@]} entries):" "${args[@]}") || return 1
+    [ -n "$sel" ] || return 1
+    [ "$sel" = manual ] && { tui_input "$tag" "Distribution alias:" "debian"; return; }
+    printf '%s\n' "$sel"
+}
+
+# Installed distributions, taken from the store directory when there is one.
+rootfs_dm_installed_dirs() { # <tag>
+    local store d
+    store=$(rootfs_dm_store "$1" 2>/dev/null) || return 1
+    [ -d "$store" ] || return 1
+    for d in "$store"/*/; do
+        [ -d "$d" ] || continue
+        printf '%s\n' "${d%/}"
+    done
+}
+
+rootfs_dm_pick_installed() { # <tag> -> alias
+    local tag="$1" d sel
+    local -a args=()
+    while IFS= read -r d; do
+        [ -n "$d" ] || continue
+        args+=("$(basename "$d")" "$(basename "$d")  $(du -sh "$d" 2>/dev/null | cut -f1)")
+    done < <(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)
+    if [ ${#args[@]} -eq 0 ]; then
+        tui_input "$tag" "Installed distribution name:" ""
+        return
+    fi
+    sel=$(tui_menu_no_tags "$(rootfs_dm_label "$tag")" "Installed distributions:" "${args[@]}") || return 1
+    printf '%s\n' "$sel"
+}
+
+# ---- Per-manager configuration ---------------------------------------------
+
+rootfs_dm_config_menu() { # <tag>
+    local tag="$1" c value store detected
+    while true; do
+        store=$(get_config "dm_store_$tag" "")
+        detected=$(rootfs_dm_store_default "$tag" 2>/dev/null || echo "none detected")
+        c=$(tui_menu_no_tags "Configure $(rootfs_dm_label "$tag")" \
+            "Rootfs store: ${store:-auto ($detected)}\nRuns as: $(rootfs_dm_target_user "$tag")" \
+            store   "Rootfs location: ${store:-automatic}" \
+            detect  "Re-detect the rootfs location" \
+            user    "Run as user: $(rootfs_dm_target_user "$tag")" \
+            prefix  "Upstream install prefix: $(get_config dm_install_prefix /usr/local)" \
+            reset   "Clear saved settings for $tag" \
+            back    "Back") || return 0
+        case "$c" in
+            store)
+                value=$(tui_input "Rootfs location" \
+                    "Directory where $tag keeps installed distributions:" "${store:-$detected}") || continue
+                [ -n "$value" ] || { set_config "dm_store_$tag" ""; continue; }
+                case "$value" in /*) ;; *) tui_msg "Invalid path" "Enter an absolute directory path."; continue ;; esac
+                if [ ! -d "$value" ]; then
+                    tui_yesno "Create?" "$value does not exist.\n\nCreate it?" || continue
+                    mkdir -p "$value" || { tui_msg "Error" "Could not create $value."; continue; }
+                fi
+                set_config "dm_store_$tag" "$value"
+                tui_msg "Saved" "$tag rootfs location set to:\n$value" ;;
+            detect)
+                if detected=$(rootfs_dm_store_default "$tag" 2>/dev/null); then
+                    set_config "dm_store_$tag" ""
+                    tui_msg "Detected" "Automatic detection found:\n$detected\n\nThe manual override was cleared."
+                else
+                    tui_msg "Not found" \
+"No rootfs store could be detected for $tag.
+
+Either nothing is installed yet, or this manager keeps its
+trees inside a container engine rather than as directories."
+                fi ;;
+            user)
+                if rootfs_dm_runs_as_root "$tag"; then
+                    tui_msg "Runs as root" "$tag runs as root and does not need an unprivileged user."
+                    continue
+                fi
+                value=$(tui_input "Run as user" \
+                    "$tag refuses to run as root; which user should it run as?" \
+                    "$(rootfs_dm_target_user "$tag")") || continue
+                [ -n "$value" ] || continue
+                getent passwd "$value" >/dev/null 2>&1 || { tui_msg "Unknown user" "$value is not a user on this system."; continue; }
+                set_config "dm_user_$tag" "$value"
+                tui_msg "Saved" "$tag will run as $value." ;;
+            prefix)
+                value=$(tui_input "Install prefix" \
+                    "Prefix used when installing managers from upstream:" "$(get_config dm_install_prefix /usr/local)") || continue
+                case "$value" in /*) set_config dm_install_prefix "$value" ;;
+                    *) tui_msg "Invalid path" "Enter an absolute path." ;; esac ;;
+            reset)
+                tui_yesno "Reset" "Clear systui's saved settings for $tag?" || continue
+                set_config "dm_store_$tag" ""; set_config "dm_user_$tag" ""
+                tui_msg "Reset" "Saved settings for $tag were cleared." ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+# ---- Per-manager menu -------------------------------------------------------
+
+rootfs_dm_show_list() { # <tag>
+    local tag="$1" f n
+    f="$(rootfs_report_file)"
+    n=$(rootfs_dm_parse_distros "$tag" 2>/dev/null | grep -c . || true)
+    {
+        echo "Manager      : $tag"
+        echo "Binary       : $(command -v "$(rootfs_dm_binary "$tag")" 2>/dev/null || echo 'not installed')"
+        echo "Runs as      : $(rootfs_dm_target_user "$tag")"
+        echo "Rootfs store : $(rootfs_dm_store "$tag" 2>/dev/null || echo 'not directory-based / not found')"
+        echo "Parsed aliases: $n"
+        echo
+        echo "--- Distributions systui parsed from '$tag list' ---"
+        rootfs_dm_parse_distros "$tag" 2>/dev/null |
+            awk -F'|' '{ printf "  %-20s %s\n", $1, $2 }'
+        echo
+        echo "--- Raw '$tag list' output ---"
+        rootfs_dm_capture "$tag" list 2>&1
+    } > "$f"
+    tui_text "$tag" "$f"
+}
+
+rootfs_dm_menu_one() { # <tag>
+    local tag="$1" c d store
+    while true; do
+        store=$(rootfs_dm_store "$tag" 2>/dev/null || true)
+        c=$(tui_menu_no_tags "$(rootfs_dm_label "$tag")" \
+            "Runs as: $(rootfs_dm_target_user "$tag")   Store: ${store:-not directory-based}" \
+            list      "List distributions this tool offers" \
+            install   "Install a distribution" \
+            login     "Log in to an installed distribution" \
+            remove    "Remove an installed distribution" \
+            adopt     "Open an installed tree in the chroot workbench" \
+            configure "Configure rootfs location and run-as user" \
+            uninstall "Uninstall the $tag tool itself" \
+            help      "Show $tag help" \
+            back      "Back") || return 0
+        case "$c" in
+            list)  rootfs_dm_show_list "$tag" ;;
+            install)
+                d=$(rootfs_dm_pick_distro "$tag") || continue
+                [ -n "$d" ] || continue
+                # chroot-distro downloads the rootfs as a separate step.
+                if [ "$tag" = chroot-distro ]; then
+                    rootfs_dm_run "$tag" "Download $d" download "$d" || continue
+                fi
+                rootfs_dm_run "$tag" "Install $d via $tag" install "$d" || true ;;
+            login)
+                d=$(rootfs_dm_pick_installed "$tag") || continue
+                [ -n "$d" ] || continue
+                clear
+                rootfs_dm_run "$tag" "Log in to $d" login "$d" || true
+                read -rp "(press Enter)" _ || true ;;
+            remove)
+                d=$(rootfs_dm_pick_installed "$tag") || continue
+                [ -n "$d" ] || continue
+                tui_yesno "Remove" "Remove '$d' from $tag?\n\nIts rootfs and everything in it is deleted." || continue
+                # chroot-distro spells this "delete" and unmounts first.
+                if [ "$tag" = chroot-distro ]; then
+                    rootfs_dm_run "$tag" "Unmount $d" unmount "$d" || true
+                    rootfs_dm_run "$tag" "Delete $d via $tag" delete "$d" || true
+                else
+                    rootfs_dm_run "$tag" "Remove $d via $tag" remove "$d" || true
+                fi ;;
+            adopt)
+                if [ -z "$store" ]; then
+                    tui_msg "Not available" \
+"$tag does not keep its distributions as plain directories,
+so there is no tree for the workbench to open.
+
+If it does and systui guessed wrong, set the location under
+Configure > Rootfs location."
+                    continue
+                fi
+                local -a args=()
+                while IFS= read -r d; do
+                    [ -n "$d" ] || continue
+                    args+=("$d" "$(basename "$d")  $(du -sh "$d" 2>/dev/null | cut -f1)")
+                done < <(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)
+                if [ ${#args[@]} -eq 0 ]; then
+                    tui_msg "Nothing installed" "No distributions found under:\n$store"
+                    continue
+                fi
+                d=$(tui_menu_no_tags "Open in workbench" "Installed under $store:" "${args[@]}") || continue
+                [ -n "$d" ] || continue
+                # The workbench takes it from here: engines, mounts, packing.
+                rootfs_wb_menu_for "$d" ;;
+            configure) rootfs_dm_config_menu "$tag" ;;
+            uninstall) rootfs_dm_remove "$tag" ;;
+            help)
+                rootfs_dm_capture "$tag" --help > "$(rootfs_report_file)" 2>&1 ||
+                    rootfs_dm_capture "$tag" help > "$(rootfs_report_file)" 2>&1 || true
+                tui_text "$tag help" "$(rootfs_report_file)" ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+menu_rootfs_distro_managers() {
+    local c tag bin label
+    while true; do
+        local -a args=()
+        while IFS='|' read -r tag bin label; do
+            [ -n "$tag" ] || continue
+            args+=("$tag" "$label  $(rootfs_dm_available "$tag" && echo '[installed]' || echo '[not installed]')")
+        done < <(rootfs_dm_managers)
+        c=$(tui_menu_no_tags "Distro managers" \
+"Tools that install a ready-made distribution in one command.
+They own their rootfs store, so they appear here rather than as
+bootstrap backends. Pick one to install it or manage its distros." \
+            "${args[@]}" \
+            about "How these differ from bootstrap backends" \
+            back  "Back") || return 0
+        case "$c" in
+            back|"") return 0 ;;
+            about)
+                tui_msg "Distro managers vs bootstrap backends" \
+"Bootstrap backends (debootstrap, mmdebstrap, pacstrap, rinse...)
+build a rootfs to YOUR target directory, release, mirror and
+architecture — the Rootfs Builder asks for all four.
+
+Distro managers ship one pinned version per distribution into
+their own store and choose their own mirrors, so those options
+do not apply. Some also refuse to run as root.
+
+Install with a manager, then open the tree in the workbench." ;;
+            *)
+                if rootfs_dm_available "$c"; then
+                    rootfs_dm_menu_one "$c"
+                else
+                    if tui_yesno "$(rootfs_dm_label "$c")" \
+"$c is not installed on this host.
+
+$(rootfs_dm_install_hint "$c")
+
+Install it now?"; then
+                        rootfs_dm_install "$c"
+                        rootfs_dm_available "$c" && rootfs_dm_menu_one "$c"
+                    fi
+                fi ;;
+        esac
+    done
+}
+
 menu_rootfs() {
     while true; do
         local c
@@ -2479,7 +3873,9 @@ menu_rootfs() {
         if ! c=$(tui_menu "Rootfs" "Mini root filesystems:" \
             build      "Build a new rootfs (guided, 13 stages)" \
             manage     "Manage existing rootfs (chroot, inspect, delete...)" \
+            workbench  "Chroot workbench (mount, modify, pack any rootfs)" \
             bootstrap  "Bootstrap tools  (debootstrap, mmdebstrap, pacstrap...)" \
+            distros    "Distro managers  (proot-distro, chroot-distro...)" \
             back       "Back"); then
             # User pressed ESC/Cancel - gracefully return to parent menu
             return 0
@@ -2491,7 +3887,9 @@ menu_rootfs() {
         case "$c" in
             build)      rootfs_builder || true ;;
             manage)     rootfs_manage || true ;;
+            workbench)  menu_rootfs_workbench || true ;;
             bootstrap)  menu_rootfs_bootstrap_tools || true ;;
+            distros)    menu_rootfs_distro_managers || true ;;
             back)   return 0 ;;
             *)      tui_msg "Error" "Unknown option: $c"; continue ;;
         esac
@@ -2579,7 +3977,7 @@ rootfs_continue_generation() { # <target>
     [ -n "$release" ] || release=$(sed -n 's/^VERSION_CODENAME=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
     [ -n "$arch" ] || arch=$(host_debarch)
     [ -n "$use_qemu" ] || { needs_qemu "$arch" && use_qemu=1 || use_qemu=0; }
-    backend=$(rootfs_resolve_backend "$distro" "${backend:-auto}" 2>/dev/null || true)
+    backend=$(rootfs_resolve_backend "$distro" "${backend:-auto}" "$arch" 2>/dev/null || true)
 
     action=$(tui_check "Continue generation" \
         "Detected: ${distro:-unknown} ${release:-unknown} ($arch), backend: ${backend:-unknown}, stage: ${stage:-unknown}\nSPACE selects recovery steps:" \
@@ -2652,39 +4050,23 @@ rootfs_builder_impl() {
         void   "Void Linux (official ROOTFS tarball)" off) || return 0
     [ -z "$distro" ] && return
 
-    # ---- 2: bootstrap backend ----
-    backend=$(rootfs_backend_menu "$distro") || {
-        tui_msg "Backend unavailable" "No usable bootstrap backend was selected for $distro.\n\nInstall the selected tool (for example mmdebstrap, debootstrap, cdebootstrap, qemu-debootstrap, multistrap, pacstrap, dnf, or zypper) and retry."
-        return 0
-    }
-    if ! rootfs_backend_available "$backend"; then
-        tui_msg "Missing backend" "The selected backend '$backend' is not available on this host.\n\nInstall its command or required downloader/archive tools, then retry."
-        return 0
-    fi
-    # Auto-optimize build settings for this distro+backend before showing the
-    # config menu. The user sees pre-tuned values instead of raw defaults, and
-    # can still adjust anything via the menu before proceeding.
-    case "$distro" in
-        debian|devuan|ubuntu|kali)
-            rootfs_backend_auto_optimize "$distro" "$backend"
-            rootfs_backend_config_menu "$distro" "$backend" preserve || return 0
-            ;;
-    esac
-
-    # ---- 2/3: architecture then release ----
-    # Architecture must be selected before Ubuntu release discovery so ARM
-    # builds query ports.ubuntu.com rather than the amd64 archive.
+    # ---- 2: architecture ----
+    # Architecture is chosen before the backend so the backend menu can drop
+    # tools that cannot build this distro/arch pair, and before Ubuntu release
+    # discovery so ARM builds query ports.ubuntu.com rather than the amd64
+    # archive.
     if [ "$distro" = "arch" ]; then
         arch="amd64"
         tui_msg "Architecture" "Arch Linux official repos are x86_64 only.\n(For ARM, see Arch Linux ARM — not covered here.)"
     else
-        arch=$(tui_radio "Rootfs Builder 3/13" "Target architecture (SPACE to select):" \
+        arch=$(tui_radio "Rootfs Builder 2/13" "Target architecture (SPACE to select):" \
             amd64 "x86_64 / amd64" on \
             arm64 "aarch64 / arm64" off \
             armhf "ARM 32-bit hard-float" off \
             i386  "x86 32-bit" off) || return 0
         [ -z "$arch" ] && return
     fi
+
     # Per-distro arch labels
     local alpine_arch fedora_arch void_arch
     case "$arch" in
@@ -2696,6 +4078,22 @@ rootfs_builder_impl() {
 
     # ---- release (repository-backed, architecture-aware) ----
     release=$(rootfs_release_menu "$distro" "$arch") || return 0
+
+    # ---- 4: bootstrap backend (release-aware) ----
+    # rootfs_backend_menu only lists backends that are both compatible with
+    # $distro/$release/$arch and installed here, so it can only return a usable tool.
+    backend=$(rootfs_backend_menu "$distro" "$arch" "$release") || return 0
+    [ -n "$backend" ] || return 0
+    # Auto-optimize build settings for this distro+backend before showing the
+    # config menu. The user sees pre-tuned values instead of raw defaults, and
+    # can still adjust anything via the menu before proceeding.
+    case "$distro" in
+        debian|devuan|ubuntu|kali)
+            rootfs_backend_auto_optimize "$distro" "$backend"
+            rootfs_backend_config_menu "$distro" "$backend" preserve || return 0
+            ;;
+    esac
+
     if needs_qemu "$arch"; then
         use_qemu=1
         tui_msg "Foreign architecture" \
@@ -2708,7 +4106,7 @@ user creation). Install on the host first if you haven't:
   qemu-user-static  binfmt-support (Debian names)"
     fi
 
-    # ---- 4: init system ----
+    # ---- 5: init system ----
     case "$distro" in
         debian|ubuntu)
             init_choice=$(tui_radio "Rootfs Builder 5/13" \
@@ -2951,10 +4349,25 @@ Proceed?" || return 0
 
     case "$distro" in
         debian|devuan|ubuntu|kali) build_debfamily "$distro" "$release" "$arch" "$mirror" "$target" "$pkgs" "$use_qemu" "$backend" ;;
-        alpine)               build_alpine "$release" "$alpine_arch" "$mirror" "$target" "$pkgs" ;;
+        alpine)
+            if [ "$backend" = alpine-chroot-install ]; then
+                build_alpine_chroot_install "$release" "$alpine_arch" "$mirror" "$target" "$pkgs"
+            else
+                build_alpine "$release" "$alpine_arch" "$mirror" "$target" "$pkgs"
+            fi ;;
         arch)                 build_arch "$mirror" "$target" "$pkgs" "$backend" ;;
-        fedora)               build_fedora "$release" "$fedora_arch" "$mirror" "$target" "$pkgs" ;;
-        opensuse|tumbleweed)  build_opensuse "$distro" "$release" "$arch" "$mirror" "$target" "$pkgs" ;;
+        fedora)
+            if [ "$backend" = rinse ]; then
+                build_rinse "$distro" "$release" "$arch" "$target" "$pkgs"
+            else
+                build_fedora "$release" "$fedora_arch" "$mirror" "$target" "$pkgs"
+            fi ;;
+        opensuse|tumbleweed)
+            if [ "$backend" = rinse ]; then
+                build_rinse "$distro" "$release" "$arch" "$target" "$pkgs"
+            else
+                build_opensuse "$distro" "$release" "$arch" "$mirror" "$target" "$pkgs"
+            fi ;;
         gentoo)               build_gentoo "$release" "$arch" "$mirror" "$target" "$pkgs" ;;
         void)                 build_void "$void_arch" "$mirror" "$target" "$pkgs" "$use_qemu" ;;
     esac || { tui_msg "Build failed" "Bootstrap step failed. See $LOGFILE."; show_warnings; return 0; }
@@ -2980,9 +4393,12 @@ Proceed?" || return 0
             gz)  ext="tar.gz" ;;
             xz)  ext="tar.xz" ;;
         esac
-        local archive="${target%/}.$ext"
-        if [ "$comp" = zst ] && ! command -v zstd >/dev/null; then
-            warn "zstd not installed — skipping compression."
+        local archive="${target%/}.$ext" missing_tool
+        # xz used to be unguarded while zst was checked, so a missing xz
+        # binary produced a broken/absent .tar.xz with no warning.
+        missing_tool=$(rootfs_archive_missing_tool "$comp")
+        if [ -n "$missing_tool" ]; then
+            warn "$missing_tool not installed — skipping compression."
             show_warnings
         else
             case "$comp" in
@@ -3088,7 +4504,9 @@ rootfs_postconfig() {
             systemd) for svc in cron crond rsyslog chrony chronyd; do in_chroot "$target" systemctl enable "$svc" >/dev/null 2>&1 || true; done ;;
             openrc) for svc in crond syslog chronyd; do in_chroot "$target" rc-update add "$svc" default >/dev/null 2>&1 || true; done ;;
             sysvinit) for svc in cron rsyslog chrony; do in_chroot "$target" update-rc.d "$svc" defaults >/dev/null 2>&1 || true; done ;;
-            runit) for svc in cron crond rsyslog chronyd; do [ -d "$target/etc/sv/$svc" ] && ln -sfn "/etc/sv/$svc" "$target/etc/runit/runsvdir/default/$svc"; done ;;
+            runit) mkdir -p "$target/etc/runit/runsvdir/default" 2>/dev/null
+                   for svc in cron crond rsyslog chronyd; do [ -d "$target/etc/sv/$svc" ] && ln -sfn "/etc/sv/$svc" "$target/etc/runit/runsvdir/default/$svc"; done
+                   true ;;
         esac ;;
     esac
     case " $postcfg " in *" manifest "*)
@@ -3113,13 +4531,14 @@ EOF
     case " $postcfg " in *" locale "*)
         case "$pmcmd" in
             apt) [ -f "$target/etc/locale.gen" ] && { grep -qF "$locale_v UTF-8" "$target/etc/locale.gen" || echo "$locale_v UTF-8" >> "$target/etc/locale.gen"; }; in_chroot "$target" sh -c "command -v locale-gen >/dev/null && locale-gen || true" ;;
-            apk) printf 'LANG=%s\n' "$locale_v" > "$target/etc/profile.d/locale.sh" ;;
+            apk) mkdir -p "$target/etc/profile.d"; printf 'LANG=%s\n' "$locale_v" > "$target/etc/profile.d/locale.sh" ;;
             *) printf 'LANG=%s\n' "$locale_v" > "$target/etc/locale.conf" ;;
         esac ;; esac
     case " $postcfg " in *" shell "*)
         local shell_path="/bin/$shell_v"; [ "$shell_v" = fish ] && shell_path=/usr/bin/fish
         [ -x "$target$shell_path" ] && { in_chroot "$target" chsh -s "$shell_path" root || true; [ -n "$mkuser" ] && in_chroot "$target" chsh -s "$shell_path" "$mkuser" || true; } ;; esac
     case " $postcfg " in *" editor "*)
+        mkdir -p "$target/etc/profile.d"
         printf 'export EDITOR=%s\nexport VISUAL=%s\n' "$editor_v" "$editor_v" > "$target/etc/profile.d/editor.sh"
         chmod 644 "$target/etc/profile.d/editor.sh" ;; esac
     case " $postcfg " in *" sshcfg "*)
@@ -3338,6 +4757,17 @@ build_debfamily() { # distro release arch mirror target pkgs use_qemu backend
                 return 1
             }
             ;;
+        bdebstrap)
+            command -v bdebstrap >/dev/null 2>&1 || {
+                tui_msg "Missing tool" "bdebstrap is required for the selected backend.\nInstall it with the host package manager and retry."
+                return 1
+            }
+            # bdebstrap is a front end for mmdebstrap and cannot work without it.
+            command -v mmdebstrap >/dev/null 2>&1 || {
+                tui_msg "Missing tool" "bdebstrap drives mmdebstrap, which is not installed.\nInstall mmdebstrap and retry."
+                return 1
+            }
+            ;;
         *)
             tui_msg "Unsupported backend" "'$backend' cannot build a Debian-family rootfs."
             return 1
@@ -3434,7 +4864,24 @@ Install ubuntu-keyring on the host or use System Configuration > Packages > Repo
     # Additional packages are intentionally not passed through --include.
     # A missing optional package or failing maintainer script must not destroy
     # an otherwise valid base rootfs. Extras are installed after bootstrap.
-    if [ "$backend" = mmdebstrap ]; then
+    if [ "$backend" = bdebstrap ]; then
+        # bdebstrap takes the same shape of options as mmdebstrap but writes a
+        # reproducible config alongside the tree, which is the reason to pick
+        # it over calling mmdebstrap directly.
+        local bdopts=(--name systui --target "$target" --mode "$ROOTFS_MMDEBSTRAP_MODE" \
+                      --format directory --variant "$ROOTFS_BACKEND_VARIANT" \
+                      --architectures "$arch" --suite "$release" --mirrors "$mirror")
+        [ -n "$ROOTFS_BACKEND_COMPONENTS" ] && bdopts+=(--components "${ROOTFS_BACKEND_COMPONENTS//,/ }")
+        [ -n "$keyring" ] && bdopts+=(--keyring "$keyring")
+        local bd_pkg
+        for bd_pkg in $ROOTFS_BACKEND_INCLUDE; do bdopts+=(--packages "$bd_pkg"); done
+        [ "$ROOTFS_BACKEND_VERBOSE" = yes ] && bdopts+=(--verbose)
+        rootfs_set_build_stage "$target" bootstrap
+        run_cmd "bdebstrap $distro/$release ($arch)" \
+            env DEBIAN_FRONTEND=noninteractive bdebstrap "${bdopts[@]}" \
+            || { rm -f "$wgetrc"; return 1; }
+        rootfs_set_build_stage "$target" bootstrap-complete
+    elif [ "$backend" = mmdebstrap ]; then
         local mmopts=(--mode="$ROOTFS_MMDEBSTRAP_MODE" --format=directory --variant="$ROOTFS_BACKEND_VARIANT" --architectures="$arch" --skip=check/empty)
         [ -n "$ROOTFS_BACKEND_COMPONENTS" ] && mmopts+=(--components="$ROOTFS_BACKEND_COMPONENTS")
         [ -n "$keyring" ] && mmopts+=(--keyring="$keyring")
@@ -3454,7 +4901,7 @@ Install ubuntu-keyring on the host or use System Configuration > Packages > Repo
         rootfs_set_build_stage "$target" bootstrap
         run_cmd "mmdebstrap $distro/$release ($arch)" \
             env DEBIAN_FRONTEND=noninteractive \
-            mmdebstrap "${mmopts[@]}" "$release" "$target" "$mirror" || return 1
+            mmdebstrap "${mmopts[@]}" "$release" "$target" "$mirror" || { rm -f "$wgetrc"; return 1; }
         rootfs_set_build_stage "$target" bootstrap-complete
     elif [ "$backend" = qemu-debootstrap ]; then
         rootfs_set_build_stage "$target" bootstrap
@@ -3473,10 +4920,10 @@ Install ubuntu-keyring on the host or use System Configuration > Packages > Repo
         [ "$use_qemu" = 1 ] && cdopts+=(--foreign)
         rootfs_set_build_stage "$target" bootstrap
         run_cmd "cdebootstrap $distro/$release ($arch)" \
-            cdebootstrap "${cdopts[@]}" "$release" "$target" "$mirror" || return 1
-        if [ "$use_qemu" = 1 ]; then setup_qemu_chroot "$target" "$arch" || return 1; fi
+            cdebootstrap "${cdopts[@]}" "$release" "$target" "$mirror" || { rm -f "$wgetrc"; return 1; }
+        if [ "$use_qemu" = 1 ]; then setup_qemu_chroot "$target" "$arch" || { rm -f "$wgetrc"; return 1; }; fi
         rootfs_chroot_exec "$target" "Configure cdebootstrap packages" \
-            'export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a' || return 1
+            'export DEBIAN_FRONTEND=noninteractive; dpkg --configure -a' || { rm -f "$wgetrc"; return 1; }
         rootfs_set_build_stage "$target" bootstrap-complete
     elif [ "$backend" = multistrap ]; then
         local msconf="" mspkg="$ROOTFS_MULTISTRAP_KEYRING_PACKAGE"
@@ -3491,12 +4938,13 @@ Install ubuntu-keyring on the host or use System Configuration > Packages > Repo
         rootfs_set_build_stage "$target" bootstrap
         run_cmd "multistrap $distro/$release ($arch)" multistrap -a "$arch" -d "$target" -f "$msconf" || {
             [ "$msconf" = "$ROOTFS_MULTISTRAP_CONFIG" ] || rm -f "$msconf"
+            rm -f "$wgetrc"
             return 1
         }
         [ "$msconf" = "$ROOTFS_MULTISTRAP_CONFIG" ] || rm -f "$msconf"
-        if [ "$use_qemu" = 1 ]; then setup_qemu_chroot "$target" "$arch" || return 1; fi
+        if [ "$use_qemu" = 1 ]; then setup_qemu_chroot "$target" "$arch" || { rm -f "$wgetrc"; return 1; }; fi
         rootfs_chroot_exec "$target" "Configure multistrap packages" \
-            'export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true LC_ALL=C LANGUAGE=C LANG=C; dpkg --configure -a' || return 1
+            'export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true LC_ALL=C LANGUAGE=C LANG=C; dpkg --configure -a' || { rm -f "$wgetrc"; return 1; }
         rootfs_set_build_stage "$target" bootstrap-complete
     elif [ "$use_qemu" = 1 ]; then
         opts+=(--foreign)
@@ -3541,6 +4989,46 @@ Install ubuntu-keyring on the host or use System Configuration > Packages > Repo
             return 1
         fi
     fi
+    return 0
+}
+
+# alpine-chroot-install is upstream's own installer: it fetches apk.static,
+# initialises the database and wires up the virtual filesystems in one step.
+# It only ever produces a NATIVE chroot, so a foreign target must stay on the
+# apk.static path where --arch does the cross work.
+build_alpine_chroot_install() { # release arch mirror target pkgs
+    local release="$1" arch="$2" mirror="$3" target="$4" pkgs="$5"
+    local mapped; mapped=$(map_packages alpine $pkgs)
+    command -v alpine-chroot-install >/dev/null 2>&1 || {
+        tui_msg "Missing tool" "alpine-chroot-install is not installed.\n\nGet it from github.com/alpinelinux/alpine-chroot-install, or choose the apk.static backend."
+        return 1
+    }
+    local host_alpine_arch=""
+    case "$(uname -m)" in
+        x86_64|amd64)  host_alpine_arch=x86_64 ;;
+        aarch64|arm64) host_alpine_arch=aarch64 ;;
+        armv7l|armhf)  host_alpine_arch=armv7 ;;
+        i686|i386|x86) host_alpine_arch=x86 ;;
+    esac
+    if [ -n "$host_alpine_arch" ] && [ "$arch" != "$host_alpine_arch" ]; then
+        tui_msg "Native only" \
+"alpine-chroot-install builds a chroot for the HOST architecture
+($host_alpine_arch); $arch was requested.
+
+Use the apk.static backend for cross-architecture Alpine roots."
+        return 1
+    fi
+    local aci=(-d "$target" -m "$mirror")
+    # The installer takes a branch such as v3.20 or edge.
+    [ -n "$release" ] && aci+=(-b "$release")
+    [ -n "${mapped// }" ] && aci+=(-p "$mapped")
+    rootfs_set_build_stage "$target" bootstrap
+    run_cmd "alpine-chroot-install ($release/$arch)" alpine-chroot-install "${aci[@]}" || return 1
+    rootfs_set_build_stage "$target" bootstrap-complete
+    # The installer leaves its own enter/destroy helpers and live mounts behind.
+    # systui manages mounts itself, so detach them rather than shipping a tree
+    # with the host's /proc and /dev bound into it.
+    rootfs_wb_detach_all "$target" >/dev/null 2>&1 || true
     return 0
 }
 
@@ -3606,7 +5094,10 @@ build_arch() { # mirror target pkgs backend
             tar -C "$target" --strip-components=1 --numeric-owner \
                 -xf "$workdir/$tarball" || { rm -rf "$workdir"; return 1; }
         rm -rf "$workdir"
+        # Must not be the last statement: a false test would become this
+        # function's exit status and report a successful build as a failure.
         [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
+        return 0
     else
         tui_msg "Unsupported backend" "'$backend' cannot build an Arch rootfs."
         return 1
@@ -3633,6 +5124,48 @@ Then retry."
             install fedora-release dnf bash $mapped
 }
 
+
+# rinse bootstraps an RPM distribution from a Debian/Ubuntu host, covering the
+# case dnf --installroot cannot: a host with no dnf/zypper at all.
+build_rinse() { # distro release debarch target pkgs
+    local distro="$1" release="$2" arch="$3" target="$4" pkgs="$5"
+    command -v rinse >/dev/null 2>&1 || {
+        tui_msg "Missing tool" "rinse is not installed.\nInstall it with the host package manager and retry."
+        return 1
+    }
+    local rinse_arch dist
+    case "$arch" in
+        amd64) rinse_arch=amd64 ;;
+        i386)  rinse_arch=i386 ;;
+        *)
+            tui_msg "Unsupported architecture" \
+"rinse only bootstraps i386 and amd64 targets; $arch was requested.
+
+Use the native dnf or zypper backend on a matching host."
+            return 1 ;;
+    esac
+    # rinse identifies distributions by name-version, listed in
+    # /etc/rinse/rinse.conf on the host.
+    case "$distro" in
+        fedora)              dist="fedora-core-$release" ;;
+        opensuse|tumbleweed) dist="opensuse-$release" ;;
+        *) tui_msg "Unsupported distribution" "rinse cannot bootstrap $distro."; return 1 ;;
+    esac
+    if ! rinse --list-distributions 2>/dev/null | awk "{print \$1}" | grep -qx -- "$dist"; then
+        tui_msg "Unknown rinse distribution" \
+"The installed rinse does not list '$dist'.
+
+Run 'rinse --list-distributions' to see what this host supports,
+then pick a matching release or use the native backend."
+        return 1
+    fi
+    rootfs_set_build_stage "$target" bootstrap
+    run_cmd "rinse $dist ($rinse_arch)" \
+        rinse --directory "$target" --distribution "$dist" --arch "$rinse_arch" || return 1
+    rootfs_set_build_stage "$target" bootstrap-complete
+    [ -n "${pkgs// }" ] && warn "rinse installs only a base system; add extras with Rootfs > Workbench once the tree is built."
+    return 0
+}
 
 build_opensuse() { # distro release debarch mirror target pkgs
     local distro="$1" release="$2" arch="$3" mirror="$4" target="$5" pkgs="$6"
@@ -3673,7 +5206,10 @@ build_gentoo() { # flavor debarch mirror target pkgs
     run_cmd "Downloading Gentoo stage3" rootfs_fetch_file "$mirror/$garch/autobuilds/$tarball" "$workdir/$(basename "$tarball")" || { rm -rf "$workdir"; return 1; }
     run_cmd "Extracting Gentoo stage3" tar -C "$target" --numeric-owner -xpf "$workdir/$(basename "$tarball")" || { rm -rf "$workdir"; return 1; }; rm -rf "$workdir"
     printf 'GENTOO_MIRRORS="%s"\n' "$mirror" >> "$target/etc/portage/make.conf"
+    # Must not be the last statement: a false test would become this function's
+    # exit status and report a successful build as a failure.
     [ -n "${pkgs// }" ] && warn "Gentoo extras were not installed automatically. Use Rootfs > Manage > Packages after entering the rootfs."
+    return 0
 }
 
 build_void() { # arch mirror target pkgs use_qemu
@@ -4187,23 +5723,23 @@ rootfs_manage() {
         if [ $n = 0 ]; then
             # No builds yet — still offer to switch base directory instead of
             # dead-ending, since the default /opt/rootfs may just be empty.
-            if ! sel=$(tui_menu "Rootfs in $base" "No rootfs directories found here." \
-                __changebase "Change base directory (current: $base)" \
-                __back       "Back"); then
+            if ! sel=$(tui_menu_no_tags "Rootfs in $base" "No rootfs directories found here." \
+                changebase "Change base directory (current: $base)" \
+                back       "Back"); then
                 return 0
             fi
         else
             # Safely capture menu result and handle cancellation
-            if ! sel=$(tui_menu "Rootfs in $base" "Select a rootfs:" "${tags[@]}" \
-                __changebase "Change base directory (current: $base)" \
-                __back       "Back"); then
+            if ! sel=$(tui_menu_no_tags "Rootfs in $base" "Select a rootfs:" "${tags[@]}" \
+                changebase "Change base directory (current: $base)" \
+                back       "Back"); then
                 # User pressed ESC/Cancel - gracefully return
                 return 0
             fi
         fi
         [ -z "$sel" ] && return 0
-        [ "$sel" = __back ] && return 0
-        if [ "$sel" = __changebase ]; then
+        [ "$sel" = back ] && return 0
+        if [ "$sel" = changebase ]; then
             local nb
             nb=$(tui_input "Base directory" "New base directory containing rootfs builds:" "$base") || continue
             [ -z "$nb" ] && continue
@@ -4278,12 +5814,15 @@ rootfs_manage() {
                     zst "tar.zst (fast)" off \
                     xz  "tar.xz" off) || continue
                 [ -z "$comp" ] && continue
-                local ext
+                local ext missing_tool
+                missing_tool=$(rootfs_archive_missing_tool "$comp")
+                [ -n "$missing_tool" ] && { tui_msg "Missing tool" "$missing_tool is required for tar.$comp archives."; continue; }
                 case "$comp" in
-                    zst) ext="tar.zst"; command -v zstd >/dev/null || { tui_msg "Missing tool" "zstd is required for tar.zst archives."; continue; }; run_cmd "Compressing -> $sel.$ext" rootfs_tar_create zst "$sel" "$sel.$ext" ;;
-                    gz)  ext="tar.gz"; run_cmd "Compressing -> $sel.$ext" rootfs_tar_create gz  "$sel" "$sel.$ext" ;;
-                    xz)  ext="tar.xz"; run_cmd "Compressing -> $sel.$ext" rootfs_tar_create xz  "$sel" "$sel.$ext" ;;
-                esac ;;
+                    zst) ext="tar.zst" ;;
+                    gz)  ext="tar.gz" ;;
+                    xz)  ext="tar.xz" ;;
+                esac
+                run_cmd "Compressing -> $sel.$ext" rootfs_tar_create "$comp" "$sel" "$sel.$ext" ;;
             delete)
                 local typed
                 tui_yesno "DELETE" "Recursively delete:\n$sel\n\nThis cannot be undone. Continue?" || continue

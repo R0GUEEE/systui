@@ -466,5 +466,163 @@ check "zypper grafana repo present"          contains "$PROJECT_DIR/src/features
 check "APK edge-main option present"         contains "$PROJECT_DIR/src/features/sysconfig.sh" "edge-main"
 check "APK edge-community option present"    contains "$PROJECT_DIR/src/features/sysconfig.sh" "edge-community"
 
+###############################################################################
+# System Configuration menu — redundancy and conflict fixes
+###############################################################################
+SYSCFG="$PROJECT_DIR/src/features/sysconfig.sh"
+
+rootfs_has_no_dunder_tags() { ! grep -q '__[a-z]' "$PROJECT_DIR/src/features/rootfs.sh"; }
+lacks()      { ! grep -Fq -- "$2" "$1"; }
+equals_out() { [ "$1" = "$2" ]; }
+occurs()  { [ "$(grep -Fc -- "$2" "$1")" = "$3" ]; }
+# A sysctl key must be written by exactly one systui file, or sysctl.d's
+# filename ordering silently reverts whichever menu entry ran first. Collect
+# the keys each sysctl.d file actually receives: either assigned on the same
+# line as the redirection (printf/echo) or inside the heredoc that follows.
+sysctl_owners_of() { # <key> -> one owning filename per line
+    awk -v key="$1" '
+        {
+            line = $0
+            if (match(line, /\/etc\/sysctl\.d\/[0-9A-Za-z._-]+\.conf/)) {
+                target = substr(line, RSTART, RLENGTH)
+                if (index(line, key "=") || index(line, key " =")) print target
+                if (index(line, "<<")) { heredoc = 1; next }
+                next
+            }
+            if (heredoc) {
+                if (line ~ /^[[:space:]]*EOF[[:space:]]*$/) { heredoc = 0; next }
+                if (index(line, key "=") || index(line, key " =")) print target
+            }
+        }
+    ' "$SYSCFG" | sort -u
+}
+sysctl_key_has_one_owner() {
+    [ "$(sysctl_owners_of "$1" | wc -l)" -le 1 ]
+}
+
+# The Scanner feature was defined but unreachable from any menu.
+check "Scanner is reachable from System Configuration" contains "$SYSCFG" 'scanner)     menu_scanner'
+check "Scanner has a System Configuration entry"       contains "$SYSCFG" 'scanner     "Scanner'
+
+# menu_pm_config duplicated Package Managers and was never called.
+check "dead menu_pm_config is gone"                    lacks "$SYSCFG" 'menu_pm_config() {'
+check "live native tuning menu is retained"            contains "$SYSCFG" 'menu_cfg_native_full() {'
+
+# menu_shells had three entries resolving to menu_shell_config.
+check "duplicate bashopts shell entry is gone"         lacks "$SYSCFG" 'bashopts "Bash options"'
+check "placeholder history shell entry is gone"        lacks "$SYSCFG" 'history "History settings"'
+check "shell config entry is retained"                 contains "$SYSCFG" 'config) menu_shell_config ;;'
+
+# Overlapping sysctl writes: each key needs exactly one owning file.
+check "vm.swappiness has a single owner"               sysctl_key_has_one_owner vm.swappiness
+check "vm.vfs_cache_pressure has a single owner"       sysctl_key_has_one_owner vm.vfs_cache_pressure
+check "vm.dirty_ratio has a single owner"              sysctl_key_has_one_owner vm.dirty_ratio
+check "vm.dirty_background_ratio has a single owner"    sysctl_key_has_one_owner vm.dirty_background_ratio
+check "writeback owns the dirty ratios"                equals_out \
+    "$(sysctl_owners_of vm.dirty_ratio)" /etc/sysctl.d/92-systui-writeback.conf
+check "the dedicated entry owns vm.swappiness"         equals_out \
+    "$(sysctl_owners_of vm.swappiness)" /etc/sysctl.d/90-systui-swappiness.conf
+
+# Input written into sysctl/limits/unit paths is validated.
+check "swappiness input is range-checked"              contains "$SYSCFG" 'valid_uint "$v" && [ "$v" -le 200 ]'
+check "cache pressure input is validated"              contains "$SYSCFG" 'valid_uint "$cache"'
+check "nofile limit is validated"                      contains "$SYSCFG" 'valid_uint "$n" ||'
+check "systemd unit name is validated before use as a path" \
+    contains "$SYSCFG" 'valid_safe_name "$n" ||'
+
+# `A && echo 0 > f || echo 1 > f` wrote the opposite value on write failure.
+check "turbo toggle no longer uses an inverting and-or chain" \
+    lacks "$SYSCFG" '|| echo 1 > /sys/devices/system/cpu/intel_pstate/no_turbo'
+check "turbo toggle picks the value before writing" contains "$SYSCFG" 'turbo_val'
+
+###############################################################################
+# Rootfs builder — silent-failure fixes
+###############################################################################
+ROOTFS="$PROJECT_DIR/src/features/rootfs.sh"
+check "piped tar fallbacks run under pipefail"  occurs "$ROOTFS" 'set -o pipefail; tar -C' 2
+check "xz archives are guarded like zst"        contains "$ROOTFS" 'rootfs_archive_missing_tool'
+check "unknown archive format is rejected"      contains "$ROOTFS" 'Unsupported archive format'
+check "profile.d is created before writing"     contains "$ROOTFS" 'mkdir -p "$target/etc/profile.d"'
+check "runit service dir is created"            contains "$ROOTFS" 'mkdir -p "$target/etc/runit/runsvdir/default"'
+check "backend config menu cannot loop forever" contains "$ROOTFS" 'Backends without tool options'
+check "release menu always preselects an entry" contains "$ROOTFS" 'have_default'
+
+# --- Chroot workbench wiring ------------------------------------------------
+check "workbench is on the Rootfs menu"      contains "$ROOTFS" 'workbench  "Chroot workbench'
+check "workbench menu entry is dispatched"   contains "$ROOTFS" 'workbench)  menu_rootfs_workbench'
+check "workbench can pack any rootfs"        contains "$ROOTFS" 'rootfs_wb_pack() {'
+check "workbench can unpack a tarball"       contains "$ROOTFS" 'rootfs_wb_unpack() {'
+check "packing refuses a mounted tree"       contains "$ROOTFS" 'Archiving now would capture'
+check "mount discovery reads /proc/mounts"   contains "$ROOTFS" '/proc/mounts'
+check "detach handles busy mounts lazily"    contains "$ROOTFS" 'umount -l "$mp"'
+check "tar_create accepts exclude options"   contains "$ROOTFS" '[extra tar args...]'
+
+# --- Midnight Commander ------------------------------------------------------
+check "mc is on the File Managers menu"      contains "$SYSCFG" 'mc     "Midnight Commander'
+check "mc menu entry is dispatched"          contains "$SYSCFG" 'mc) menu_file_manager_one mc'
+check "mc maps to the mc package"            contains "$SYSCFG" 'mc:*) echo mc ;;'
+check "mc has a configuration menu"          contains "$SYSCFG" 'fm_configure_mc_menu() {'
+check "mc config menu is wired in"           contains "$SYSCFG" 'mc) fm_configure_mc_menu ;;'
+check "mc edits the right config file"       contains "$SYSCFG" 'mc)   f="$h/.config/mc/ini"'
+check "mc has a keymap file mapping"         contains "$SYSCFG" 'mc) echo "$h/.config/mc/mc.keymap"'
+check "mc has a default configuration"       contains "$SYSCFG" '[Midnight-Commander]'
+check "mc has a skin/extension catalogue"    contains "$SYSCFG" 'mc-retro-skins|Norton, Volkov'
+check "mc skins come from real upstreams"    contains "$SYSCFG" 'MidnightCommander/mc'
+check "cloned mc skins are linked into place" contains "$SYSCFG" 'mc_link_skins() {'
+check "mc ini keys are routed by section"    contains "$SYSCFG" 'mc_ini_section() {'
+# mc silently ignores keys in the wrong section, so the routing matters.
+check "layout keys route to [Layout]"        contains "$SYSCFG" 'menubar_visible|keybar_visible'
+check "panel keys route to [Panels]"         contains "$SYSCFG" 'show_mini_info|kilobyte_si'
+
+# --- Additional bootstrap tools ---------------------------------------------
+check "rinse is a supported backend"         contains "$ROOTFS" 'build_rinse() {'
+check "alpine-chroot-install is supported"   contains "$ROOTFS" 'build_alpine_chroot_install() {'
+check "bdebstrap has a build branch"         contains "$ROOTFS" 'backend" = bdebstrap'
+check "bdebstrap requires mmdebstrap"        contains "$ROOTFS" 'bdebstrap drives mmdebstrap'
+check "rinse rejects unsupported arches"     contains "$ROOTFS" 'rinse only bootstraps i386 and amd64'
+check "alpine-chroot-install is native only" contains "$ROOTFS" 'builds a chroot for the HOST architecture'
+
+# --- Distro managers ---------------------------------------------------------
+check "distro managers are on the Rootfs menu" contains "$ROOTFS" 'distros    "Distro managers'
+check "distro manager menu is dispatched"      contains "$ROOTFS" 'distros)    menu_rootfs_distro_managers'
+check "proot-distro is offered"                contains "$ROOTFS" 'proot-distro|proot-distro'
+check "chroot-distro is offered"               contains "$ROOTFS" 'chroot-distro|chroot-distro'
+# proot-distro refuses uid 0; systui runs as root, so it must drop privileges.
+check "proot-distro is dropped from root"      contains "$ROOTFS" 'refuses to run as uid 0'
+check "managers hand trees to the workbench"   contains "$ROOTFS" 'rootfs_wb_menu_for "$d"'
+check "workbench menu is reusable"             contains "$ROOTFS" 'rootfs_wb_menu_for() {'
+
+# --- Distro managers: installers, parsing, configuration --------------------
+check "managers can be installed"            contains "$ROOTFS" 'rootfs_dm_install() {'
+check "upstream installers exist"            contains "$ROOTFS" 'rootfs_dm_install_upstream() {'
+check "managers can be uninstalled"          contains "$ROOTFS" 'rootfs_dm_remove() {'
+check "distro lists are parsed per tool"     contains "$ROOTFS" 'rootfs_dm_parse_distros() {'
+check "rootfs location is configurable"      contains "$ROOTFS" 'rootfs_dm_config_menu() {'
+check "rootfs location override is stored"   contains "$ROOTFS" 'dm_store_$1'
+check "run-as user is configurable"          contains "$ROOTFS" 'dm_user_$tag'
+check "toolbx is offered"                    contains "$ROOTFS" 'toolbx|toolbox'
+check "schroot is offered"                   contains "$ROOTFS" 'schroot|schroot'
+check "udocker is offered"                   contains "$ROOTFS" 'udocker|udocker'
+check "machinectl is offered"                contains "$ROOTFS" 'machinectl|machinectl'
+check "chroot-distro downloads before install" contains "$ROOTFS" 'Download $d" download'
+check "chroot-distro deletes rather than removes" contains "$ROOTFS" 'Delete $d via $tag" delete'
+
+# --- Menu tag cleanup --------------------------------------------------------
+# Internal "__" tags were visible because tui_menu prints the tag column.
+check "no double-underscore tags remain in rootfs" rootfs_has_no_dunder_tags
+check "workbench picker hides internal tags"  contains "$ROOTFS" 'tui_menu_no_tags "Chroot workbench"'
+check "bind menu hides internal tags"         contains "$ROOTFS" 'tui_menu_no_tags "Bind mounts"'
+check "rootfs manage hides internal tags"     contains "$ROOTFS" 'tui_menu_no_tags "Rootfs in $base"'
+
+# --- System configuration workflow ------------------------------------------
+check "common tasks front door exists"        contains "$SYSCFG" 'menu_sysconfig_common() {'
+check "common tasks are reachable"            contains "$SYSCFG" 'common)      menu_sysconfig_common'
+check "hostname helper is shared"             contains "$SYSCFG" 'sysconfig_set_hostname() {'
+check "timezone helper is shared"             contains "$SYSCFG" 'sysconfig_set_timezone() {'
+# The section menu must call the same helper, not a second copy of the logic.
+check "network menu reuses the hostname helper" contains "$SYSCFG" 'hostname) sysconfig_set_hostname ;;'
+check "network menu reuses the timezone helper" contains "$SYSCFG" 'tz) sysconfig_set_timezone ;;'
+check "package menu leads with common actions"  contains "$SYSCFG" 'packages "Install, remove, search and update packages"'
+
 printf '1..%d\n' "$checks"
 [ "$failures" -eq 0 ]

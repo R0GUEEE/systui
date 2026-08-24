@@ -444,6 +444,14 @@ The package catalogue now includes:
   debootstrap, cdebootstrap, qemu-debootstrap, and multistrap for Debian-family
   roots; pacstrap or the official bootstrap tarball for Arch; and the native
   APK, DNF, Zypper, stage3, or Void tarball backend for other distributions.
+- The backend menu is driven by `rootfs_backend_catalog`, the single source of
+  truth for which tool can bootstrap which distribution. Target architecture is
+  chosen first (step 2), so the menu lists only backends that are compatible
+  with the selected distro *and* architecture *and* installed on this host.
+  Anything compatible but missing is reported as a "what to install" hint
+  rather than offered as a choice that fails after selection. `qemu-debootstrap`
+  therefore appears only for foreign-architecture targets on hosts that still
+  ship it, and Arch backends only for x86_64.
 - Backend-specific configuration menus cover variants/flavours, components,
   bootstrap include/exclude lists, keyrings, merged `/usr`, execution modes,
   documentation/locale pruning, cdebootstrap configuration directories and
@@ -456,12 +464,73 @@ The package catalogue now includes:
 - Profile-based custom package installation and additional individual packages.
 - In-rootfs locale, timezone, shell, editor, SSH, services, package update/upgrade, cleanup, machine-id, and mount-helper configuration.
 - Rootfs management exposes the same post-build configuration controls.
+- **System Configuration → Common tasks** is a flat front door to the settings
+  that otherwise sit two or three levels down — install/remove packages, update
+  the system, hostname, timezone, add a user, default shell, editors, SSH,
+  services and a full system scan. Every entry calls the same function the
+  section menu does, so there is one implementation of each action.
+- Midnight Commander is available under System Configuration → File managers,
+  with a sectioned configuration editor, skin management and an `mcd` shell
+  wrapper that returns the shell to the directory you were browsing. mc has no
+  plugin API in the lf/yazi sense, so the add-on manager handles what the
+  ecosystem actually ships — skins from upstream and community repositories —
+  and links cloned `.ini` files into `~/.local/share/mc/skins` where mc looks
+  for them.
+- **Rootfs → Chroot workbench** works on *any* rootfs directory, not just builds
+  under `$ROOTFS_BASE`, including trees unpacked from a third-party tarball:
+  - Selectable execution engine — `chroot`, `proot` (no root required),
+    `systemd-nspawn`, or `unshare` — with foreign-architecture targets routed
+    through `qemu-user-static` automatically. The engine determines the mount
+    strategy: only `chroot` gets real kernel mounts, because proot binds in
+    userspace and nspawn/unshare own their namespaces.
+  - Persistent bind mounts stored in the rootfs's own
+    `/etc/systui-chroot.conf`, so they travel with the tree. Sources must be
+    absolute and existing, and targets may not contain `..`.
+  - Mount management driven by `/proc/mounts` rather than session bookkeeping,
+    so mounts left behind by a crash or made by hand are still found. Detach
+    runs deepest-first and falls back to a lazy unmount for busy paths.
+  - Packing verifies the tree is fully unmounted first. Archiving a rootfs with
+    `/proc` or `/dev` still bound captures the *host's* virtual filesystems —
+    in testing, 113 host `/dev` entries versus 2 for a clean tree. Optional
+    excludes cover package caches, logs, `/tmp`, systui state and shell
+    history, with an optional SHA-256 checksum alongside the archive.
+  - Unpack a tarball into a new directory to start the modify/repack cycle.
+  - Menus use `tui_menu_no_tags`, so internal selection tags are never shown.
+- **Rootfs → Distro managers** integrates `proot-distro`, `chroot-distro`,
+  `distrobox`, Toolbx, `schroot`, `udocker`, `machinectl` and `arch-chroot`.
+  These are *not* bootstrap backends: they own their own rootfs store and ship
+  one pinned version per distribution, so the builder's target, release, mirror
+  and architecture steps do not apply to them.
+  - Each manager can be **installed from systui** — via its native package
+    where one exists, or from upstream (`termux/proot-distro`, the distrobox
+    installer, `pip` for udocker). `chroot-distro` is a Magisk/KernelSU module
+    for rooted Android and cannot be installed non-interactively, so systui
+    shows what to flash instead of pretending otherwise.
+  - **Available distributions are parsed from each tool's own output** rather
+    than hardcoded: `proot-distro`'s `Alias:` blocks and `chroot-distro`'s bare
+    identifier list are handled separately, with a generic fallback and a
+    manual-entry escape hatch.
+  - **Configurable per manager**: rootfs store location (auto-detected, with a
+    manual override for relocated stores), the unprivileged user to run as, and
+    the prefix used for upstream installs.
+  - "Open in workbench" hands the resulting tree to the chroot workbench for
+    modification and packing. `proot-distro`, distrobox, Toolbx and udocker
+    refuse to run as uid 0, so systui drops to a normal user when invoking them.
+- Additional bootstrap backends: `bdebstrap` (YAML-driven mmdebstrap wrapper,
+  Debian family), `rinse` (bootstraps RPM distributions *from* a Debian host,
+  covering the case `dnf --installroot` cannot), and `alpine-chroot-install`
+  (upstream's own installer; native architecture only, so cross-architecture
+  Alpine roots stay on the `apk.static` backend).
 - `tar.gz` is the default build and management compression format.
 - System Configuration → Packages begins with Package Managers, followed by Repositories and Catalogue.
+- System Configuration → Scanner provides full system reports and package/file queries.
 - Package-manager configuration covers APT, apt-fast, Nala, pip, pipx, Flatpak, Snap, Cargo, npm, pnpm, and Yarn.
 - Additional iSH-AOK, memory, writeback, tmpfs, and DNS-cache performance controls.
-- Rootfs backend prerequisites remain optional and are checked only after a
-  backend is selected; the minimal `install.sh` does not install them.
+  Each persisted `sysctl` key is written by exactly one file under
+  `/etc/sysctl.d/`, so no two Performance entries can override each other.
+- Rootfs backend prerequisites remain optional; the minimal `install.sh` does
+  not install them. They are checked *before* the backend menu is drawn, so an
+  unavailable tool is never offered.
 - Menu cancellation paths return to their parent menu instead of propagating a fatal status.
 
 ## Additional rootfs distributions
