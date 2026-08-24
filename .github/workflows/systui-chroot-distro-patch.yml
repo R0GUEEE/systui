@@ -1,0 +1,157 @@
+name: Apply chroot-distro integration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/systui-chroot-distro-patch.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch distro manager installer
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/features/rootfs.sh')
+          s = p.read_text()
+
+          def replace_once(old, new):
+              global s
+              if old not in s:
+                  raise SystemExit(f'expected pattern not found: {old[:100]!r}')
+              if s.count(old) != 1:
+                  raise SystemExit(f'expected exactly one match, found {s.count(old)}: {old[:100]!r}')
+              s = s.replace(old, new, 1)
+
+          replace_once(
+              'schroot|schroot|schroot||schroot\nsystemd-container|systemd-container|systemd|systemd-container|',
+              'schroot|schroot|schroot||schroot\nchroot-distro|chroot-distro|chroot-distro|chroot-distro|chroot-distro\nsystemd-container|systemd-container|systemd|systemd-container|'
+          )
+
+          replace_once(
+              'schroot|schroot|Managed chroot sessions with per-user profiles\nsystemd-container|systemd-nspawn|Lightweight OS container tool (part of systemd)',
+              'schroot|schroot|Managed chroot sessions with per-user profiles\nchroot-distro|chroot-distro|Native chroot distro manager for regular Linux — installed directly from sabamdarif/chroot-distro on GitHub\nsystemd-container|systemd-nspawn|Lightweight OS container tool (part of systemd)'
+          )
+
+          marker = '# Install bootstrap package with fallback chain\n_bs_install() {'
+          helper = r'''# Install chroot-distro from its upstream GitHub repository.  This is the
+# regular-Linux-capable implementation from sabamdarif/chroot-distro, not an
+# Android/Termux-only package.  Upstream requires Python 3.10+ and recommends a
+# system-wide install because its optional passwordless service executes the
+# installed code as root.
+_rootfs_bs_install_chroot_distro() {
+    local repo="https://github.com/sabamdarif/chroot-distro.git"
+
+    command -v python3 >/dev/null 2>&1 || {
+        tui_msg "Missing Python" "chroot-distro requires Python 3.10 or newer. Install python3 and retry."
+        return 1
+    }
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+        tui_msg "Python too old" "chroot-distro requires Python 3.10 or newer."
+        return 1
+    fi
+
+    if ! python3 -m pip --version >/dev/null 2>&1; then
+        pm_install python3-pip >/dev/null 2>&1 || pm_install py3-pip >/dev/null 2>&1 || {
+            tui_msg "Missing pip" "Python pip is required to install chroot-distro from GitHub."
+            return 1
+        }
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+        pm_install git >/dev/null 2>&1 || {
+            tui_msg "Missing git" "git is required to install chroot-distro from its GitHub repository."
+            return 1
+        }
+    fi
+
+    local -a pip_args=(install --upgrade)
+    if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
+        pip_args+=(--break-system-packages)
+    fi
+    pip_args+=("git+$repo")
+
+    run_cmd "Install chroot-distro from GitHub" python3 -m pip "${pip_args[@]}" || return 1
+
+    if command -v chroot-distro >/dev/null 2>&1; then
+        tui_msg "Success" "chroot-distro installed from:\n$repo\n\nOn regular Linux, run 'chroot-distro setup' once if you want its passwordless service/group integration."
+        return 0
+    fi
+
+    tui_msg "Installation failed" "pip completed but chroot-distro is not in PATH. Check $LOGFILE."
+    return 1
+}
+
+# Install bootstrap package with fallback chain
+_bs_install() {'''
+          replace_once(marker, helper)
+
+          replace_once(
+              '    tui_msg "Installing $_tag" "Attempting installation…"\n\n    # Try default package manager first.',
+              '    tui_msg "Installing $_tag" "Attempting installation…"\n\n    # chroot-distro must come from the regular-Linux-capable upstream GitHub repo,\n    # not from a distro package or an Android-specific source.\n    if [ "$_tag" = "chroot-distro" ]; then\n        _rootfs_bs_install_chroot_distro\n        return $?\n    fi\n\n    # Try default package manager first.'
+          )
+
+          replace_once(
+              '    if tui_confirm "Uninstall $_tag?" "This will remove the package from your system."; then\n        case "$PM" in',
+              '''    if tui_confirm "Uninstall $_tag?" "This will remove the package from your system."; then
+        if [ "$_tag" = "chroot-distro" ]; then
+            if python3 -m pip uninstall -y chroot-distro >/dev/null 2>&1; then
+                tui_msg "Removed" "chroot-distro was uninstalled."
+                return 0
+            fi
+            if python3 -m pip uninstall -y --break-system-packages chroot-distro >/dev/null 2>&1; then
+                tui_msg "Removed" "chroot-distro was uninstalled."
+                return 0
+            fi
+            tui_msg "Uninstall failed" "Could not uninstall chroot-distro with python3 -m pip."
+            return 1
+        fi
+        case "$PM" in'''
+          )
+
+          replace_once(
+              '        schroot)\n            tui_msg "schroot configuration"',
+              '''        chroot-distro)
+            tui_msg "chroot-distro configuration" \\
+"Upstream: https://github.com/sabamdarif/chroot-distro
+
+This build supports regular Linux as well as rooted Android/Termux.
+On regular Linux, optional passwordless setup is:
+  chroot-distro setup
+
+Useful commands:
+  chroot-distro install ubuntu:24.04
+  chroot-distro list
+  chroot-distro login ubuntu
+  chroot-distro info
+
+Python 3.10+ is required."
+            ;;
+        schroot)
+            tui_msg "schroot configuration"'''
+          )
+
+          p.write_text(s)
+          PY
+
+          bash -n src/features/rootfs.sh
+          grep -q 'git+https://github.com/sabamdarif/chroot-distro.git' src/features/rootfs.sh
+          grep -q '^chroot-distro|chroot-distro|' src/features/rootfs.sh
+
+      - name: Commit integration and remove one-shot workflow
+        shell: bash
+        run: |
+          rm -f .github/workflows/systui-chroot-distro-patch.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/features/rootfs.sh .github/workflows/systui-chroot-distro-patch.yml
+          git commit -m "feat: install chroot-distro from upstream GitHub"
+          git push
