@@ -1,0 +1,37 @@
+name: Finish chroot-distro integration
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-chroot-distro-fix.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Apply existing patch payload
+        shell: bash
+        run: |
+          payload=$(sed -n "s/^[[:space:]]*echo '\([^']*\)' | base64 -d.*/\1/p" .github/workflows/systui-chroot-distro-patch.yml | head -n1)
+          test -n "$payload"
+          printf '%s' "$payload" | base64 -d > /tmp/patch-chroot-distro.py
+          python3 /tmp/patch-chroot-distro.py
+          bash -n src/features/rootfs.sh
+          grep -q 'https://github.com/sabamdarif/chroot-distro.git' src/features/rootfs.sh
+          grep -q '^chroot-distro|chroot-distro|' src/features/rootfs.sh
+          grep -q '_rootfs_bs_install_chroot_distro' src/features/rootfs.sh
+      - name: Commit integration
+        shell: bash
+        run: |
+          rm -f .github/workflows/systui-chroot-distro-patch.yml .github/workflows/apply-chroot-distro-fix.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/features/rootfs.sh .github/workflows/
+          git commit -m "feat: install chroot-distro from upstream GitHub"
+          git push
