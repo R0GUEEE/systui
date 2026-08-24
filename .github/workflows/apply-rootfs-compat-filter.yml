@@ -1,0 +1,75 @@
+name: Apply rootfs compatibility filtering
+
+on:
+  push:
+    paths:
+      - '.github/workflows/apply-rootfs-compat-filter.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Patch rootfs builder
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('src/features/rootfs.sh')
+          s=p.read_text()
+          def once(a,b):
+              global s
+              if s.count(a)!=1: raise SystemExit(f'expected one match, got {s.count(a)}: {a[:80]!r}')
+              s=s.replace(a,b,1)
+
+          marker='''# ---------------------------------------------------------------------------\n# Single source of truth for "which bootstrap tool can build which distro".\n'''
+          helper='''# Validate backend constraints that only become knowable after the release is\n# selected. This keeps a tool out of the menu when it is installed but cannot\n# build the requested suite/version on this host.\nrootfs_backend_release_supported() { # <distro> <backend> <release> [arch]\n    local distro="$1" backend="$2" release="${3:-}" arch="${4:-}"\n    [ -n "$release" ] || return 0\n    case "$backend" in\n        debootstrap|qemu-debootstrap) rootfs_validate_debootstrap_suite "$release" ;;\n        rinse)\n            case "$arch" in amd64|i386|'') ;; *) return 1 ;; esac\n            command -v rinse >/dev/null 2>&1 || return 1\n            local dist\n            case "$distro" in\n                fedora) dist="fedora-core-$release" ;;\n                opensuse) dist="opensuse-$release" ;;\n                tumbleweed) return 1 ;;\n                *) return 1 ;;\n            esac\n            rinse --list-distributions 2>/dev/null | awk '{print $1}' | grep -qx -- "$dist"\n            ;;\n        *) return 0 ;;\n    esac\n}\n\nrootfs_backend_default_components() { # <distro>\n    case "$1" in\n        ubuntu) printf 'main,universe\\n' ;;\n        kali) printf 'main,contrib,non-free,non-free-firmware\\n' ;;\n        debian|devuan|*) printf 'main\\n' ;;\n    esac\n}\n\nrootfs_backend_components_compatible() { # <distro> <csv>\n    local distro="$1" csv="$2" item allowed\n    rootfs_backend_valid_components "$csv" || return 1\n    case "$distro" in\n        ubuntu) allowed=' main restricted universe multiverse ' ;;\n        debian|kali|devuan) allowed=' main contrib non-free non-free-firmware ' ;;\n        *) return 1 ;;\n    esac\n    while IFS= read -r item; do\n        [ -n "$item" ] || continue\n        case "$allowed" in *" $item "*) ;; *) return 1 ;; esac\n    done < <(printf '%s' "$csv" | tr ',' '\\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')\n}\n\n'''
+          once(marker,helper+marker)
+          once('rootfs_backend_catalog() { # <distro> [arch]\n    local distro="$1" arch="${2:-}"', 'rootfs_backend_catalog() { # <distro> [arch] [release]\n    local distro="$1" arch="${2:-}" release="${3:-}"')
+          once("            printf 'debootstrap|debootstrap — classic two-stage bootstrap\\n'", "            rootfs_backend_release_supported \"$distro\" debootstrap \"$release\" \"$arch\" &&\\n                printf 'debootstrap|debootstrap — classic two-stage bootstrap\\n'")
+          once("                printf 'qemu-debootstrap|qemu-debootstrap — legacy foreign-arch wrapper\\n'", "                rootfs_backend_release_supported \"$distro\" qemu-debootstrap \"$release\" \"$arch\" &&\\n                    printf 'qemu-debootstrap|qemu-debootstrap — legacy foreign-arch wrapper\\n'")
+          s=s.replace("            printf 'rinse|rinse — bootstrap RPM distros from a Debian host\\n'", "            rootfs_backend_release_supported \"$distro\" rinse \"$release\" \"$arch\" &&\\n                printf 'rinse|rinse — bootstrap RPM distros from a Debian host\\n'")
+          once('rootfs_backend_supported() { # <distro> <backend> [arch]\n    [ -n "${2:-}" ] || return 1\n    rootfs_backend_catalog "$1" "${3:-}" 2>/dev/null | cut -d\'|\' -f1 | grep -qx -- "$2"', 'rootfs_backend_supported() { # <distro> <backend> [arch] [release]\n    [ -n "${2:-}" ] || return 1\n    rootfs_backend_catalog "$1" "${3:-}" "${4:-}" 2>/dev/null | cut -d\'|\' -f1 | grep -qx -- "$2"')
+          once('rootfs_resolve_backend() { # <distro> <selected> [arch]\n    local distro="$1" selected="${2:-auto}" arch="${3:-}" tag first=""', 'rootfs_resolve_backend() { # <distro> <selected> [arch] [release]\n    local distro="$1" selected="${2:-auto}" arch="${3:-}" release="${4:-}" tag first=""')
+          once('rootfs_backend_supported "$distro" "$selected" "$arch" || return 1','rootfs_backend_supported "$distro" "$selected" "$arch" "$release" || return 1')
+          once('done < <(rootfs_backend_catalog "$distro" "$arch" 2>/dev/null)','done < <(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)')
+          once('rootfs_backend_menu() { # <distro> [arch]\n    local distro="$1" arch="${2:-}" tag desc selected', 'rootfs_backend_menu() { # <distro> [arch] [release]\n    local distro="$1" arch="${2:-}" release="${3:-}" tag desc selected')
+          once('done < <(rootfs_backend_catalog "$distro" "$arch" 2>/dev/null)','done < <(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)')
+          s=s.replace('$distro${arch:+/$arch} rootfs', '$distro${release:+/$release}${arch:+/$arch} rootfs')
+          once('$(rootfs_resolve_backend "$distro" auto "$arch")','$(rootfs_resolve_backend "$distro" auto "$arch" "$release")')
+          s=s.replace('can build $distro${arch:+/$arch} and are installed here', 'can build $distro${release:+/$release}${arch:+/$arch} and are installed here')
+          once('selected=$(tui_radio "Rootfs Builder 3/13" "$text" "${args[@]}")','selected=$(tui_radio "Rootfs Builder 4/13" "$text" "${args[@]}")')
+          once('rootfs_resolve_backend "$distro" "$selected" "$arch"','rootfs_resolve_backend "$distro" "$selected" "$arch" "$release"')
+          once('ROOTFS_BACKEND_COMPONENTS=main\n    [ "$distro" = ubuntu ] && ROOTFS_BACKEND_COMPONENTS="main,universe"','ROOTFS_BACKEND_COMPONENTS=$(rootfs_backend_default_components "$distro")')
+          once('ROOTFS_BACKEND_COMPONENTS="main,contrib,non-free"','ROOTFS_BACKEND_COMPONENTS="main,contrib,non-free,non-free-firmware"')
+          s=s.replace('        mmdebstrap)\n', '        mmdebstrap|bdebstrap)\n', 1)
+          once('        ubuntu:mmdebstrap)\n', '        ubuntu:mmdebstrap|ubuntu:bdebstrap)\n')
+          once('        debian:mmdebstrap|devuan:mmdebstrap|kali:mmdebstrap)\n', '        debian:mmdebstrap|debian:bdebstrap|devuan:mmdebstrap|devuan:bdebstrap|kali:mmdebstrap|kali:bdebstrap)\n')
+          s=s.replace('rootfs_backend_valid_components "$value" && ROOTFS_BACKEND_COMPONENTS="${value// /,}" || tui_msg "Invalid components"', 'rootfs_backend_components_compatible "$distro" "$value" && ROOTFS_BACKEND_COMPONENTS="${value// /,}" || tui_msg "Invalid components"')
+          once('            mmdebstrap)\n                c=$(tui_menu "mmdebstrap configuration" "Configure mmdebstrap:"', '            mmdebstrap|bdebstrap)\n                c=$(tui_menu "$backend configuration" "Configure mmdebstrap:"')
+          once('r=$(tui_radio "Rootfs Builder 4/13" "Release from the $distro repository', 'r=$(tui_radio "Rootfs Builder 3/13" "Release from the $distro repository')
+
+          old='''    # ---- 3: bootstrap backend ----\n    # rootfs_backend_menu only lists backends that are both compatible with\n    # $distro/$arch and installed here, so it can only return a usable tool.\n    backend=$(rootfs_backend_menu "$distro" "$arch") || return 0\n'''
+          new='''    # Per-distro arch labels\n    local alpine_arch fedora_arch void_arch\n    case "$arch" in\n        amd64) alpine_arch="x86_64"; fedora_arch="x86_64"; void_arch="x86_64" ;;\n        arm64) alpine_arch="aarch64"; fedora_arch="aarch64"; void_arch="aarch64" ;;\n        armhf) alpine_arch="armv7"; fedora_arch="armhfp"; void_arch="armv7l" ;;\n        i386) alpine_arch="x86"; fedora_arch="i386"; void_arch="i686" ;;\n    esac\n\n    # Resolve release before backend so incompatible bootstrap methods can be filtered.\n    release=$(rootfs_release_menu "$distro" "$arch") || return 0\n\n    # ---- 4: bootstrap backend (distro/release/architecture-aware) ----\n    # Only valid, installed methods for this exact build configuration are shown.\n    backend=$(rootfs_backend_menu "$distro" "$arch" "$release") || return 0\n'''
+          once(old,new)
+          duplicate='''    # Per-distro arch labels\n    local alpine_arch fedora_arch void_arch\n    case "$arch" in\n        amd64) alpine_arch="x86_64";  fedora_arch="x86_64";  void_arch="x86_64" ;;\n        arm64) alpine_arch="aarch64"; fedora_arch="aarch64"; void_arch="aarch64" ;;\n        armhf) alpine_arch="armv7";   fedora_arch="armhfp";  void_arch="armv7l" ;;\n        i386)  alpine_arch="x86";     fedora_arch="i386";    void_arch="i686" ;;\n    esac\n\n    # ---- release (repository-backed, architecture-aware) ----\n    release=$(rootfs_release_menu "$distro" "$arch") || return 0\n'''
+          once(duplicate,'')
+          once('    # ---- 4: init system ----','    # ---- 5: init system ----')
+          p.write_text(s)
+          PY
+          bash -n src/features/rootfs.sh
+          grep -q 'rootfs_backend_release_supported' src/features/rootfs.sh
+          grep -q 'rootfs_backend_menu "$distro" "$arch" "$release"' src/features/rootfs.sh
+      - name: Commit changes
+        shell: bash
+        run: |
+          git config user.name 'R0GUEEE'
+          git config user.email '41440185+R0GUEEE@users.noreply.github.com'
+          git add src/features/rootfs.sh
+          git commit -m 'feat: filter rootfs backends by build compatibility'
+          git push origin HEAD:main
