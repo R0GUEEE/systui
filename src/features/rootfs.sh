@@ -139,93 +139,77 @@ rootfs_backend_status() { # <backend>
     rootfs_backend_available "$1" && printf 'available\n' || printf 'missing prerequisites\n'
 }
 
-rootfs_backend_supported() { # <distro> <backend>
-    case "$1:$2" in
-        debian:mmdebstrap|debian:debootstrap|debian:cdebootstrap|debian:qemu-debootstrap|debian:multistrap|\
-        devuan:mmdebstrap|devuan:debootstrap|devuan:cdebootstrap|devuan:qemu-debootstrap|devuan:multistrap|\
-        ubuntu:mmdebstrap|ubuntu:debootstrap|ubuntu:cdebootstrap|ubuntu:qemu-debootstrap|ubuntu:multistrap|\
-        kali:mmdebstrap|kali:debootstrap|kali:cdebootstrap|kali:qemu-debootstrap|kali:multistrap|\
-        alpine:apk-static|arch:pacstrap|arch:arch-bootstrap|fedora:dnf|\
-        opensuse:zypper|tumbleweed:zypper|gentoo:gentoo-stage3|void:void-tarball)
-            return 0
+# ---------------------------------------------------------------------------
+# Single source of truth for "which bootstrap tool can build which distro".
+rootfs_backend_catalog() { # <distro> [arch]
+    local distro="$1" arch="${2:-}"
+    case "$distro" in
+        debian|devuan|ubuntu|kali)
+            printf 'mmdebstrap|mmdebstrap — modern one-shot APT bootstrap\n'
+            printf 'debootstrap|debootstrap — classic two-stage bootstrap\n'
+            printf 'cdebootstrap|cdebootstrap — compiled minimal bootstrap\n'
+            if [ -z "$arch" ] || [ "$arch" = amd64 ] || [ "$arch" = i386 ]; then
+                printf 'qemu-debootstrap|qemu-debootstrap — legacy foreign-arch wrapper\n'
+            fi
+            printf 'multistrap|multistrap — configuration-driven APT bootstrap\n'
             ;;
-        *) return 1 ;;
+        alpine)
+            printf 'apk-static|apk-static — Alpine static package manager\n'
+            ;;
+        arch)
+            printf 'pacstrap|pacstrap — arch-install-scripts\n'
+            printf 'arch-bootstrap|Official Arch bootstrap tarball\n'
+            ;;
+        fedora)
+            printf 'dnf|dnf --installroot\n'
+            printf 'rinse|rinse — bootstrap RPM distros from a Debian host\n'
+            ;;
+        opensuse|tumbleweed)
+            printf 'zypper|zypper --root\n'
+            ;;
+        gentoo)
+            printf 'gentoo-stage3|Official Gentoo stage3\n'
+            ;;
+        void)
+            printf 'void-tarball|Official Void ROOTFS tarball\n'
+            ;;
     esac
 }
 
-rootfs_resolve_backend() { # <distro> <selected>
-    local distro="$1" selected="${2:-auto}"
+rootfs_backend_supported() { # <distro> <backend> [arch]
+    [ -n "${2:-}" ] || return 1
+    rootfs_backend_catalog "$1" "${3:-}" 2>/dev/null | cut -d'|' -f1 | grep -qx -- "$2"
+}
+
+rootfs_resolve_backend() { # <distro> <selected> [arch]
+    local distro="$1" selected="${2:-auto}" arch="${3:-}" tag first=""
     if [ "$selected" != auto ]; then
-        rootfs_backend_supported "$distro" "$selected" || return 1
+        rootfs_backend_supported "$distro" "$selected" "$arch" || return 1
         printf '%s\n' "$selected"
         return 0
     fi
-    case "$distro" in
-        debian|devuan|ubuntu|kali)
-            if rootfs_backend_available mmdebstrap; then printf 'mmdebstrap\n'
-            elif rootfs_backend_available debootstrap; then printf 'debootstrap\n'
-            elif rootfs_backend_available cdebootstrap; then printf 'cdebootstrap\n'
-            elif rootfs_backend_available multistrap; then printf 'multistrap\n'
-            else return 1; fi
-            ;;
-        alpine) printf 'apk-static\n' ;;
-        arch)
-            if rootfs_backend_available pacstrap; then printf 'pacstrap\n'
-            else printf 'arch-bootstrap\n'; fi
-            ;;
-        fedora) printf 'dnf\n' ;;
-        opensuse|tumbleweed) printf 'zypper\n' ;;
-        gentoo) printf 'gentoo-stage3\n' ;;
-        void) printf 'void-tarball\n' ;;
-        *) return 1 ;;
-    esac
+    while IFS='|' read -r tag _; do
+        [ -z "$first" ] && first="$tag"
+    done < <(rootfs_backend_catalog "$distro" "$arch" 2>/dev/null)
+    [ -n "$first" ] && printf '%s\n' "$first" || return 1
 }
 
-rootfs_backend_menu() { # <distro>
-    local distro="$1" selected
-    case "$distro" in
-        debian|devuan|ubuntu|kali)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — mmdebstrap, debootstrap, cdebootstrap, then multistrap" on \
-                mmdebstrap "mmdebstrap — modern APT bootstrap ($(rootfs_backend_status mmdebstrap))" off \
-                debootstrap "debootstrap — classic two-stage bootstrap ($(rootfs_backend_status debootstrap))" off \
-                cdebootstrap "cdebootstrap — compiled minimal bootstrap ($(rootfs_backend_status cdebootstrap))" off \
-                qemu-debootstrap "qemu-debootstrap — foreign-architecture wrapper ($(rootfs_backend_status qemu-debootstrap))" off \
-                multistrap "multistrap — configuration-driven APT bootstrap ($(rootfs_backend_status multistrap))" off) || return 1
-            ;;
-        arch)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — prefer pacstrap, then official bootstrap tarball" on \
-                pacstrap "pacstrap — arch-install-scripts ($(rootfs_backend_status pacstrap))" off \
-                arch-bootstrap "Official Arch bootstrap tarball ($(rootfs_backend_status arch-bootstrap))" off) || return 1
-            ;;
-        alpine)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — apk.static" on \
-                apk-static "Downloaded apk.static ($(rootfs_backend_status apk-static))" off) || return 1
-            ;;
-        fedora)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — DNF installroot" on \
-                dnf "dnf --installroot ($(rootfs_backend_status dnf))" off) || return 1
-            ;;
-        opensuse|tumbleweed)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — Zypper root mode" on \
-                zypper "zypper --root ($(rootfs_backend_status zypper))" off) || return 1
-            ;;
-        gentoo)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — official stage3 tarball" on \
-                gentoo-stage3 "Official Gentoo stage3 ($(rootfs_backend_status gentoo-stage3))" off) || return 1
-            ;;
-        void)
-            selected=$(tui_radio "Rootfs Builder 2/13" "Bootstrap backend (SPACE selects):" \
-                auto "Automatic — official ROOTFS tarball" on \
-                void-tarball "Official Void ROOTFS tarball ($(rootfs_backend_status void-tarball))" off) || return 1
-            ;;
-    esac
-    rootfs_resolve_backend "$distro" "$selected"
+rootfs_backend_menu() { # <distro> [arch]
+    local distro="$1" arch="${2:-}" tag desc selected
+    local -a args=()
+    local first=y
+    while IFS='|' read -r tag desc; do
+        if [ "$first" = y ]; then
+            args+=(auto "Automatic — $(rootfs_resolve_backend "$distro" auto "$arch") for $distro${arch:+/$arch} rootfs" on)
+            first=n
+        fi
+        args+=("$tag" "$desc ($(rootfs_backend_status "$tag"))" off)
+    done < <(rootfs_backend_catalog "$distro" "$arch" 2>/dev/null)
+    [ "${#args[@]}" -gt 0 ] || return 1
+    local text
+    text="Backends that can build $distro${arch:+/$arch} and are installed here:"
+    selected=$(tui_radio "Rootfs Builder 3/13" "$text" "${args[@]}")
+    rootfs_resolve_backend "$distro" "$selected" "$arch"
 }
 
 # Debian-family backend configuration is kept separate from the general build
@@ -2652,25 +2636,6 @@ rootfs_builder_impl() {
         void   "Void Linux (official ROOTFS tarball)" off) || return 0
     [ -z "$distro" ] && return
 
-    # ---- 2: bootstrap backend ----
-    backend=$(rootfs_backend_menu "$distro") || {
-        tui_msg "Backend unavailable" "No usable bootstrap backend was selected for $distro.\n\nInstall the selected tool (for example mmdebstrap, debootstrap, cdebootstrap, qemu-debootstrap, multistrap, pacstrap, dnf, or zypper) and retry."
-        return 0
-    }
-    if ! rootfs_backend_available "$backend"; then
-        tui_msg "Missing backend" "The selected backend '$backend' is not available on this host.\n\nInstall its command or required downloader/archive tools, then retry."
-        return 0
-    fi
-    # Auto-optimize build settings for this distro+backend before showing the
-    # config menu. The user sees pre-tuned values instead of raw defaults, and
-    # can still adjust anything via the menu before proceeding.
-    case "$distro" in
-        debian|devuan|ubuntu|kali)
-            rootfs_backend_auto_optimize "$distro" "$backend"
-            rootfs_backend_config_menu "$distro" "$backend" preserve || return 0
-            ;;
-    esac
-
     # ---- 2/3: architecture then release ----
     # Architecture must be selected before Ubuntu release discovery so ARM
     # builds query ports.ubuntu.com rather than the amd64 archive.
@@ -2685,6 +2650,10 @@ rootfs_builder_impl() {
             i386  "x86 32-bit" off) || return 0
         [ -z "$arch" ] && return
     fi
+    # ---- 3: bootstrap backend ----
+    # rootfs_backend_menu only lists backends that are both compatible with
+    # $distro/$arch and installed here, so it can only return a usable tool.
+    backend=$(rootfs_backend_menu "$distro" "$arch") || return 0
     # Per-distro arch labels
     local alpine_arch fedora_arch void_arch
     case "$arch" in
