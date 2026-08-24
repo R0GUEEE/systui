@@ -1307,6 +1307,7 @@ qemu-user-static|qemu-user-static|qemu-user-static|qemu-user-static|
 binfmt-support|binfmt-support|||binfmt-support
 arch-install-scripts|arch-install-scripts|arch-install-scripts||arch-install-scripts
 schroot|schroot|schroot||schroot
+chroot-distro|chroot-distro|chroot-distro|chroot-distro|chroot-distro
 systemd-container|systemd-container|systemd|systemd-container|
 rinse|rinse|||
 proot|proot|proot|proot|proot
@@ -1327,6 +1328,7 @@ qemu-user-static|qemu-user-static|QEMU user-mode emulation for foreign-arch chro
 binfmt-support|binfmt-support|Kernel binfmt_misc support (required by qemu-user-static)
 arch-install-scripts|pacstrap|pacstrap and genfstab for Arch rootfs builds
 schroot|schroot|Managed chroot sessions with per-user profiles
+chroot-distro|chroot-distro|Native chroot distro manager for regular Linux — installed directly from sabamdarif/chroot-distro on GitHub
 systemd-container|systemd-nspawn|Lightweight OS container tool (part of systemd)
 rinse|rinse|RPM-based distro rootfs installer (no rpm required)
 proot|proot|User-space chroot via ptrace — no root required
@@ -1453,6 +1455,53 @@ _menu_bs_package() {
     done
 }
 
+# Install chroot-distro from its upstream GitHub repository. This is the
+# regular-Linux-capable implementation from sabamdarif/chroot-distro, not an
+# Android/Termux-only package. Upstream requires Python 3.10+ and recommends a
+# system-wide install because its optional passwordless service executes the
+# installed code as root.
+_rootfs_bs_install_chroot_distro() {
+    local repo="https://github.com/sabamdarif/chroot-distro.git"
+
+    command -v python3 >/dev/null 2>&1 || {
+        tui_msg "Missing Python" "chroot-distro requires Python 3.10 or newer. Install python3 and retry."
+        return 1
+    }
+    if ! python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' >/dev/null 2>&1; then
+        tui_msg "Python too old" "chroot-distro requires Python 3.10 or newer."
+        return 1
+    fi
+
+    if ! python3 -m pip --version >/dev/null 2>&1; then
+        pm_install python3-pip >/dev/null 2>&1 || pm_install py3-pip >/dev/null 2>&1 || {
+            tui_msg "Missing pip" "Python pip is required to install chroot-distro from GitHub."
+            return 1
+        }
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+        pm_install git >/dev/null 2>&1 || {
+            tui_msg "Missing git" "git is required to install chroot-distro from its GitHub repository."
+            return 1
+        }
+    fi
+
+    local -a pip_args=(install --upgrade)
+    if python3 -m pip install --help 2>&1 | grep -q -- '--break-system-packages'; then
+        pip_args+=(--break-system-packages)
+    fi
+    pip_args+=("git+$repo")
+
+    run_cmd "Install chroot-distro from GitHub" python3 -m pip "${pip_args[@]}" || return 1
+
+    if command -v chroot-distro >/dev/null 2>&1; then
+        tui_msg "Success" "chroot-distro installed from:\n$repo\n\nOn regular Linux, run 'chroot-distro setup' once if you want its passwordless service/group integration."
+        return 0
+    fi
+
+    tui_msg "Installation failed" "pip completed but chroot-distro is not in PATH. Check $LOGFILE."
+    return 1
+}
+
 # Install bootstrap package with fallback chain
 _bs_install() {
     local _tag="$1" _pkg="$2" _BS_PKGS="$3"
@@ -1463,6 +1512,13 @@ _bs_install() {
     fi
 
     tui_msg "Installing $_tag" "Attempting installation…"
+
+    # chroot-distro must come from the regular-Linux-capable upstream GitHub repo,
+    # not from a distro package or an Android-specific source.
+    if [ "$_tag" = "chroot-distro" ]; then
+        _rootfs_bs_install_chroot_distro
+        return $?
+    fi
 
     # Try default package manager first. Suppress pm_install's own automatic
     # web-fallback here since this function already runs a more thorough,
@@ -1501,6 +1557,18 @@ _bs_uninstall() {
     fi
 
     if tui_confirm "Uninstall $_tag?" "This will remove the package from your system."; then
+        if [ "$_tag" = "chroot-distro" ]; then
+            if python3 -m pip uninstall -y chroot-distro >/dev/null 2>&1; then
+                tui_msg "Removed" "chroot-distro was uninstalled."
+                return 0
+            fi
+            if python3 -m pip uninstall -y --break-system-packages chroot-distro >/dev/null 2>&1; then
+                tui_msg "Removed" "chroot-distro was uninstalled."
+                return 0
+            fi
+            tui_msg "Uninstall failed" "Could not uninstall chroot-distro with python3 -m pip."
+            return 1
+        fi
         case "$PM" in
             apt)
                 run_cmd "Remove $_tag" bash -c "apt-get remove -y '$_pkg'" && \
@@ -1547,6 +1615,21 @@ Edit /etc/mmdebstrap.conf or use:
   
 Edit debootstrap config or use:
   debootstrap --help"
+            ;;
+        chroot-distro)
+            tui_msg "chroot-distro configuration" "Upstream: https://github.com/sabamdarif/chroot-distro
+
+This build supports regular Linux as well as rooted Android/Termux.
+On regular Linux, optional passwordless setup is:
+  chroot-distro setup
+
+Useful commands:
+  chroot-distro install ubuntu:24.04
+  chroot-distro list
+  chroot-distro login ubuntu
+  chroot-distro info
+
+Python 3.10+ is required."
             ;;
         schroot)
             tui_msg "schroot configuration" \
