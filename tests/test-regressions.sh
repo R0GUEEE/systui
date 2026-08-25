@@ -613,6 +613,7 @@ check "no double-underscore tags remain in rootfs" rootfs_has_no_dunder_tags
 check "workbench picker hides internal tags"  contains "$ROOTFS" 'tui_menu_no_tags "Chroot workbench"'
 check "bind menu hides internal tags"         contains "$ROOTFS" 'tui_menu_no_tags "Bind mounts"'
 check "rootfs manage hides internal tags"     contains "$ROOTFS" 'tui_menu_no_tags "Rootfs in $base"'
+check "rootfs manage keeps names visible"     contains "$ROOTFS" 'tags+=("$d" "$(basename "$d")  $(du -sh "$d"'
 
 # --- System configuration workflow ------------------------------------------
 check "common tasks front door exists"        contains "$SYSCFG" 'menu_sysconfig_common() {'

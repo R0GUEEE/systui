@@ -5716,7 +5716,9 @@ rootfs_manage() {
         for d in "$base"/*/; do
             [ -d "$d" ] || continue
             d=${d%/}
-            tags+=("$d" "$(du -sh "$d" 2>/dev/null | cut -f1) $( [ -f "$d/etc/systui-build.conf" ] && echo '[systui]')")
+            # The full path is the hidden selection tag. Keep the directory
+            # name in the description so --no-tags does not leave only a size.
+            tags+=("$d" "$(basename "$d")  $(du -sh "$d" 2>/dev/null | cut -f1) $( [ -f "$d/etc/systui-build.conf" ] && echo '[systui]')")
             n=$((n+1))
         done
         local sel
