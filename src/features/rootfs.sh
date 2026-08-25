@@ -5918,6 +5918,98 @@ rootfs_bedrock_fetch_strata() { # <target> <selected> <extra> <arch> <use_qemu> 
     [ "$ok" = 1 ]
 }
 
+# True when <target> looks like a Bedrock system (has the /bedrock layout).
+rootfs_is_bedrock() { # <target>
+    [ -d "$1/bedrock" ] && [ -x "$1/bedrock/bin/brl" -o -x "$1/bedrock/libexec/busybox" ]
+}
+
+# Run a `brl` (Bedrock CLI) command inside the target chroot, copying its output
+# to the systui report file. Used by the strata manager.
+rootfs_brl_run() { # <target> <desc> <brl-args...>
+    local t="$1" desc="$2"; shift 2
+    rootfs_chroot_exec "$t" "$desc" "brl $* 2>&1 | tee /tmp/systui-brl-report"
+    local rc=$?
+    [ -f "$t/tmp/systui-brl-report" ] && { cp "$t/tmp/systui-brl-report" "$(rootfs_report_file)" 2>/dev/null; rm -f "$t/tmp/systui-brl-report"; }
+    return "$rc"
+}
+
+# Manage the strata of an already-built Bedrock rootfs: list, enable, disable,
+# remove, rename, fetch more, and import an on-disk rootfs as a new stratum.
+rootfs_bedrock_strata_manager() { # <target>
+    local t="$1"
+    if ! rootfs_is_bedrock "$t"; then
+        tui_msg "Not Bedrock" "$(basename "$t") does not look like a Bedrock system (no /bedrock)."
+        return 0
+    fi
+    while true; do
+        local c
+        c=$(tui_menu "Bedrock strata [$(basename "$t")]" \
+            "Manage the Bedrock strata in this rootfs." \
+            list     "List strata (brl list)" \
+            fetch    "Fetch a new stratum (brl fetch)" \
+            import   "Import an on-disk rootfs as a stratum" \
+            enable   "Enable a disabled stratum (brl enable)" \
+            disable  "Disable an enabled stratum (brl disable)" \
+            remove   "Remove a stratum (brl remove)" \
+            rename   "Rename a stratum (brl rename)" \
+            back     "Back") || return 0
+        [ -z "$c" ] && return 0
+        case "$c" in
+            back) return 0 ;;
+            list)
+                run_cmd "brl list" rootfs_chroot_exec "$t" "brl list"
+                ;;
+            fetch)
+                local names
+                names=$(tui_input "brl fetch" "Distro names to fetch (space-separated):" "") || continue
+                [ -n "$names" ] || continue
+                rootfs_bedrock_fetch_strata "$t" "$names" "" "" 0 ""
+                ;;
+            import)
+                rootfs_bedrock_strata_import "$t"
+                ;;
+            enable|disable)
+                local st c2="${c}"
+                st=$(tui_input "brl $c2" "Stratum name to $c2:" "") || continue
+                [ -n "$st" ] || continue
+                rootfs_chroot_exec "$t" "brl $c2 $st" "brl $c2 \"$st\""
+                ;;
+            remove)
+                local strm
+                strm=$(tui_input "brl remove" "Stratum name to remove:" "") || continue
+                [ -n "$strm" ] || continue
+                if tui_yesno "Remove stratum" "Remove stratum '$strm' from the rootfs?"; then
+                    rootfs_chroot_exec "$t" "brl remove $strm" "brl remove -d \"$strm\""
+                fi
+                ;;
+            rename)
+                local old new
+                old=$(tui_input "brl rename" "Current stratum name:" "") || continue
+                [ -n "$old" ] || continue
+                new=$(tui_input "brl rename" "New stratum name:" "") || continue
+                [ -n "$new" ] || continue
+                rootfs_chroot_exec "$t" "brl rename $old $new" "brl rename \"$old\" \"$new\""
+                ;;
+        esac
+    done
+}
+
+# Import an on-disk rootfs (directory or archive) as a new Bedrock stratum
+# inside <target>. Bedrock's `brl import` is handed a path staged under the
+# rootfs's /tmp.
+rootfs_bedrock_strata_import() { # <target>
+    local t="$1" src name
+    src=$(tui_input "brl import" "Path on THIS host of a rootfs directory or archive to import:" "") || return 0
+    [ -n "$src" ] || return 0
+    [ -e "$src" ] || { tui_msg "Not found" "No such file or directory:\n$src"; return 0; }
+    name=$(tui_input "Stratum name" "Name for the imported stratum:" "$(basename "$src")") || return 0
+    local dst="$t/tmp/systui-import-src"
+    rm -rf "$dst"; mkdir -p "$t/tmp"
+    run_cmd "Staging $src for import" cp -a "$src" "$dst"
+    rootfs_chroot_exec "$t" "brl import $name" \
+        "brl import \"$dst\" --name \"$name\" 2>&1 || brl import \"$dst\" \"$name\""
+    rm -rf "$dst"
+}
 
 
 rootfs_validate_integrity() { # <target>
@@ -6406,6 +6498,7 @@ rootfs_manage() {
             entrycfg "Configure chroot entry options" \
             cmd      "Run a single command in the chroot" \
             pkg      "Package management (inside the rootfs)" \
+            bedrock  "Bedrock strata (list/fetch/enable/remove...)" \
             config   "In-rootfs configuration (identity, locale, SSH, services...)" \
             manifest "Show build manifest" \
             size     "Show size breakdown" \
@@ -6428,6 +6521,7 @@ rootfs_manage() {
                 rcmd=$(tui_input "Chroot command" "Command to run inside $(basename "$sel"):" "") || continue
                 [ -n "$rcmd" ] && rootfs_chroot_exec "$sel" "chroot: $rcmd" "$rcmd" ;;
             pkg)    rootfs_pkg_menu "$sel" ;;
+            bedrock) rootfs_bedrock_strata_manager "$sel" ;;
             config) rootfs_cfg_menu "$sel" ;;
             clone)
                 local dst

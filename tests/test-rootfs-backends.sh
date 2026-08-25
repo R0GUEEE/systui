@@ -83,9 +83,11 @@ check "Bedrock release candidates include a version" bedrock_has_candidate 0.7.3
 strata_show() {
     rootfs_unmount_chroot_fs() { :; }
     rootfs_mount_chroot_fs() { :; }
-    local cmds=""
+    local sdir cmds=""
+    sdir=$(mktemp -d); mkdir -p "$sdir/etc"
     rootfs_chroot_exec() { cmds="$cmds|$3"; return 0; }
-    rootfs_bedrock_fetch_strata /tmp/nonexistent "debian arch" "artix" "" 0 ""
+    rootfs_bedrock_fetch_strata "$sdir" "debian arch" "artix" "" 0 ""
+    rm -rf "$sdir"
     printf '%s' "$cmds"
 }
 has_brl_fetch() { [ -n "$(strata_show | grep -o 'brl fetch  *"debian"')" ]; }
@@ -101,6 +103,14 @@ check "auto resolution fails for an unknown distro" rejects_resolution notadistr
 
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+
+# --- Bedrock strata management -------------------------------------------------
+mkdir -p "$tmpdir/nonbedrock/bedrock/bin"
+: > "$tmpdir/nonbedrock/bedrock/bin/brl"; chmod +x "$tmpdir/nonbedrock/bedrock/bin/brl"
+not_bedrock_dir() { ! rootfs_is_bedrock "$tmpdir/empty"; }
+check "strata manager exposes is_bedrock"  declare -F rootfs_is_bedrock
+check "is_bedrock flags a bedrock layout"  rootfs_is_bedrock "$tmpdir/nonbedrock"
+check "is_bedrock false for an empty root" not_bedrock_dir
 
 all_managers_have_hints() {
     local tag bin label
