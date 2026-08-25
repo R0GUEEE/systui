@@ -145,8 +145,9 @@ rootfs_dm_install() { # <tag> -- install the manager itself
     pkg=$(rootfs_dm_package "$tag")
     [ -n "$pkg" ] && args+=(package "Install '$pkg' with ${PM:-the system package manager}")
     case "$tag" in
-        proot-distro|chroot-distro|distrobox|udocker)
+        proot-distro|chroot-distro|udocker)
             args+=(upstream "Install current upstream release") ;;
+            distrobox) args+=(upstream "Install from 89luca89/distrobox (GitHub)") ;;
     esac
     if [ ${#args[@]} -eq 0 ]; then
         tui_msg "Install $tag" \
@@ -594,6 +595,7 @@ rootfs_dm_menu_distrobox() {
     while true; do
         c=$(tui_menu_no_tags "$(rootfs_dm_label distrobox)" \
             "distrobox uses create/enter/list/rm; compatible images are parsed from create --compatibility." \
+            install   "Install or update distrobox" \
             browse    "Browse/select/create compatible distroboxes" \
             installed "List distroboxes" \
             enter     "Enter a distrobox" \
@@ -603,6 +605,7 @@ rootfs_dm_menu_distrobox() {
             help      "Show distrobox help" \
             back      "Back") || return 0
         case "$c" in
+            install) rootfs_dm_install distrobox ;;
             browse) rootfs_dm_browse_install distrobox ;;
             installed) rootfs_dm_show_command distrobox "distrobox list" list ;;
             enter)

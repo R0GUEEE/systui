@@ -41,6 +41,17 @@ check "chroot-distro never emits download" not_contains_text "$CALLS" download
 CALLS=""; rootfs_dm_install_image distrobox docker.io/library/alpine:latest alpine-test
 check "distrobox uses create --yes --name --image" equals "$CALLS" 'distrobox|create --yes --name alpine-test --image docker.io/library/alpine:latest\n'
 
+distrobox_menu=$(declare -f rootfs_dm_menu_distrobox)
+menu_has_distrobox_install() {
+    grep -Eq 'install[[:space:]]+"Install or update distrobox"' <<< "$distrobox_menu"
+}
+check "distrobox menu exposes install/update" menu_has_distrobox_install
+check "distrobox upstream source uses 89luca89 installer" contains_text \
+    "$(declare -f rootfs_dm_install_upstream)" \
+    'raw.githubusercontent.com/89luca89/distrobox/main/install'
+check "distrobox install source names upstream repository" contains_text \
+    "$(declare -f rootfs_dm_install)" '89luca89/distrobox (GitHub)'
+
 CALLS=""; rootfs_dm_install_image toolbx quay.io/toolbx/ubuntu-toolbox:24.04 ubuntu-test
 check "toolbox uses create --image IMAGE NAME" equals "$CALLS" 'toolbx|create --image quay.io/toolbx/ubuntu-toolbox:24.04 ubuntu-test\n'
 
