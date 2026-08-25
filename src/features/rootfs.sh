@@ -5770,6 +5770,60 @@ rootfs_bedrock_release_version() { # <release>
     esac
 }
 
+# Verify the BUILD HOST can give Bedrock the FUSE it needs, and provide a clear,
+# actionable error otherwise. Bedrock's hijack installer hard-aborts unless
+# /proc/filesystems contains "fuse" and /dev/fuse exists. Loading a kernel module
+# is a host operation (cannot be done from inside a chroot), so when FUSE is
+# genuinely unavailable we must fail the build up front with useful guidance
+# rather than let the installer die mid-hijack.
+rootfs_bedrock_preflight_fuse() { # -> 0 when FUSE available, 1 + explanation otherwise
+    local fuse_reg=0 dev_fuse=0 need_chk=""
+
+    # WSL does not support the features Bedrock needs.
+    if [ -r /proc/sys/kernel/osrelease ] && grep -qi 'microsoft' /proc/sys/kernel/osrelease; then
+        tui_msg "FUSE unavailable" \
+"Bedrock Linux requires the host kernel's FUSE support, but this looks like
+Windows Subsystem for Linux (WSL), which does not provide it.
+Install Bedrock on a native Linux machine or VM."
+        return 1
+    fi
+
+    # Try to load the fuse module on the host (harmless if already loaded).
+    command -v modprobe >/dev/null 2>&1 && modprobe fuse 2>/dev/null || true
+
+    if [ -r /proc/filesystems ]; then
+        grep -q '\bfuse\b' /proc/filesystems && fuse_reg=1
+    fi
+    [ -e /dev/fuse ] && dev_fuse=1
+
+    # If the host has neither, we cannot make FUSE appear from inside the chroot.
+    if [ "$fuse_reg" = 0 ] || [ "$dev_fuse" = 0 ]; then
+        local why=""
+        if [ "$fuse_reg" = 0 ] && [ ! -r /proc/filesystems ]; then
+            why="No /proc/filesystems is visible (e.g. iSH/AOK or a restricted kernel)."
+        elif [ "$fuse_reg" = 0 ]; then
+            why="The 'fuse' filesystem is not in /proc/filesystems — the host kernel's fuse module is not loaded."
+        else
+            why="The fuse module is registered but /dev/fuse is missing (not created by the host)."
+        fi
+        tui_msg "FUSE is required for Bedrock" \
+"Bedrock Linux cannot be built on a host without working FUSE.
+
+$why
+
+To fix this on a native Linux host (as root):
+    modprobe fuse
+    # confirm /dev/fuse now exists:  ls -l /dev/fuse   (major 10, minor 229)
+# then re-run the build (select 'Retry').
+
+If you are on iSH/AOK (a userspace terminal emulator), the kernel has no FUSE
+at all, so a functional Bedrock rootfs cannot be produced here. Build the
+Bedrock rootfs on a real Linux host or VM instead."
+        return 1
+    fi
+    return 0
+}
+
 # Bedrock is not a standalone bootstrap: it hijacks an existing Linux install
 # in-place. build_bedrock() therefore (1) builds a Debian minbase into $target,
 # (2) runs the official Bedrock release script with --hijack inside that chroot.
@@ -5790,17 +5844,19 @@ build_bedrock() { # release arch mirror target pkgs use_qemu backend
     installer_url="https://github.com/bedrocklinux/bedrocklinux-userland/releases/download/${ver}/bedrock-linux-${ver}-${asset_arch}.sh"
     name="bedrock-linux-${ver}-${asset_arch}.sh"
 
+    # ---- 0.5 Fail fast on FUSE before spending time building the Debian base.
+    # Bedrock's hijack installer aborts without the host kernel's FUSE, which
+    # cannot be created from inside a chroot.
+    if ! rootfs_bedrock_preflight_fuse; then
+        rootfs_set_build_stage "$target" bedrock-fuse-unavailable
+        return 1
+    fi
+
     # ---- 1. Build the Debian base that Bedrock will hijack ----
     if ! build_debfamily debian "$base_suite" "$arch" "$mirror" "$target" "$pkgs" "$use_qemu" "$backend"; then
         warn "Bedrock base (Debian $base_suite) bootstrap failed."
         return 1
     fi
-
-    # ---- 2. Preflight Bedrock's hard requirements (FUSE + xattrs) ----
-    if ! [ -e /proc/filesystems ] || ! grep -q 'fuse' /proc/filesystems; then
-        warn "FUSE is not enabled in /proc/filesystems. Bedrock Linux requires FUSE to operate; the hijack may fail."
-    fi
-    mkdir -p "$target/dev" "$target/proc" "$target/sys" "$target/run"
 
     workdir=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-bedrock.XXXXXX") || return 1
     if ! rootfs_fetch_file "$installer_url" "$workdir/$name"; then
@@ -5810,14 +5866,13 @@ build_bedrock() { # release arch mirror target pkgs use_qemu backend
 
     # ---- 4. Run the hijack inside the chroot ----
     # Bedrock needs /proc, /sys and /dev mounted so its installer can probe the
-    # kernel; /dev/fuse is created before we hand over to the installer.
+    # kernel; /dev/fuse is created/verified before we hand over to the installer.
     rootfs_mount_chroot_fs "$target" || true
-    # Standard device nodes if the host's /dev is not bind-mounted in.
-    if ! [ -e "$target/dev/null" ]; then
-        in_chroot "$target" mknod -m 666 /dev/null c 1 3 2>/dev/null || true
-    fi
+    # /dev is bind-mounted by rootfs_mount_chroot_fs, so the host's /dev/fuse
+    # surfaces inside the chroot. Belt-and-braces: create the node if absent.
     if ! [ -e "$target/dev/fuse" ]; then
-        in_chroot "$target" mknod -m 666 /dev/fuse c 10 229 2>/dev/null || warn "Could not create /dev/fuse in the base — Bedrock may fail to initialize."
+        in_chroot "$target" mknod -m 666 /dev/fuse c 10 229 2>/dev/null || \
+            { rootfs_bedrock_preflight_fuse; rootfs_set_build_stage "$target" bedrock-fuse-unavailable; return 1; }
     fi
     cp "$workdir/$name" "$target/tmp/bedrock-installer.sh" || { rm -rf "$workdir"; return 1; }
 

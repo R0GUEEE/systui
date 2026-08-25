@@ -120,6 +120,7 @@ world_cmds() {
     rootfs_bedrock_world_menu "$tmpdir/nonbedrock" >/dev/null 2>&1
 }
 check "world menu function is exposed"    declare -F rootfs_bedrock_world_menu
+check "strata manager exposes fuse preflight" declare -F rootfs_bedrock_preflight_fuse
 check "world menu terminates on back"     world_cmds
 world_flag_ok() { grep -q -- "--${1:-diff}-world" src/features/rootfs.sh; }
 check "world diff/update/apply flags wired" world_flag_ok diff
