@@ -79,6 +79,20 @@ check "Bedrock asset arch maps i386 to i686"    equals "$(rootfs_bedrock_asset_a
 check "Bedrock current release resolves"        equals "$(rootfs_bedrock_release_version current)" 0.7.31
 check "Bedrock release candidates include a version" bedrock_has_candidate 0.7.31
 
+# Strata: the fetch runner executes `brl fetch <distro>` per selected distro.
+strata_show() {
+    rootfs_unmount_chroot_fs() { :; }
+    rootfs_mount_chroot_fs() { :; }
+    local cmds=""
+    rootfs_chroot_exec() { cmds="$cmds|$3"; return 0; }
+    rootfs_bedrock_fetch_strata /tmp/nonexistent "debian arch" "artix" "" 0 ""
+    printf '%s' "$cmds"
+}
+has_brl_fetch() { [ -n "$(strata_show | grep -o 'brl fetch  *"debian"')" ]; }
+has_extra_brl() { [ -n "$(strata_show | grep -o '"artix"')" ]; }
+check "strata runner issues brl fetch per distro" has_brl_fetch
+check "strata runner includes extra/custom names" has_extra_brl
+
 # Auto-resolution must still name this distro's preferred tool on a host where
 # nothing is installed, so the caller can say what to install.
 check "auto resolution always names a compatible backend" \

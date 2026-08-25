@@ -3988,6 +3988,9 @@ HOSTNAME="$(rootfs_state_escape "$9")"
 POSTCFG="$(rootfs_state_escape "${10}")"
 TIMEZONE="$(rootfs_state_escape "${11}")"
 BACKEND="$(rootfs_state_escape "${12}")"
+BEDROCK_STRATA="$(rootfs_state_escape "${13}")"
+BEDROCK_ARCH="$(rootfs_state_escape "${14}")"
+BEDROCK_EXTRA="$(rootfs_state_escape "${15}")"
 STAGE="configured"
 EOF
 }
@@ -4579,6 +4582,20 @@ user creation). Install on the host first if you haven't:
         xz   "tar.xz — smallest, slowest" off \
         none "No archive — directory only" off) || return 0
 
+    # ---- 11b: (Bedrock only) fetch extra strata after the base hijack ----
+    local bedrock_strata="" bedrock_extra_arch="" bedrock_extra_strata=""
+    if [ "$distro" = bedrock ]; then
+        bedrock_strata=$(rootfs_bedrock_strata_menu) || bedrock_strata=""
+        if [ -n "$bedrock_strata" ]; then
+            # Optional arch override for non-native strata (passed to -a).
+            bedrock_extra_arch=$(tui_input "Strata architecture" \
+                "Arch to fetch these strata for (blank = auto/host):" "") || bedrock_extra_arch=""
+            # Optional extra `brl fetch` names not covered by the checklist.
+            bedrock_extra_strata=$(tui_input "Additional strata" \
+                "Extra brl-fetch distro names (space-separated; e.g. artix exherbo) — blank for none:" "") || bedrock_extra_strata=""
+        fi
+    fi
+
     # ---- 12: confirm ----
     tui_yesno "Rootfs Builder 13/13" \
 "Ready to build:
@@ -4595,12 +4612,14 @@ user creation). Install on the host first if you haven't:
   User     : ${mkuser:-<none>}$( [ $usersudo = 1 ] && echo ' (sudo)')
   Post     : ${postcfg:-<none>} ${tz:+tz=$tz}
   Archive  : $comp
+  Strata   : ${bedrock_strata:-<none>}${bedrock_extra_strata:+ $bedrock_extra_strata}
 
 Proceed?" || return 0
 
     rootfs_write_build_state "$target" \
         "$distro" "$release" "$arch" "$mirror" "$pkgs" "$use_qemu" \
-        "$init_choice" "$preset" "$hostname_v" "$postcfg" "$tz" "$backend"
+        "$init_choice" "$preset" "$hostname_v" "$postcfg" "$tz" "$backend" \
+        "$bedrock_strata" "$bedrock_extra_arch" "$bedrock_extra_strata"
 
     # Run the build with a recovery loop so a missing tool, a bad configuration
     # or a transient failure never strands the user: each failure offers to
@@ -5816,9 +5835,89 @@ build_bedrock() { # release arch mirror target pkgs use_qemu backend
     rootfs_unmount_chroot_fs "$target" >/dev/null 2>&1 || true
     rm -f "$target/tmp/bedrock-installer.sh"
     rm -rf "$workdir"
+
+    # Select and fetch extra strata (if the user asked for any). Selections were
+    # captured by the wizard into the build-state file, so recovery/re-runs
+    # re-apply the same set without re-prompting.
+    local bstrata barch bextra
+    bstrata=$(rootfs_state_get "$target" BEDROCK_STRATA 2>/dev/null || true)
+    if [ -n "$bstrata" ]; then
+        barch=$(rootfs_state_get "$target" BEDROCK_ARCH 2>/dev/null || true)
+        bextra=$(rootfs_state_get "$target" BEDROCK_EXTRA 2>/dev/null || true)
+        if ! rootfs_bedrock_fetch_strata "$target" "$bstrata" "$bextra" "$barch" "$use_qemu" "$arch"; then
+            warn "One or more Bedrock strata could not be fetched. The base Bedrock rootfs is intact; add strata later with: brl fetch"
+            rootfs_set_build_stage "$target" bedrock-hijacked-strata-failed
+            return 1
+        fi
+        rootfs_set_build_stage "$target" bedrock-hijacked-strata-complete
+    fi
+
     rootfs_set_build_stage "$target" bedrock-hijacked
     return 0
 }
+
+# Curated, actively-maintained `brl fetch` strata names for the common cases.
+# The exact set varies by architecture/release (brl fetch --list), so this is
+# a convenience checklist; unknown/custom names can be typed in the "extra"
+# input and Bedrock will still attempt them.
+rootfs_bedrock_strata_menu() { # -> space-separated distro names (empty when none)
+    local sel
+    sel=$(tui_check "Fetch Bedrock strata" \
+        "Choose extra distributions to fetch with brl-fetch after the base hijack (SPACE toggles, ENTER confirms):" \
+        debian "Debian" off \
+        ubuntu "Ubuntu" off \
+        arch "Arch" off \
+        alpine "Alpine Linux" off \
+        void "Void Linux" off \
+        gentoo "Gentoo" off \
+        fedora "Fedora" off \
+        devuan "Devuan" off \
+        opensuse "openSUSE" off \
+        centos "CentOS / AlmaLinux" off \
+        exherbo "Exherbo" off) || sel=""
+    # tui_check returns quoted tags; normalise to a space-separated list of names.
+    printf '%s\n' "${sel//\"/}" | tr ',' ' ' | xargs -n1 | awk 'NF && !seen[$0]++ {printf "%s ", $0}'
+}
+
+# Fetch extra strata inside the built Bedrock rootfs.
+#   <target> <distro-names> <extra-names> [arch] [use_qemu] [debarch]
+rootfs_bedrock_fetch_strata() { # <target> <selected> <extra> <arch> <use_qemu> <debarch>
+    local target="$1" selected="$2" extra="$3" arch="${4:-}" use_qemu="${5:-0}" debarch="${6:-}"
+    local names="" st ok=0 qemu_pkg
+    # Combine the curated selection with any manually typed extra names.
+    names="$selected $extra"
+    names=$(printf '%s\n' "$names" | xargs -n1 | awk 'NF && !seen[$0]++ {printf "%s ", $0}')
+    [ -n "${names// }" ] || return 0
+
+    # Bedrock's brl-fetch lives in the hijacked (now bedrock) strata; invoke it
+    # via the Bedrock CLI which shims across strata. The chroot needs /proc,
+    # /sys, /dev and a working resolver before fetch can reach the network.
+    rootfs_mount_chroot_fs "$target" || true
+    printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > "$target/etc/resolv.conf" 2>/dev/null || true
+
+    # For foreign-arch strata, brl-fetch needs qemu-user-static INSIDE the
+    # (foreign) Bedrock rootfs so it can execute the fetched distro's binaries.
+    if [ "$use_qemu" = 1 ] && [ -n "$debarch" ]; then
+        qemu_pkg=$(qemu_bin_for "$debarch" 2>/dev/null)
+        [ -n "$qemu_pkg" ] && { mkdir -p "$target/usr/bin"; command -v "$qemu_pkg" >/dev/null 2>&1 && cp "$(command -v "$qemu_pkg")" "$target/usr/bin/" 2>/dev/null || true; }
+    fi
+
+    # Optionally constrain brl-fetch to a specific CPU architecture via -a.
+    local strata_flags=""
+    [ -n "$arch" ] && strata_flags="-a $arch"
+
+    # Fetch each distro. Bedrock's CLI is `brl fetch <distro>` (wrapper `brl-fetch`
+    # also exists). rootfs_chroot_exec already wraps the command in /bin/sh -c.
+    rootfs_set_build_stage "$target" bedrock-fetch-strata
+    for st in $names; do
+        rootfs_chroot_exec "$target" "brl-fetch stratum: $st" \
+            "(command -v brl >/dev/null 2>&1 && brl fetch $strata_flags \"$st\") || brl-fetch $strata_flags \"$st\"" \
+            && ok=1
+    done
+    rootfs_unmount_chroot_fs "$target" >/dev/null 2>&1 || true
+    [ "$ok" = 1 ]
+}
+
 
 
 rootfs_validate_integrity() { # <target>
