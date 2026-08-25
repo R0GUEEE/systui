@@ -148,6 +148,11 @@ rootfs_backend_available() { # <backend>
             command -v tar >/dev/null 2>&1 && command -v zstd >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
             ;;
+        alarm-tarball)
+            # The Arch Linux ARM tarball is a plain .tar.gz rootfs.
+            command -v tar >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1 &&
+                { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
+            ;;
         gentoo-stage3|void-tarball)
             command -v tar >/dev/null 2>&1 && command -v xz >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
@@ -170,6 +175,7 @@ rootfs_backend_requirements() { # <backend>
         qemu-debootstrap) printf 'qemu-debootstrap (qemu-user-static) and debootstrap\n' ;;
         apk-static)       printf 'tar, gzip, and curl or wget\n' ;;
         arch-bootstrap)   printf 'tar, zstd, and curl or wget\n' ;;
+        alarm-tarball)    printf 'tar, gzip, and curl or wget (Arch Linux ARM tarball)\n' ;;
         gentoo-stage3|void-tarball) printf 'tar, xz, and curl or wget\n' ;;
         *)                printf 'unknown prerequisites\n' ;;
     esac
@@ -272,11 +278,19 @@ rootfs_backend_catalog() { # <distro> [arch] [release]
             printf 'alpine-chroot-install|alpine-chroot-install — upstream chroot installer\n'
             ;;
         arch)
-            # Official Arch repositories are x86_64 only; both backends inherit
-            # that restriction.
-            case "$arch" in ''|amd64|x86_64) ;; *) return 1 ;; esac
-            printf 'pacstrap|pacstrap — arch-install-scripts\n'
-            printf 'arch-bootstrap|Official Arch bootstrap tarball\n'
+            # Official x86_64 Arch comes from the main Arch repos (pacstrap or
+            # the bootstrap tarball). ARM is Arch Linux ARM, a separate project
+            # with its own rebootstrapping tarball.
+            case "$arch" in
+                ''|amd64|x86_64)
+                    printf 'pacstrap|pacstrap — arch-install-scripts\n'
+                    printf 'arch-bootstrap|Official Arch bootstrap tarball\n'
+                    ;;
+                arm64|aarch64|armhf|armv7|armv7l)
+                    printf 'alarm-tarball|Arch Linux ARM bootstrap tarball\n'
+                    ;;
+                *) return 1 ;;
+            esac
             ;;
         fedora)
             printf 'dnf|dnf --installroot\n'
@@ -4109,6 +4123,7 @@ rootfs_backend_missing_cmds() { # <distro> <backend> [arch] [compression]
         apk-static)      command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (for compressed archives)\n'; want_curl=1 ;;
         alpine-chroot-install) want_curl=1 ;;
         arch-bootstrap)  command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (Zstandard compression)\n'; want_curl=1 ;;
+        alarm-tarball)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (compressed archives)\n'; want_curl=1 ;;
         gentoo-stage3)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
         void-tarball)    command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
         mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap|qemu-debootstrap)
@@ -4172,6 +4187,35 @@ rootfs_check_host_deps() { # <distro> <backend> [arch] [compression]
     return 0
 }
 
+# Architectures the selected distro can actually be built for, with the label
+# shown in the picker. Drives the "target architecture" step so the menu only
+# offers combinations that have a real repository / backend behind them
+# (for example Arch ARM via Arch Linux ARM, or Fedora aarch64 via the
+# fedora-secondary mirror). Emits "<debarch>|<label>" per line.
+rootfs_distro_archs() { # <distro>
+    case "$1" in
+        debian|devuan|ubuntu|kali|gentoo|void)
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\n'
+            ;;
+        alpine)
+            # apk.static --arch covers every Alpine architecture.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\n'
+            ;;
+        arch)
+            # x86_64 (official Arch) plus aarch64/armv7 via Arch Linux ARM.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 (Arch Linux ARM)\narmhf|armv7 32-bit (Arch Linux ARM)\n'
+            ;;
+        fedora)
+            # x86_64 + aarch64/armhfp from the secondary mirror. Fedora i386 is EOL.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|armhfp (ARM 32-bit)\n'
+            ;;
+        opensuse|tumbleweed)
+            # Leap/Tumbleweed ship x86_64 and aarch64; i586 is retired.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\n'
+            ;;
+        *) return 1 ;;
+    esac
+}
 
 # Entry point kept thin: the build itself runs fail-fast inside run_strict so a
 # mid-build failure aborts the build rather than the whole TUI.
@@ -4202,18 +4246,26 @@ rootfs_builder_impl() {
     # Architecture is chosen before the backend so the backend menu can drop
     # tools that cannot build this distro/arch pair, and before Ubuntu release
     # discovery so ARM builds query ports.ubuntu.com rather than the amd64
-    # archive.
-    if [ "$distro" = "arch" ]; then
-        arch="amd64"
-        tui_msg "Architecture" "Arch Linux official repos are x86_64 only.\n(For ARM, see Arch Linux ARM — not covered here.)"
-    else
-        arch=$(tui_radio "Rootfs Builder 2/13" "Target architecture (SPACE to select):" \
-            amd64 "x86_64 / amd64" on \
-            arm64 "aarch64 / arm64" off \
-            armhf "ARM 32-bit hard-float" off \
-            i386  "x86 32-bit" off) || return 0
-        [ -z "$arch" ] && return
+    # archive. Only architectures with a real repository for <distro> are
+    # offered (e.g. Arch ARM goes through Arch Linux ARM, Fedora aarch64 via
+    # fedora-secondary).
+    local -a arch_items=() _arch _alabel _astate default_has_x86=0
+    while IFS='|' read -r _arch _alabel; do
+        [ -n "$_arch" ] || continue
+        # amd64 is the natural default; others are manually selected.
+        if [ "$_arch" = amd64 ]; then _astate=on; default_has_x86=1; else _astate=off; fi
+        arch_items+=("$_arch" "${_alabel:-$_arch}" "$_astate")
+    done < <(rootfs_distro_archs "$distro" 2>/dev/null)
+    if [ ${#arch_items[@]} -eq 0 ]; then
+        tui_msg "No architectures" "This distribution has no supported build architecture on this version of systui."
+        return 0
     fi
+    # If a distro somehow has no amd64 entry, make the first offered one active
+    # so dialog never returns empty.
+    if [ "$default_has_x86" = 0 ]; then arch_items[2]=on; fi
+    arch=$(tui_radio "Rootfs Builder 2/13" "Target architecture (SPACE to select):" "${arch_items[@]}") || return 0
+    [ -z "$arch" ] && return
+    unset arch_items _arch _alabel _astate default_has_x86
 
     # Per-distro arch labels
     local alpine_arch fedora_arch void_arch
@@ -4405,11 +4457,23 @@ user creation). Install on the host first if you haven't:
                 def_mirror="https://archive.ubuntu.com/ubuntu"
             fi ;;
         alpine) def_mirror="http://dl-cdn.alpinelinux.org/alpine" ;;
-        arch)   def_mirror="https://geo.mirror.pkgbuild.com" ;;
+        arch)
+            case "$arch" in
+                arm64|aarch64|armhf|armv7*) def_mirror="https://mirror.archlinuxarm.org" ;;
+                *) def_mirror="https://geo.mirror.pkgbuild.com" ;;
+            esac ;;
         fedora) def_mirror="https://dl.fedoraproject.org/pub/fedora/linux" ;;
         kali) def_mirror="http://http.kali.org/kali" ;;
-        opensuse) def_mirror="https://download.opensuse.org/distribution/leap" ;;
-        tumbleweed) def_mirror="https://download.opensuse.org/tumbleweed/repo/oss" ;;
+        opensuse)
+            case "$arch" in
+                arm64|aarch64) def_mirror="https://download.opensuse.org/ports/aarch64/distribution/leap" ;;
+                *) def_mirror="https://download.opensuse.org/distribution/leap" ;;
+            esac ;;
+        tumbleweed)
+            case "$arch" in
+                arm64|aarch64) def_mirror="https://download.opensuse.org/ports/aarch64/tumbleweed/repo/oss" ;;
+                *) def_mirror="https://download.opensuse.org/tumbleweed/repo/oss" ;;
+            esac ;;
         gentoo) def_mirror="https://distfiles.gentoo.org/releases" ;;
         void)   def_mirror="https://repo-default.voidlinux.org" ;;
     esac
@@ -4548,7 +4612,7 @@ rootfs_build_and_finish() { # <target> <distro> <release> <arch> <alpine_arch> <
             else
                 build_alpine "$release" "$alpine_arch" "$mirror" "$target" "$pkgs"
             fi ;;
-        arch)                 build_arch "$mirror" "$target" "$pkgs" "$backend" ;;
+        arch)                 build_arch "$mirror" "$target" "$pkgs" "$backend" "$arch" ;;
         fedora)
             if [ "$backend" = rinse ]; then
                 build_rinse "$distro" "$release" "$arch" "$target" "$pkgs"
@@ -5432,10 +5496,10 @@ build_alpine() { # release arch mirror target pkgs
     return 0
 }
 
-build_arch() { # mirror target pkgs backend
-    local mirror="$1" target="$2" pkgs="$3" backend="${4:-auto}"
+build_arch() { # mirror target pkgs backend [arch]
+    local mirror="$1" target="$2" pkgs="$3" backend="${4:-auto}" arch="${5:-}"
     local mapped; mapped=$(map_packages arch $pkgs)
-    [ "$backend" = auto ] && backend=$(rootfs_resolve_backend arch auto)
+    [ "$backend" = auto ] && backend=$(rootfs_resolve_backend arch auto "$arch")
     if [ "$backend" = pacstrap ]; then
         command -v pacstrap >/dev/null 2>&1 || { tui_msg "Missing tool" "pacstrap is not installed."; return 1; }
         run_cmd "pacstrap (Arch)" pacstrap -c "$target" base $mapped
@@ -5450,6 +5514,25 @@ build_arch() { # mirror target pkgs backend
         rm -rf "$workdir"
         # Must not be the last statement: a false test would become this
         # function's exit status and report a successful build as a failure.
+        [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
+        return 0
+    elif [ "$backend" = alarm-tarball ]; then
+        # Arch Linux ARM publishes a complete rebootstrapping rootfs per arch.
+        # $mirror here is expected to be the mirror.archlinuxarm.org root.
+        rootfs_backend_available alarm-tarball || { tui_msg "Missing tools" "The Arch Linux ARM backend requires tar, gzip, and curl or wget."; return 1; }
+        local alarm_arch tarball workdir
+        case "${arch:=$(host_debarch)}" in
+            arm64|aarch64)         alarm_arch=aarch64 ;;
+            armhf|armv7|armv7l)    alarm_arch=armv7 ;;
+            *) tui_msg "Unsupported architecture" "Arch Linux ARM provides aarch64 and armv7 rootfs tarballs; $arch was requested."; return 1 ;;
+        esac
+        tarball="ArchLinuxARM-${alarm_arch}-latest.tar.gz"
+        workdir=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-alarm.XXXXXX") || return 1
+        run_cmd "Downloading Arch Linux ARM tarball ($alarm_arch)" \
+            rootfs_fetch_file "${mirror%/}/os/$tarball" "$workdir/$tarball" || { rm -rf "$workdir"; return 1; }
+        run_cmd "Extracting Arch Linux ARM rootfs" \
+            tar -C "$target" --numeric-owner -xzf "$workdir/$tarball" || { rm -rf "$workdir"; return 1; }
+        rm -rf "$workdir"
         [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
         return 0
     else

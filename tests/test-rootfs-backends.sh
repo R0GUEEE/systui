@@ -62,10 +62,12 @@ check "qemu-debootstrap is offered for a foreign arch" \
 check "arch-qualified support check tracks the catalogue" \
     unsupported debian qemu-debootstrap "$(host_debarch)"
 
-# Official Arch repositories are x86_64 only.
+# Arch Linux: x86_64 uses the official repos; ARM uses Arch Linux ARM.
 check "Arch offers pacstrap on amd64" lists_backend arch amd64 pacstrap
-check "Arch offers nothing on arm64" no_catalogue arch arm64
-check "Arch rejects a non-x86_64 resolution" no_resolution arch pacstrap arm64
+check "Arch offers the ARM tarball on arm64" lists_backend arch arm64 alarm-tarball
+check "Arch offers the ARM tarball on armhf" lists_backend arch armhf alarm-tarball
+check "Arch does not offer pacstrap on arm64" omits_backend arch arm64 pacstrap
+check "Arch rejects pacstrap on a non-x86_64 resolution" no_resolution arch pacstrap arm64
 
 # Auto-resolution must still name this distro's preferred tool on a host where
 # nothing is installed, so the caller can say what to install.
