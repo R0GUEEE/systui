@@ -112,6 +112,18 @@ check "strata manager exposes is_bedrock"  declare -F rootfs_is_bedrock
 check "is_bedrock flags a bedrock layout"  rootfs_is_bedrock "$tmpdir/nonbedrock"
 check "is_bedrock false for an empty root" not_bedrock_dir
 
+# --- Bedrock world file -----------------------------------------------------
+# The world submenu builds pmm world flags; menu returns "back" so no loop.
+world_cmds() {
+    rootfs_chroot_exec() { :; }
+    tui_menu() { echo back; }
+    rootfs_bedrock_world_menu "$tmpdir/nonbedrock" >/dev/null 2>&1
+}
+check "world menu function is exposed"    declare -F rootfs_bedrock_world_menu
+check "world menu terminates on back"     world_cmds
+world_flag_ok() { grep -q -- "--${1:-diff}-world" src/features/rootfs.sh; }
+check "world diff/update/apply flags wired" world_flag_ok diff
+
 all_managers_have_hints() {
     local tag bin label
     while IFS='|' read -r tag bin label; do

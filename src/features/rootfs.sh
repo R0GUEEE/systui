@@ -5952,10 +5952,12 @@ rootfs_bedrock_strata_manager() { # <target>
             disable  "Disable an enabled stratum (brl disable)" \
             remove   "Remove a stratum (brl remove)" \
             rename   "Rename a stratum (brl rename)" \
+            world    "World file (view / diff / update / apply / export)" \
             back     "Back") || return 0
         [ -z "$c" ] && return 0
         case "$c" in
             back) return 0 ;;
+            world) rootfs_bedrock_world_menu "$t" ;;
             list)
                 run_cmd "brl list" rootfs_chroot_exec "$t" "brl list"
                 ;;
@@ -6009,6 +6011,62 @@ rootfs_bedrock_strata_import() { # <target>
     rootfs_chroot_exec "$t" "brl import $name" \
         "brl import \"$dst\" --name \"$name\" 2>&1 || brl import \"$dst\" \"$name\""
     rm -rf "$dst"
+}
+
+# Bedrock "world" file (/bedrock/etc/world) records the explicitly-installed
+# package set across all strata. pmm (Bedrock's package-manager macro) provides
+# the operations; this menu exposes them so a Bedrock rootfs's package state can
+# be viewed, reconciled, and exported/imported for cloning.
+rootfs_bedrock_world_menu() { # <target>
+    local t="$1" wfile="$1/bedrock/etc/world" c
+    # The world file may not exist on a fresh hijack; update/apply can create
+    # or reconcile it. Only view/export need the file to be present.
+    while true; do
+        c=$(tui_menu "Bedrock world [$(basename "$t")]" \
+            "World file records explicitly-installed packages across strata.\nPath: /bedrock/etc/world" \
+            view    "View the world file" \
+            diff    "Diff world vs installed (pmm --diff-world)" \
+            update  "Sync world from installed (pmm --update-world)" \
+            apply   "Apply world to system (pmm --apply-world)" \
+            export  "Export the world file to the host" \
+            import  "Import a world file from the host" \
+            back    "Back") || return 0
+        [ -z "$c" ] && return 0
+        case "$c" in
+            back) return 0 ;;
+            view)
+                if [ -r "$wfile" ]; then
+                    run_cmd "cat /bedrock/etc/world" rootfs_chroot_exec "$t" "cat /bedrock/etc/world"
+                else
+                    tui_msg "No world file" "No /bedrock/etc/world exists yet — packages have not been explicitly installed (or pmm has not run)."
+                fi
+                ;;
+            diff|update|apply)
+                run_cmd "pmm --$c-world" rootfs_chroot_exec "$t" \
+                    "command -v pmm >/dev/null 2>&1 && pmm --$c-world || echo 'pmm not found in this Bedrock system'"
+                ;;
+            export)
+                local dst
+                if ! [ -r "$wfile" ]; then
+                    tui_msg "No world file" "No /bedrock/etc/world exists yet — nothing to export."
+                    continue
+                fi
+                dst=$(tui_input "Export world" "Host path to write the world file to:" "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/world-$(basename "$t")") || continue
+                [ -n "$dst" ] || continue
+                mkdir -p "$(dirname "$dst")"
+                if cp -a "$wfile" "$dst"; then tui_msg "Exported" "World file written to:\n$dst"; else tui_msg "Error" "Could not write $dst."; fi
+                ;;
+            import)
+                local wsrc
+                wsrc=$(tui_input "Import world" "Host path of a world file to install into the rootfs:" "") || continue
+                [ -n "$wsrc" ] || continue
+                [ -r "$wsrc" ] || { tui_msg "Not found" "No readable file at:\n$wsrc"; continue; }
+                if tui_yesno "Overwrite world" "Replace /bedrock/etc/world with the imported file?"; then
+                    cp -a "$wsrc" "$wfile" && tui_msg "Imported" "World file replaced from:\n$wsrc"
+                fi
+                ;;
+        esac
+    done
 }
 
 
