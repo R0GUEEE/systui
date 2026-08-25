@@ -1365,18 +1365,39 @@ EOF
     esac
 }
 
-rootfs_catalog_select_category() { # category title
-    local category="$1" title="$2" tag desc state
+# Filter out catalogue entries that have no clean native equivalent for the
+# selected distro family (e.g. git-lfs maps to SKIP on Alpine). Keeping them
+# in the menu is actively misleading — the user would select something that
+# the backend silently drops. The <family> is alpine|arch|fedora|void or empty
+# for the Debian family (where canonical names are native already).
+# An entry with no clean native equivalent in <family> is marked SKIP in the
+# PKG_MAP column for that family (map_packages then returns *empty* for it,
+# because SKIP entries are dropped, not echoed, so an empty result is NOT
+# evidence of availability). Inspect the map column directly.
+rootfs_catalog_available_for() { # <tag> <family>
+    local tag="$1" family="${2:-}"
+    [ -n "$family" ] || return 0
+    local col entry value
+    case "$family" in alpine) col=1 ;; arch) col=2 ;; fedora) col=3 ;; void) col=4 ;; *) return 0 ;; esac
+    entry="${PKG_MAP[$tag]:-}"
+    [ -n "$entry" ] && value=$(awk -v c="$col" '{print $c}' <<<" $entry")
+    [ "$value" != SKIP ]
+}
+
+rootfs_catalog_select_category() { # category title [family]
+    local category="$1" title="$2" family="${3:-}" tag desc state
     local args=()
     while IFS='|' read -r tag desc state; do
         [ -n "$tag" ] || continue
+        rootfs_catalog_available_for "$tag" "$family" || continue
         args+=("$tag" "$desc" "$state")
     done < <(rootfs_catalog_items "$category")
     [ ${#args[@]} -gt 0 ] || return 0
     tui_check "Additional packages: $title" "SPACE toggles packages; ENTER adds selection:" "${args[@]}"
 }
 
-rootfs_catalog_search() {
+rootfs_catalog_search() { # [family]
+    local family="${1:-}"
     local q tag desc state category
     q=$(tui_input "Search package catalogue" "Package name or description:" "") || return 0
     [ -n "$q" ] || return 0
@@ -1384,6 +1405,7 @@ rootfs_catalog_search() {
     for category in essentials shells editors development languages network server databases containers storage monitoring security hardware desktop misc; do
         while IFS='|' read -r tag desc state; do
             [ -n "$tag" ] || continue
+            rootfs_catalog_available_for "$tag" "$family" || continue
             if printf '%s %s\n' "$tag" "$desc" | grep -qi -- "$q"; then
                 args+=("$tag" "$desc" off)
             fi
@@ -1397,7 +1419,10 @@ rootfs_catalog_search() {
 }
 
 rootfs_package_catalog() { # distro existing-packages -> final package string
-    local distro="$1" selected="$2" choice added manual
+    local distro="$1" selected="$2" choice added manual family=""
+    # Non-Debian backing families translate canonical names; tell the catalog
+    # which family so it can hide entries that have no native equivalent.
+    case "$distro" in alpine) family=alpine ;; arch) family=arch ;; fedora) family=fedora ;; void) family=void ;; esac
     while true; do
         choice=$(tui_menu "Additional package catalogue [$distro]" \
             "Browse categories, add presets, search, or enter native package names.\nCurrently selected: $(printf '%s' "$selected" | xargs -n1 2>/dev/null | sort -u | wc -l) packages" \
@@ -1439,7 +1464,7 @@ rootfs_package_catalog() { # distro existing-packages -> final package string
                 case " $added " in *" containers "*) selected+=" podman buildah skopeo runc containerd docker.io docker-compose" ;; esac
                 case " $added " in *" diagnostics "*) selected+=" htop btop sysstat iotop iftop nethogs lsof ncdu tree jq pciutils usbutils lshw lm-sensors smartmontools" ;; esac
                 ;;
-            search) added=$(rootfs_catalog_search) || added=""; selected+=" ${added//\"/}" ;;
+            search) added=$(rootfs_catalog_search "$family") || added=""; selected+=" ${added//\"/}" ;;
             manual) manual=$(tui_input "Native package names" "Space-separated package names for $distro:" "") || manual=""; if [ -n "$manual" ]; then manual=$(rootfs_sanitize_packages "$manual") || { tui_msg "Invalid package" "Package names may not contain shell syntax, paths, whitespace escapes, or leading options."; manual=""; }; fi; selected+=" $manual" ;;
             review)
                 local review_text
@@ -1450,7 +1475,7 @@ rootfs_package_catalog() { # distro existing-packages -> final package string
             done) break ;;
             *)
                 local title="${choice^}"
-                added=$(rootfs_catalog_select_category "$choice" "$title") || added=""
+                added=$(rootfs_catalog_select_category "$choice" "$title" "$family") || added=""
                 selected+=" ${added//\"/}"
                 ;;
         esac
@@ -4025,6 +4050,129 @@ rootfs_continue_generation() { # <target>
     tui_msg "Recovery complete" "Generation recovery finished for:\n$t\n\nReview the log for any package-specific warnings: $LOGFILE"
 }
 
+# ---------------------------------------------------------------------------
+# Host dependency management for rootfs builds.
+#
+# The builder never silently skips a tool: before building we check that every
+# host command a backend (or the compression step) needs is present, and if
+# one is missing we offer to install it via the host package manager instead
+# of failing the build with a bare "command not found" deep inside a backend.
+# ---------------------------------------------------------------------------
+
+# Map a bootstrap tool tag to a native package name under the active PM.
+# Same catalogue as the "Bootstrap tools" management menu, lifted here so the
+# auto-install step and that menu agree on names.
+rootfs_bs_native_pkg() { # <tag>
+    local tag="$1" 
+    # tag|apt|pacman|dnf|apk   (columns: apt, pacman, dnf, apk)
+    local line
+    line=$(printf '%s\n' \
+'debootstrap|debootstrap|debootstrap|debootstrap|debootstrap' \
+'mmdebstrap|mmdebstrap|mmdebstrap|mmdebstrap|' \
+'cdebootstrap|cdebootstrap|||' \
+'multistrap|multistrap|||' \
+'qemu-user-static|qemu-user-static|qemu-user-static|qemu-user-static|' \
+'binfmt-support|binfmt-support|||binfmt-support' \
+'arch-install-scripts|arch-install-scripts|arch-install-scripts||arch-install-scripts' \
+'pacstrap|arch-install-scripts|arch-install-scripts||arch-install-scripts' \
+'rinse|rinse|||' \
+'zypper|zypper|zypper|zypper|' \
+'dnf|dnf|dnf|dnf|' \
+'xbps-tools|xbps-tools||xbps|xbps-tools' \
+'zstd|zstd|zstd|zstd|zstd' \
+'xz-utils|xz-utils|xz-utils|xz|xz' \
+'curl|curl|curl|curl|curl' \
+'wget|wget|wget|wget|wget'\
+ | grep "^$tag|")
+    [ -z "$line" ] && { printf '%s\n' "$tag"; return 0; }
+    local apt_ pacman_ dnf_ apk_
+    apt_=$(printf '%s' "$line" | cut -d'|' -f2)
+    pacman_=$(printf '%s' "$line" | cut -d'|' -f3)
+    dnf_=$(printf '%s' "$line" | cut -d'|' -f4)
+    apk_=$(printf '%s' "$line" | cut -d'|' -f5)
+    case "$PM" in
+        apt)  printf '%s\n' "${apt_:-$tag}" ;;
+        pacman) printf '%s\n' "${pacman_:-$tag}" ;;
+        dnf|yum) printf '%s\n' "${dnf_:-$tag}" ;;
+        apk)  printf '%s\n' "${apk_:-$tag}" ;;
+        *)    printf '%s\n' "$tag" ;;
+    esac
+}
+
+# Return the list of host *commands* missing for <distro>/<backend>. Prints as
+# newline-separated tagged lines "tag|human-requirement".
+rootfs_backend_missing_cmds() { # <distro> <backend> [arch] [compression]
+    local distro="$1" backend="$2" want_curl=0 i
+    # Archive/compression and the Alpine key-seed path both want a downloader.
+    rootfs_archive_missing_tool "${4:-gz}" >/dev/null 2>&1  # no-op; we handle arch tools separately below
+    case "$backend" in
+        apk-static)      command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (for compressed archives)\n'; want_curl=1 ;;
+        alpine-chroot-install) want_curl=1 ;;
+        arch-bootstrap)  command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (Zstandard compression)\n'; want_curl=1 ;;
+        gentoo-stage3)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
+        void-tarball)    command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
+        mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap|qemu-debootstrap)
+            command -v "$backend" >/dev/null 2>&1 || printf '%s|%s\n' "$backend" "$(rootfs_backend_requirements "$backend")"
+            # qemu-debootstrap additionally requires debootstrap + qemu-user-static
+            if [ "$backend" = qemu-debootstrap ]; then
+                command -v debootstrap >/dev/null 2>&1 || printf 'debootstrap|debootstrap\n'
+                command -v qemu-aarch64-static >/dev/null 2>&1 || command -v qemu-x86_64-static >/dev/null 2>&1 \
+                    || printf 'qemu-user-static|qemu-user-static (+ binfmt-support)\n'
+            fi
+            ;;
+        *)
+            command -v "$backend" >/dev/null 2>&1 || printf '%s|%s\n' "$backend" "$(rootfs_backend_requirements "$backend")"
+            ;;
+    esac
+    # Compression tools: the caller always has a choosable format.
+    case "${4:-gz}" in
+        xz)  rootfs_tar_supports -J || command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n' ;;
+        zst) rootfs_tar_supports --zstd || command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (Zstandard compression)\n' ;;
+    esac
+    # Downloader for keys/tools/tarballs.
+    if [ "$want_curl" = 1 ] && ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then
+        printf 'curl|curl or wget (network downloader)\n'
+    fi
+}
+
+# Check host prerequisites for <distro>/<backend> and offer to install what's
+# missing. Returns 0 when everything is installed, 1 if the user declined.
+rootfs_check_host_deps() { # <distro> <backend> [arch] [compression]
+    local distro="$1" backend="$2" arch="${3:-}" comp="${4:-gz}"
+    local missing pkg tag line
+    missing=$(rootfs_backend_missing_cmds "$distro" "$backend" "$arch" "$comp")
+    [ -n "$missing" ] || return 0
+    local text="The host is missing tools required to build a ${distro} rootfs with '$backend'."
+    while IFS='|' read -r tag _; do
+        [ -n "$tag" ] || continue
+        # Don't try to install meta-commands that resolve to small packages;
+        # gzip/xz/tar usually ship in base. Only offer ones with a real mapping.
+        case "$tag" in tar|gzip|xz) continue ;; esac
+        if ! command -v "$tag" >/dev/null 2>&1; then
+            pkg=$(rootfs_bs_native_pkg "$tag")
+            if tui_yesno "Install required tool" "Missing host tool: $tag\n\nInstall '$pkg' via $PM?"; then
+                SYSTUI_PM_NO_WEB_FALLBACK=1 pm_install "$pkg" 2>/dev/null || pm_install "$pkg"
+            else
+                log "rootfs: user declined installing $tag"
+                tui_msg "Missing tool" "$tag is required for this build.\n\nInstall it first (Rootfs > Bootstrap tools) and retry."
+                return 1
+            fi
+        fi
+    done <<< "$missing"
+    # Re-check after (attempted) installs; hard-fail only if a real bootstrap
+    # tool (or a compression packer that will break the build) is still gone.
+    # {tar,gzip,xz} are treated as near-universal base utilities and skipped.
+    local still blocker
+    still=$(rootfs_backend_missing_cmds "$distro" "$backend" "$arch" "$comp")
+    blocker=$(printf '%s\n' "$still" | grep -E '^(mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap|qemu-debootstrap|zstd|apk-tools-static|alpine-chroot-install)') || true
+    if [ -n "$blocker" ]; then
+        tui_msg "Missing tool" "Still missing after the install attempt:\n$blocker\n\nCheck the log and the package name, then retry."
+        return 1
+    fi
+    return 0
+}
+
+
 # Entry point kept thin: the build itself runs fail-fast inside run_strict so a
 # mid-build failure aborts the build rather than the whole TUI.
 rootfs_builder() {
@@ -4093,6 +4241,10 @@ rootfs_builder_impl() {
             rootfs_backend_config_menu "$distro" "$backend" preserve || return 0
             ;;
     esac
+
+    # Verify the host has every tool this backend needs BEFORE the user walks
+    # the remaining 8 stages; offer to install anything missing.
+    rootfs_check_host_deps "$distro" "$backend" "$arch" gz || return 0
 
     if needs_qemu "$arch"; then
         use_qemu=1
@@ -4347,6 +4499,47 @@ Proceed?" || return 0
         "$distro" "$release" "$arch" "$mirror" "$pkgs" "$use_qemu" \
         "$init_choice" "$preset" "$hostname_v" "$postcfg" "$tz" "$backend"
 
+    # Run the build with a recovery loop so a missing tool, a bad configuration
+    # or a transient failure never strands the user: each failure offers to
+    # correct the cause and resume from the interruption point.
+    rootfs_build_recovery "$target" \
+        "$distro" "$release" "$arch" "$alpine_arch" "$fedora_arch" "$void_arch" \
+        "$mirror" "$pkgs" "$use_qemu" "$backend" \
+        "$init_choice" "$preset" "$hostname_v" "$rootpw" "$mkuser" "$userpw" "$usersudo" \
+        "$postcfg" "$tz" "$locale_v" "$shell_v" "$editor_v" "$ssh_port" "$comp"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Build execution and failure recovery.
+#
+# The actual per-distro bootstrap runs inside rootfs_build_and_finish, which
+# returns a staged status rather than just pass/fail:
+#   0  everything (bootstrap + postconfig + validation + archive) succeeded
+#   1  the bootstrap/first-stage step failed (nothing usable produced)
+#   2  bootstrap succeeded but in-rootfs post-configuration failed
+#   3  bootstrap+config succeeded but the final integrity check failed
+#   4  archive/compression failed (rootfs itself is fine)
+# rootfs_build_recovery loops on these codes, letting the user fix the cause
+# (install a tool, adjust a mirror/backend configuration, re-seed keys) and
+# resume the interrupted step instead of starting from scratch.
+# ---------------------------------------------------------------------------
+
+# One pass: check host deps (with chosen compression), bootstrap, configure,
+# validate, archive. Emits the staged exit code described above.
+rootfs_build_and_finish() { # <target> <distro> <release> <arch> <alpine_arch> <fedora_arch> <void_arch> <mirror> <pkgs> <use_qemu> <backend> <init> <preset> <hostname> <rootpw> <mkuser> <userpw> <usersudo> <postcfg> <tz> <locale> <shellv> <editorv> <sshport> <comp>
+    local target="$1" distro="$2" release="$3" arch="$4" alpine_arch="$5" fedora_arch="$6" void_arch="$7" mirror="$8" pkgs="$9"
+    local use_qemu="${10}" backend="${11}" init_choice="${12}" preset="${13}" hostname_v="${14}"
+    local rootpw="${15}" mkuser="${16}" userpw="${17}" usersudo="${18}"
+    local postcfg="${19}" tz="${20}" locale_v="${21}" shell_v="${22}" editor_v="${23}" ssh_port="${24}" comp="${25}"
+
+    # Everything this pass needs on the HOST (backends + chosen compression).
+    if ! rootfs_check_host_deps "$distro" "$backend" "$arch" "$comp"; then
+        rootfs_set_build_stage "$target" host-deps-missing
+        return 1
+    fi
+
+    local rc=0
     case "$distro" in
         debian|devuan|ubuntu|kali) build_debfamily "$distro" "$release" "$arch" "$mirror" "$target" "$pkgs" "$use_qemu" "$backend" ;;
         alpine)
@@ -4370,47 +4563,112 @@ Proceed?" || return 0
             fi ;;
         gentoo)               build_gentoo "$release" "$arch" "$mirror" "$target" "$pkgs" ;;
         void)                 build_void "$void_arch" "$mirror" "$target" "$pkgs" "$use_qemu" ;;
-    esac || { tui_msg "Build failed" "Bootstrap step failed. See $LOGFILE."; show_warnings; return 0; }
+    esac || {
+        rootfs_set_build_stage "$target" bootstrap-failed
+        return 1
+    }
+    rootfs_set_build_stage "$target" bootstrap-complete
 
-    rootfs_postconfig "$target" "$distro" "$release" "$arch" "$init_choice" "$preset" \
+    if ! rootfs_postconfig "$target" "$distro" "$release" "$arch" "$init_choice" "$preset" \
         "$hostname_v" "$rootpw" "$mkuser" "$userpw" "$usersudo" "$postcfg" "$tz" "$pkgs" "$use_qemu" \
-        "$locale_v" "$shell_v" "$editor_v" "$ssh_port" \
-        || { rootfs_set_build_stage "$target" postconfig-failed; tui_msg "Configuration failed" "The base rootfs was created, but required post-configuration failed. Review $LOGFILE."; return 0; }
+        "$locale_v" "$shell_v" "$editor_v" "$ssh_port"; then
+        rootfs_set_build_stage "$target" postconfig-failed
+        return 2
+    fi
+    rootfs_set_build_stage "$target" postconfig-complete
 
     if ! rootfs_validate_integrity "$target"; then
         rootfs_set_build_stage "$target" validation-failed
-        tui_msg "Validation failed" "The rootfs did not pass final integrity checks. Review $LOGFILE."
-        return 0
+        return 3
     fi
     rootfs_set_build_stage "$target" complete
-    show_warnings
 
     # ---- archive ----
     if [ "$comp" != none ]; then
-        local ext
-        case "$comp" in
-            zst) ext="tar.zst" ;;
-            gz)  ext="tar.gz" ;;
-            xz)  ext="tar.xz" ;;
-        esac
-        local archive="${target%/}.$ext" missing_tool
-        # xz used to be unguarded while zst was checked, so a missing xz
-        # binary produced a broken/absent .tar.xz with no warning.
+        local ext archive missing_tool
+        case "$comp" in zst) ext="tar.zst" ;; gz) ext="tar.gz" ;; xz) ext="tar.xz" ;; esac
+        archive="${target%/}.$ext"
         missing_tool=$(rootfs_archive_missing_tool "$comp")
         if [ -n "$missing_tool" ]; then
             warn "$missing_tool not installed — skipping compression."
             show_warnings
         else
             case "$comp" in
-                gz)  run_cmd "Compressing rootfs -> $archive" rootfs_tar_create gz  "$target" "$archive" ;;
-                xz)  run_cmd "Compressing rootfs -> $archive" rootfs_tar_create xz  "$target" "$archive" ;;
-                zst) run_cmd "Compressing rootfs -> $archive" rootfs_tar_create zst "$target" "$archive" ;;
-            esac && tui_msg "Done" "Archive written:\n$archive"
+                gz)  run_cmd "Compressing rootfs -> $archive" rootfs_tar_create gz  "$target" "$archive" || rc=4 ;;
+                xz)  run_cmd "Compressing rootfs -> $archive" rootfs_tar_create xz  "$target" "$archive" || rc=4 ;;
+                zst) run_cmd "Compressing rootfs -> $archive" rootfs_tar_create zst "$target" "$archive" || rc=4 ;;
+            esac
+            if [ "$rc" = 0 ]; then tui_msg "Done" "Archive written:\n$archive"; fi
         fi
     fi
-
-    tui_msg "Rootfs complete" "Rootfs built at:\n$target\nInit: $init_choice\n\nEnter it via Rootfs -> Manage (mounts /proc,/sys,/dev),\nor manually: chroot $target /bin/sh"
+    [ "$rc" = 0 ] && tui_msg "Rootfs complete" "Rootfs built at:\n$target\nInit: $init_choice\n\nEnter it via Rootfs -> Manage (mounts /proc,/sys,/dev),\nor manually: chroot $target /bin/sh"
+    return "$rc"
 }
+
+# Recovery loop. Builds, and on any non-zero staged status presents corrective
+# actions and retries until the user quits or the build succeeds.
+rootfs_build_recovery() {
+    local target="$1" distro="$2" release="$3" arch="$4" alpine_arch="$5" fedora_arch="$6" void_arch="$7"
+    local mirror="$8" pkgs="$9" use_qemu="${10}" backend="${11}"
+    local init_choice="${12}" preset="${13}" hostname_v="${14}" rootpw="${15}"
+    local mkuser="${16}" userpw="${17}" usersudo="${18}"
+    local postcfg="${19}" tz="${20}" locale_v="${21}" shell_v="${22}" editor_v="${23}"
+    local ssh_port="${24}" comp="${25}"
+    local rc action attempts=0
+    while true; do
+        attempts=$((attempts + 1))
+        rootfs_build_and_finish "$target" "$distro" "$release" "$arch" "$alpine_arch" "$fedora_arch" "$void_arch" \
+            "$mirror" "$pkgs" "$use_qemu" "$backend" "$init_choice" "$preset" "$hostname_v" "$rootpw" "$mkuser" "$userpw" "$usersudo" \
+            "$postcfg" "$tz" "$locale_v" "$shell_v" "$editor_v" "$ssh_port" "$comp"
+        rc=$?
+        [ "$rc" = 0 ] && return 0
+
+        # Map the staged failure to a prompt.
+        local heading detail
+        case "$rc" in
+            1) heading="Build step failed"; detail="The bootstrap step did not complete.\nReview $LOGFILE for the exact error." ;;
+            2) heading="Post-configuration failed"; detail="The base rootfs was created, but in-rootfs configuration failed.\nReview $LOGFILE." ;;
+            3) heading="Validation failed"; detail="The rootfs did not pass final integrity checks.\nReview $LOGFILE." ;;
+            4) heading="Compression failed"; detail="The rootfs is fine, but writing the archive failed.\nReview $LOGFILE." ;;
+        esac
+        action=$(tui_menu "$heading  (attempt $attempts)" "$detail" \
+            retry "Retry the failed step" \
+            deps "Run dependency installer again" \
+            config "Fix build configuration" \
+            resume "Continue an existing/partial build" \
+            abort "Abort this build") || return 1
+        case "$action" in
+            abort) return 1 ;;
+            retry) rootfs_cleanup_failed_target "$target" "$rc"; continue ;;
+            deps)  rootfs_check_host_deps "$distro" "$backend" "$arch" "$comp" || return 1; continue ;;
+            config)
+                # Re-run backend config for Debian-family; others just recurse deps.
+                if [ "$distro" = debian ] || [ "$distro" = devuan ] || [ "$distro" = ubuntu ] || [ "$distro" = kali ]; then
+                    rootfs_backend_auto_optimize "$distro" "$backend"
+                    rootfs_backend_config_menu "$distro" "$backend" preserve || return 1
+                    rootfs_backend_config_write "$target"
+                fi
+                continue ;;
+            resume) rootfs_continue_generation "$target"; return 0 ;;
+        esac
+    done
+}
+
+# Before a retry, drop any half-written internals that would make the backend
+# refuse to (re)run — but never the user's target directory itself.
+rootfs_cleanup_failed_target() { # <target> <status>
+    local t="$1" rc="$2"
+    case "$rc" in
+        1)
+            # A failed bootstrap leaves partial DB/state under the target.
+            rm -rf "$t/var/lib/apk" "$t/etc/apk/world" "$t/var/lib/dpkg" "$t/debootstrap" "$t/etc/apk/repositories" 2>/dev/null
+            ;;
+        2) rootfs_unmount_chroot_fs "$t" 2>/dev/null || true ;;
+        4) rm -f "${t%/}.tar.gz" "${t%/}.tar.xz" "${t%/}.tar.zst" 2>/dev/null ;;
+    esac
+    return 0
+}
+
 
 # ---- Post-build configuration inside the rootfs -----------------------------
 rootfs_postconfig() {
@@ -5022,6 +5280,9 @@ Use the apk.static backend for cross-architecture Alpine roots."
     # The installer takes a branch such as v3.20 or edge.
     [ -n "$release" ] && aci+=(-b "$release")
     [ -n "${mapped// }" ] && aci+=(-p "$mapped")
+    # Seed the keyring ahead of time so the installer's first apk run can
+    # verify the repository signature (same chicken-and-egg as build_alpine).
+    rootfs_seed_alpine_keys "$target" "$mirror" "$release" "$(rootfs_apk_arch "$arch")" >/dev/null 2>&1 || true
     rootfs_set_build_stage "$target" bootstrap
     run_cmd "alpine-chroot-install ($release/$arch)" alpine-chroot-install "${aci[@]}" || return 1
     rootfs_set_build_stage "$target" bootstrap-complete
@@ -5029,6 +5290,92 @@ Use the apk.static backend for cross-architecture Alpine roots."
     # systui manages mounts itself, so detach them rather than shipping a tree
     # with the host's /proc and /dev bound into it.
     rootfs_wb_detach_all "$target" >/dev/null 2>&1 || true
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Alpine signing-key seeding.
+#
+# apk.static is very picky: with `--root <dir>` and a `-X` repository the
+# trusted-key database is read from <dir>/etc/apk/keys. `--initdb` starts with
+# that directory EMPTY, so the freshly-downloaded APKINDEX.tar.gz is judged
+# UNTRUSTED and apk refuses to resolve a single package ("no such package:
+# alpine-base") — the bootstrap then appears to fail for an unrelated reason.
+# This bit every host, but was loudest on Kali/Debian where there is no
+# /etc/apk/keys on the host to lean on.
+#
+# The reliable, host-agnostic source of trust material is the `alpine-keys`
+# package that every mirror carries for every release/arch (available even
+# though alpinelinux.org/keys's *directory listing* is 403 — the individual
+# /keys/<name>.pub files and the mirror's alpine-keys APK are both fetchable).
+# We extract from that package directly (just tar/curl/wget — no apk needed),
+# which sidesteps the chicken-and-egg of needing a trusted key to install the
+# package that contains the trusted keys.
+# ---------------------------------------------------------------------------
+rootfs_apk_arch() { # <debarch|alpine-arch> -> alpine repos basename
+    case "$1" in
+        amd64|x86_64) echo x86_64 ;;
+        arm64|aarch64) echo aarch64 ;;
+        armhf|armv7|armv7l|armv6l) echo armv7 ;;
+        i386|x86|i686|i586) echo x86 ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# Populate <target>/etc/apk/keys so a fresh `apk.static --initdb` bootstrap
+# (and later in-rootfs `apk add`) can verify repository signatures.
+rootfs_seed_alpine_keys() { # <target> <mirror> <release> <apk-arch>
+    local target="$1" mirror="${2%/}" release="$3" apkarch="$4"
+    local seeded=0 keydir="$target/etc/apk/keys" work tmp
+    mkdir -p "$keydir"
+
+    # 1) Fast path: the host already carries an Alpine keyring (iSH/AOK). Reuse.
+    if [ -d /etc/apk/keys ] && [ -n "$(ls -A /etc/apk/keys 2>/dev/null)" ]; then
+        cp -n /etc/apk/keys/*.pub "$keydir"/ 2>/dev/null && seeded=1
+    fi
+
+    # 2) Robust path: pull the keys out of the mirror's own `alpine-keys`
+    #    package. Works on any host (Kali included) with just curl/wget + tar.
+    if [ "$seeded" = 0 ]; then
+        work=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-apkkeys.XXXXXX") || return 1
+        # Find the alpine-keys APK name via the repo index, then fetch+extract.
+        local idx tools k apk
+        idx=$(rootfs_fetch_text "$mirror/$release/main/$apkarch/" 2>>"$LOGFILE" | grep -o 'alpine-keys-[0-9][^"]*\.apk' | head -n1)
+        if [ -n "$idx" ]; then
+            rootfs_fetch_file "$mirror/$release/main/$apkarch/$idx" "$work/alpine-keys.apk" 2>>"$LOGFILE" \
+                && tar -xzf "$work/alpine-keys.apk" -C "$work" 2>>"$LOGFILE" \
+                && {
+                    cp -n "$work/etc/apk/keys/"*.pub "$keydir"/ 2>/dev/null
+                    # The arch-specific keys live under usr/share/apk/keys/<arch>.
+                    for k in "$work"/usr/share/apk/keys/{"$apkarch",}/*.pub; do
+                        [ -e "$k" ] && cp -n "$k" "$keydir"/
+                    done
+                    [ -n "$(ls -A "$keydir" 2>/dev/null)" ] && seeded=1
+                }
+        fi
+        rm -rf "$work"
+    fi
+
+    # 3) Last resort: fetch known individual key files (the directory listing
+    #    is 403 but the files themselves are served). Covers edge/later
+    #    releases whose alpine-keys hash differs from the one we mis-pick.
+    if [ "$seeded" = 0 ]; then
+        for k in alpine-devel@lists.alpinelinux.org-616ae350.rsa.pub \
+                 alpine-devel@lists.alpinelinux.org-6165ee59.rsa.pub \
+                 alpine-devel@lists.alpinelinux.org-4a6a0840.rsa.pub \
+                 alpine-devel@lists.alpinelinux.org-58199dcc.rsa.pub; do
+            rootfs_fetch_file "https://alpinelinux.org/keys/$k" "$keydir/$k" 2>>"$LOGFILE" \
+                && [ -s "$keydir/$k" ] && seeded=1
+        done
+    fi
+
+    if [ "$seeded" = 0 ]; then
+        warn "Could not seed Alpine signing keys into $keydir — the bootstrap may fail signature verification."
+        return 1
+    fi
+    log "rootfs: seeded Alpine signing keys into $keydir"
+    # Ship plain names (apk on some releases expects keys with a digest suffix
+    # only when read from the signed package); all of our files are plain .pub.
     return 0
 }
 
@@ -5066,6 +5413,13 @@ build_alpine() { # release arch mirror target pkgs
     rootfs_fetch_file "$apkdir/$tools_apk" "$workdir/apk-tools.apk" || { rm -rf "$workdir"; return 1; }
     tar -xzf "$workdir/apk-tools.apk" -C "$workdir" 2>>"$LOGFILE" || { warn "Failed to extract apk-tools-static package"; rm -rf "$workdir"; return 1; }
     [ -x "$workdir/sbin/apk.static" ] || { warn "apk.static missing after extraction"; rm -rf "$workdir"; return 1; }
+
+    # The fresh --initdb DB has no trusted keys, so a signing-verified
+    # bootstrap would immediately fail with "untrusted signature / no such
+    # package". Seed the keyring before the very first apk run.
+    if ! rootfs_seed_alpine_keys "$target" "$mirror" "$release" "$(rootfs_apk_arch "$arch")"; then
+        rm -rf "$workdir"; return 1
+    fi
 
     run_cmd "apk.static bootstrap (alpine $release/$arch)" \
         "$workdir/sbin/apk.static" \
@@ -5429,39 +5783,18 @@ rootfs_ensure_keyrings() { # <target> <pm>
             # Alpine's apk needs /etc/apk/keys populated; if the rootfs was
             # built without them (e.g. a stripped-down tarball), seed the keys
             # so `apk add` doesn't fail signature verification on every
-            # package. The old https://alpinelinux.org/keys/*.pub wildcard
-            # only works with GNU wget — BusyBox wget (the norm on iSH) treats
-            # it as a literal URL — so keys are copied from the host keyring
-            # or fetched by enumerating the key list explicitly.
+            # package. We reuse the same robust seed helper the build uses
+            # (host keyring first, then the mirror's alpine-keys package, then
+            # known individual key URLs) — the old directory-listing scrape of
+            # alpinelinux.org/keys no longer works (403 on the listing).
             if [ -z "$(rootfs_exec_raw "$t" sh -c 'ls -A /etc/apk/keys 2>/dev/null')" ]; then
-                local _seeded=0 _apkkeys _pub
-                # 1) The host usually already carries a valid Alpine keyring
-                #    (iSH itself runs Alpine); reuse it instead of fetching.
-                if [ -d /etc/apk/keys ] && [ -n "$(ls -A /etc/apk/keys 2>/dev/null)" ]; then
-                    mkdir -p "$t/etc/apk/keys"
-                    cp /etc/apk/keys/* "$t/etc/apk/keys/" 2>/dev/null && _seeded=1
-                fi
-                # 2) Otherwise fetch each key file explicitly from the host,
-                #    where GNU wget or curl is available.
-                if [ "$_seeded" = 0 ] && { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }; then
-                    if command -v curl >/dev/null 2>&1; then
-                        _apkkeys=$(curl -4 -LfsS --connect-timeout 10 --max-time 60 https://alpinelinux.org/keys/ 2>/dev/null || true)
-                    else
-                        _apkkeys=$(wget -4 -qO- -T 60 https://alpinelinux.org/keys/ 2>/dev/null || true)
-                    fi
-                    while IFS= read -r _pub; do
-                        [ -n "$_pub" ] || continue
-                        mkdir -p "$t/etc/apk/keys"
-                        if command -v curl >/dev/null 2>&1; then
-                            curl -4 -LfsS --connect-timeout 10 --max-time 60 \
-                                -o "$t/etc/apk/keys/$_pub" "https://alpinelinux.org/keys/$_pub" \
-                                2>/dev/null || rm -f "$t/etc/apk/keys/$_pub"
-                        else
-                            wget -4 -q -T 60 -O "$t/etc/apk/keys/$_pub" "https://alpinelinux.org/keys/$_pub" \
-                                2>/dev/null || rm -f "$t/etc/apk/keys/$_pub"
-                        fi
-                    done <<< "$(printf '%s' "$_apkkeys" | sed -nE 's/.*href="([^"]*\.pub)".*/\1/p' | sort -u)"
-                fi
+                local _rf_mirror _rf_rel _rf_arch
+                _rf_mirror=$(rootfs_state_get "$t" MIRROR 2>/dev/null || true)
+                [ -n "$_rf_mirror" ] || _rf_mirror="https://dl-cdn.alpinelinux.org/alpine"
+                _rf_rel=$(rootfs_state_get "$t" RELEASE 2>/dev/null || true)
+                _rf_arch=$(rootfs_target_arch "$t")
+                case "$_rf_arch" in aarch64|arm64) _rf_arch=aarch64;; armhf|armv7*) _rf_arch=armv7;; x86|i386|i686) _rf_arch=x86;; amd64|x86_64) _rf_arch=x86_64;; esac
+                rootfs_seed_alpine_keys "$t" "$_rf_mirror" "${_rf_rel:-edge}" "$_rf_arch" >/dev/null 2>&1 || true
                 if [ -z "$(rootfs_exec_raw "$t" sh -c 'ls -A /etc/apk/keys 2>/dev/null')" ]; then
                     tui_msg "Missing Alpine keys" "No APK signing keys found in /etc/apk/keys and none\ncould be fetched — package installs inside this rootfs\nmay fail signature verification. Copy keys from the host\n(/etc/apk/keys) into $t/etc/apk/keys if this happens."
                 fi
