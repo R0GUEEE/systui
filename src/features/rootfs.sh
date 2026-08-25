@@ -153,6 +153,14 @@ rootfs_backend_available() { # <backend>
             command -v tar >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
             ;;
+        bedrock-hijack)
+            # Bedrock converts an existing distro in-place; needs a way to
+            # run the installer inside the target chroot (tar + a downloader
+            # to fetch the installer, plus chroot/qemu for foreign arch).
+            command -v tar >/dev/null 2>&1 &&
+                command -v sha1sum >/dev/null 2>&1 &&
+                { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
+            ;;
         gentoo-stage3|void-tarball)
             command -v tar >/dev/null 2>&1 && command -v xz >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
@@ -176,6 +184,7 @@ rootfs_backend_requirements() { # <backend>
         apk-static)       printf 'tar, gzip, and curl or wget\n' ;;
         arch-bootstrap)   printf 'tar, zstd, and curl or wget\n' ;;
         alarm-tarball)    printf 'tar, gzip, and curl or wget (Arch Linux ARM tarball)\n' ;;
+        bedrock-hijack)   printf 'tar, sha1sum, and curl or wget; FUSE + xattr filesystem on the build host\n' ;;
         gentoo-stage3|void-tarball) printf 'tar, xz, and curl or wget\n' ;;
         *)                printf 'unknown prerequisites\n' ;;
     esac
@@ -306,6 +315,21 @@ rootfs_backend_catalog() { # <distro> [arch] [release]
             ;;
         gentoo)
             printf 'gentoo-stage3|Official Gentoo stage3 tarball\n'
+            ;;
+        bedrock)
+            # Bedrock is not bootstrapped standalone: it hijacks a base
+            # distro install in-place. The "backend" here is the base distro's
+            # bootstrap tool (Debian-family), because systui builds a Debian
+            # minbase first and then runs the Bedrock hijack installer over it.
+            printf 'mmdebstrap|mmdebstrap — build the Debian base to hijack\n'
+            rootfs_backend_release_supported "$distro" debootstrap "$release" "$arch" &&
+                printf 'debootstrap|debootstrap — classic two-stage Debian base\n'
+            printf 'cdebootstrap|cdebootstrap — compiled minimal Debian base\n'
+            printf 'multistrap|multistrap — configuration-driven Debian base\n'
+            if [ -z "$arch" ] || needs_qemu "$arch"; then
+                rootfs_backend_release_supported "$distro" qemu-debootstrap "$release" "$arch" &&
+                    printf 'qemu-debootstrap|qemu-debootstrap — legacy foreign-arch wrapper\n'
+            fi
             ;;
         void)
             printf 'void-tarball|Official Void ROOTFS tarball\n'
@@ -1101,6 +1125,7 @@ rootfs_release_candidates() { # <distro> <arch>
         gentoo) printf '%s\n' openrc systemd; return 0 ;;
         arch) printf '%s\n' rolling; return 0 ;;
         void) printf '%s\n' current; return 0 ;;
+        bedrock) printf '%s\n' current 0.7.31 0.7.30; return 0 ;;
     esac
     if command -v curl >/dev/null 2>&1; then
         html=$(curl -4 -LfsS --connect-timeout 4 --max-time 10 "$url" 2>/dev/null || true)
@@ -1131,6 +1156,7 @@ rootfs_release_menu() { # <distro> <arch>
         opensuse) def=15.6; [ -n "$candidates" ] || candidates=$'15.5\n15.6' ;;
         tumbleweed) def=current; candidates=current ;;
         gentoo) def=openrc; candidates=$'openrc\nsystemd' ;;
+        bedrock) def=current; candidates=$'current\n0.7.31\n0.7.30' ;;
         arch) def=rolling; candidates=rolling ;;
         void) def=current; candidates=current ;;
     esac
@@ -4124,6 +4150,7 @@ rootfs_backend_missing_cmds() { # <distro> <backend> [arch] [compression]
         alpine-chroot-install) want_curl=1 ;;
         arch-bootstrap)  command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (Zstandard compression)\n'; want_curl=1 ;;
         alarm-tarball)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (compressed archives)\n'; want_curl=1 ;;
+        bedrock-hijack)  command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v sha1sum >/dev/null 2>&1 || printf 'sha1sum|coreutils (checksum verification)\n'; want_curl=1 ;;
         gentoo-stage3)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
         void-tarball)    command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
         mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap|qemu-debootstrap)
@@ -4213,6 +4240,11 @@ rootfs_distro_archs() { # <distro>
             # Leap/Tumbleweed ship x86_64 and aarch64; i586 is retired.
             printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\n'
             ;;
+        bedrock)
+            # Bedrock ships hijack installers for x86_64, aarch64, armv7, i386
+            # (i686) and more; map those onto our debarch set.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|armv7 (32-bit ARM)\ni386|x86 32-bit\n'
+            ;;
         *) return 1 ;;
     esac
 }
@@ -4239,7 +4271,8 @@ rootfs_builder_impl() {
         opensuse "openSUSE Leap (zypper --root)" off \
         tumbleweed "openSUSE Tumbleweed (zypper --root)" off \
         gentoo "Gentoo Linux (official stage3)" off \
-        void   "Void Linux (official ROOTFS tarball)" off) || return 0
+        void   "Void Linux (official ROOTFS tarball)" off \
+        bedrock "Bedrock Linux (meta-distro; hijacks a base)" off) || return 0
     [ -z "$distro" ] && return
 
     # ---- 2: architecture ----
@@ -4288,7 +4321,7 @@ rootfs_builder_impl() {
     # config menu. The user sees pre-tuned values instead of raw defaults, and
     # can still adjust anything via the menu before proceeding.
     case "$distro" in
-        debian|devuan|ubuntu|kali)
+        debian|devuan|ubuntu|kali|bedrock)
             rootfs_backend_auto_optimize "$distro" "$backend"
             rootfs_backend_config_menu "$distro" "$backend" preserve || return 0
             ;;
@@ -4312,7 +4345,9 @@ user creation). Install on the host first if you haven't:
 
     # ---- 5: init system ----
     case "$distro" in
-        debian|ubuntu)
+        debian|ubuntu|bedrock)
+            # Bedrock's base is Debian, so its init options mirror Debian;
+            # Bedrock wraps whatever init the base provides.
             init_choice=$(tui_radio "Rootfs Builder 5/13" \
                 "Init system (SPACE to select).\nAlternatives are installed into the rootfs package set:" \
                 systemd  "systemd (distro default)" on \
@@ -4476,6 +4511,10 @@ user creation). Install on the host first if you haven't:
             esac ;;
         gentoo) def_mirror="https://distfiles.gentoo.org/releases" ;;
         void)   def_mirror="https://repo-default.voidlinux.org" ;;
+        bedrock)
+            # Bedrock has no standalone repository; the mirror configures the
+            # Debian-family base it hijacks. The release feeds the mirror path.
+            def_mirror="http://deb.debian.org/debian" ;;
     esac
     mirror=$(tui_input "Rootfs Builder 7/13" "Mirror URL:" "$def_mirror") || return 0
     rootfs_valid_mirror "$mirror" || { tui_msg "Invalid mirror" "Enter an http(s) URL without spaces or quotes."; return 0; }
@@ -4627,6 +4666,7 @@ rootfs_build_and_finish() { # <target> <distro> <release> <arch> <alpine_arch> <
             fi ;;
         gentoo)               build_gentoo "$release" "$arch" "$mirror" "$target" "$pkgs" ;;
         void)                 build_void "$void_arch" "$mirror" "$target" "$pkgs" "$use_qemu" ;;
+        bedrock)              build_bedrock "$release" "$arch" "$mirror" "$target" "$pkgs" "$use_qemu" "$backend" ;;
     esac || {
         rootfs_set_build_stage "$target" bootstrap-failed
         return 1
@@ -5687,6 +5727,97 @@ build_void() { # arch mirror target pkgs use_qemu
             warn "Could not install extras in the Void chroot. Inside it, run: xbps-install -Syu && xbps-install $mapped"
         fi
     fi
+}
+
+
+# Map a systui debarch onto the Bedrock installer's architecture slug.
+rootfs_bedrock_asset_arch() { # <debarch>
+    case "$1" in
+        amd64)  echo x86_64 ;;
+        arm64|aarch64) echo aarch64 ;;
+        armhf|armv7|armv7l) echo armv7l ;;
+        i386|i486|i586|i686) echo i686 ;;
+        *) echo "" ;;
+    esac
+}
+
+# Resolve the Bedrock release string into the version used in installer URLs.
+# "current" always tracks the newest stable line (0.7.31 at the time of writing);
+# anything else is passed through so a specific tag can be requested.
+rootfs_bedrock_release_version() { # <release>
+    case "${1:-current}" in
+        current|latest|stable) echo 0.7.31 ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# Bedrock is not a standalone bootstrap: it hijacks an existing Linux install
+# in-place. build_bedrock() therefore (1) builds a Debian minbase into $target,
+# (2) runs the official Bedrock release script with --hijack inside that chroot.
+# The wizard's "release" names the Bedrock version and "mirror" configures the
+# Debian base; base suite is pinned to Debian stable (trixie).
+build_bedrock() { # release arch mirror target pkgs use_qemu backend
+    local release="$1" arch="$2" mirror="$3" target="$4" pkgs="$5" use_qemu="$6" backend="$7"
+    local base_suite="trixie"
+    local asset_arch ver installer_url installer workdir name
+
+    # ---- 0. Resolve arch + version before building anything ----
+    asset_arch=$(rootfs_bedrock_asset_arch "$arch")
+    if [ -z "$asset_arch" ]; then
+        tui_msg "Unsupported architecture" "No Bedrock Linux installer exists for arch '$arch'.\n\nBedrock ships x86_64, aarch64, armv7, i686 (and more)."
+        return 1
+    fi
+    ver=$(rootfs_bedrock_release_version "$release")
+    installer_url="https://github.com/bedrocklinux/bedrocklinux-userland/releases/download/${ver}/bedrock-linux-${ver}-${asset_arch}.sh"
+    name="bedrock-linux-${ver}-${asset_arch}.sh"
+
+    # ---- 1. Build the Debian base that Bedrock will hijack ----
+    if ! build_debfamily debian "$base_suite" "$arch" "$mirror" "$target" "$pkgs" "$use_qemu" "$backend"; then
+        warn "Bedrock base (Debian $base_suite) bootstrap failed."
+        return 1
+    fi
+
+    # ---- 2. Preflight Bedrock's hard requirements (FUSE + xattrs) ----
+    if ! [ -e /proc/filesystems ] || ! grep -q 'fuse' /proc/filesystems; then
+        warn "FUSE is not enabled in /proc/filesystems. Bedrock Linux requires FUSE to operate; the hijack may fail."
+    fi
+    mkdir -p "$target/dev" "$target/proc" "$target/sys" "$target/run"
+
+    workdir=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-bedrock.XXXXXX") || return 1
+    if ! rootfs_fetch_file "$installer_url" "$workdir/$name"; then
+        tui_msg "Download failed" "Could not fetch the Bedrock hijack installer:\n$installer_url\n\nCheck the release tag and connectivity."
+        rm -rf "$workdir"; return 1
+    fi
+
+    # ---- 4. Run the hijack inside the chroot ----
+    # Bedrock needs /proc, /sys and /dev mounted so its installer can probe the
+    # kernel; /dev/fuse is created before we hand over to the installer.
+    rootfs_mount_chroot_fs "$target" || true
+    # Standard device nodes if the host's /dev is not bind-mounted in.
+    if ! [ -e "$target/dev/null" ]; then
+        in_chroot "$target" mknod -m 666 /dev/null c 1 3 2>/dev/null || true
+    fi
+    if ! [ -e "$target/dev/fuse" ]; then
+        in_chroot "$target" mknod -m 666 /dev/fuse c 10 229 2>/dev/null || warn "Could not create /dev/fuse in the base — Bedrock may fail to initialize."
+    fi
+    cp "$workdir/$name" "$target/tmp/bedrock-installer.sh" || { rm -rf "$workdir"; return 1; }
+
+    # The installer prompts for a literal "Not reversible!" confirmation; feed it
+    # via a pipeline that runs entirely inside the chroot.
+    rootfs_set_build_stage "$target" bedrock-hijack
+    if ! rootfs_chroot_exec "$target" "Bedrock hijack install (${ver}, $asset_arch)" \
+        "printf 'Not reversible!\\n' | /bin/sh /tmp/bedrock-installer.sh --hijack bedrock"; then
+        warn "Bedrock hijack installer failed. Review $LOGFILE."
+        rootfs_unmount_chroot_fs "$target" >/dev/null 2>&1 || true
+        rm -f "$target/tmp/bedrock-installer.sh"; rm -rf "$workdir"
+        return 1
+    fi
+
+    rootfs_unmount_chroot_fs "$target" >/dev/null 2>&1 || true
+    rm -f "$target/tmp/bedrock-installer.sh"
+    rm -rf "$workdir"
+    rootfs_set_build_stage "$target" bedrock-hijacked
+    return 0
 }
 
 

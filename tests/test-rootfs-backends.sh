@@ -69,6 +69,16 @@ check "Arch offers the ARM tarball on armhf" lists_backend arch armhf alarm-tarb
 check "Arch does not offer pacstrap on arm64" omits_backend arch arm64 pacstrap
 check "Arch rejects pacstrap on a non-x86_64 resolution" no_resolution arch pacstrap arm64
 
+# --- Bedrock Linux (meta-distro; hijacks a Debian base) ---------------------
+bedrock_has_candidate() { rootfs_release_candidates bedrock x86_64 | grep -qx "$1"; }
+check "Bedrock offers the Debian-family backends" lists_backend bedrock "" mmdebstrap
+check "Bedrock has amd64/arm64/armhf/i386 arch candidates" \
+    equals "$(rootfs_distro_archs bedrock | cut -d'|' -f1 | tr '\n' ' ')" "amd64 arm64 armhf i386 "
+check "Bedrock asset arch maps amd64 to x86_64" equals "$(rootfs_bedrock_asset_arch amd64)" x86_64
+check "Bedrock asset arch maps i386 to i686"    equals "$(rootfs_bedrock_asset_arch i386)" i686
+check "Bedrock current release resolves"        equals "$(rootfs_bedrock_release_version current)" 0.7.31
+check "Bedrock release candidates include a version" bedrock_has_candidate 0.7.31
+
 # Auto-resolution must still name this distro's preferred tool on a host where
 # nothing is installed, so the caller can say what to install.
 check "auto resolution always names a compatible backend" \
