@@ -62,13 +62,20 @@ check "fetch parser reads all four output columns" all_fetch_columns
 # Self-update must inject the trusted upstream URL required by Bedrock-AOK.
 self_update_url_is_set() {
     local out="$SYSTUI_TMP/self-update-env"
+    : >"$out"
+    # Capture the exact argv that run_cmd dispatches. The self-update action
+    # runs `env BRL_SELF_URL=... "$brl" self-update`, so the URL must appear as
+    # an environment assignment argument rather than being executed.
     run_cmd() {
         shift
-        env "$@" >"$out" 2>&1 || true
+        local arg
+        for arg in "$@"; do
+            printf '%s\n' "$arg" >>"$out"
+        done
+        return 0
     }
     bedrock_aok_require() { return 0; }
-    # Use /usr/bin/env as the fake brl target so its environment is printed.
-    bedrock_aok_brl() { printf '%s\n' /usr/bin/env; }
+    bedrock_aok_brl() { printf '%s\n' /bedrock/bin/brl; }
     bedrock_aok_self_update >/dev/null 2>&1 || true
     grep -q '^BRL_SELF_URL=https://raw.githubusercontent.com/vjnzbcsbgf-maker/Bedrock-AOK/main/brl$' "$out"
 }

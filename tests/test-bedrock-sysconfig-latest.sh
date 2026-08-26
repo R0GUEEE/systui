@@ -47,7 +47,7 @@ check "install fallback does not prompt for a stratum" no_interactive_source_pro
 install_uses_selected_stratum() {
     local log
     log=$(mktemp)
-    trap 'rm -f "$log"' RETURN
+    trap 'rm -f "${log:-}"' RETURN
     bedrock_sysconfig_best_source() { printf 'ubuntu|apt|3.4.5\n'; }
     bedrock_aok_brl() { printf '/tmp/brl\n'; }
     run_cmd() { printf '%s\n' "$*" >> "$log"; return 0; }

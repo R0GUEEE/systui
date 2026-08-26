@@ -84,9 +84,15 @@ check "the log file is not inside the ephemeral workspace" \
     ' _ "$PROJECT_DIR"
 check "log survives after the shell exits" test -s "$SYSTUI_LOGFILE"
 
-# --- M4: pm_* defined once, and not exported from common.sh -------------------
-check "pm_install is defined exactly once" \
-    bash -c '[ "$(grep -rc "^pm_install()" "$1/src" | grep -v ":0$" | wc -l)" = 1 ]' _ "$PROJECT_DIR"
+# --- M4: pm_* defined once (native preserved before layered redefinitions), and not exported from common.sh -------------------
+# The Bedrock sysconfig integration intentionally redefines pm_install in
+# layered modules to add stratum fallback, but always preserves the original
+# native implementation (as _systui_native_pm_install) before the first
+# redefinition and re-uses it, so the active definition stays unique.
+check "native pm_install is preserved for the integration chain" \
+    bash -c 'grep -rl "_systui_native_pm_install ()" "$1/src/features" | grep -q .' _ "$PROJECT_DIR"
+check "pm_install redefinitions chain to the preserved native" \
+    bash -c 'for f in "$1"/src/features/*.sh; do case "$f" in */zzzzzzz-*|*/zzzzzzzz-*) grep -q "_systui_native_pm_install" "$f" || return 1;; esac; done' _ "$PROJECT_DIR"
 check "common.sh no longer exports pm_install" \
     bash -c '! grep -vE "^\s*#" "$1/src/core/common.sh" | grep -Eq "export -f.*pm_install"' _ "$PROJECT_DIR"
 

@@ -65,23 +65,47 @@ bedrock_sysconfig_package_candidates() { # <package>
     done < <(bedrock_sysconfig_strata)
 }
 
-# Select the highest version reported across all strata. GNU/BusyBox sort -V
-# is used where available; a stable lexical fallback keeps behavior deterministic
-# on unusual minimal systems without version-sort support.
+# Map a version string to a lexicographically-sortable numeric key so the
+# highest candidate can be selected without relying on GNU coreutils sort -V
+# (BusyBox sort lacks it, and a plain lexical sort mis-orders segments, e.g.
+# 1.10.0 would sort before 1.9.9).  Numeric runs are zero-padded; separators
+# are preserved so order within a segment stays meaningful.
+bedrock_sysconfig_version_key() { # <version>
+    printf '%s' "$1" | awk '{
+        out=""; s=$0; n=length(s); i=1
+        while (i<=n) {
+            c=substr(s,i,1)
+            if (c ~ /[0-9]/) {
+                d=c; j=i+1
+                while (j<=n && substr(s,j,1) ~ /[0-9]/) { d=d substr(s,j,1); j++ }
+                out=out sprintf("%06d", d+0); i=j
+            } else { out=out c; i++ }
+        }
+        print out
+    }'
+}
+
+# Select the highest version reported across all strata.  A normalized numeric
+# key (see bedrock_sysconfig_version_key) is used so the "newest wins" decision
+# is correct on GNU, BusyBox and other minimal hosts alike.
 bedrock_sysconfig_best_source() { # <package> => stratum|pm|version
-    local pkg="$1" rows best
+    local pkg="$1" rows best k
     rows=$(bedrock_sysconfig_package_candidates "$pkg")
     [ -n "$rows" ] || return 1
 
-    if printf '1.9\n1.10\n' | sort -V >/dev/null 2>&1; then
-        best=$(printf '%s\n' "$rows" | LC_ALL=C sort -t $'\t' -k1,1V -k2,2 | tail -1)
-    else
-        best=$(printf '%s\n' "$rows" | LC_ALL=C sort -t $'\t' -k1,1 -k2,2 | tail -1)
-    fi
+    # Emit <numkey><TAB><version><TAB><stratum><TAB><pm>, sort by the numeric
+    # key (fully deterministic even without -V), keep the highest row, then
+    # recover the original strata/pm/version triple.
+    best=$(while IFS=$'\t' read -r ver st pm; do
+        [ -n "$ver" ] || continue
+        k=$(bedrock_sysconfig_version_key "$ver")
+        [ -n "$k" ] || continue
+        printf '%s\t%s\t%s\t%s\n' "$k" "$ver" "$st" "$pm"
+    done <<< "$rows" | LC_ALL=C sort -t $'\t' -k1,1 | tail -1)
 
     [ -n "$best" ] || return 1
-    local ver st pm
-    IFS=$'\t' read -r ver st pm <<< "$best"
+    local _k ver st pm
+    IFS=$'\t' read -r _k ver st pm <<< "$best"
     printf '%s|%s|%s\n' "$st" "$pm" "$ver"
 }
 

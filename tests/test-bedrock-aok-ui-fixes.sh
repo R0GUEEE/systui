@@ -45,20 +45,24 @@ check "strata list uses persistent dialog text viewer" list_uses_text_viewer
 readonly_actions_use_viewer() {
     local body
     body=$(declare -f bedrock_aok_strata_menu)
-    grep -q 'status|show)' <<<"$body" &&
+    # declare -f normalizes spacing around `|` and redirections.
+    grep -Eq 'status[[:space:]]*\|[[:space:]]*show\)' <<<"$body" &&
     grep -q 'bedrock_aok_view_command' <<<"$body"
 }
 check "status/show render in dialog viewers" readonly_actions_use_viewer
 
 shell_attaches_tty() {
-    declare -f bedrock_aok_strata_menu | grep -q '</dev/tty >/dev/tty 2>/dev/tty'
+    # declare -f prints redirections with spaces: < /dev/tty > /dev/tty 2> /dev/tty
+    declare -f bedrock_aok_strata_menu \
+        | grep -qE '[[:space:]]<[[:space:]]*/dev/tty[[:space:]]*>[[:space:]]*/dev/tty[[:space:]]*2?>[[:space:]]*/dev/tty'
 }
 check "interactive stratum shell attaches directly to tty" shell_attaches_tty
 
 main_bedrock_attaches_tty() {
     local body
     body=$(declare -f tui_menu)
-    grep -q 'menu_bedrock_aok </dev/tty >/dev/tty 2>/dev/tty' <<<"$body"
+    # declare -f prints: menu_bedrock_aok < /dev/tty > /dev/tty 2> /dev/tty
+    grep -qE 'menu_bedrock_aok[[:space:]]+<[[:space:]]*/dev/tty[[:space:]]+>[[:space:]]*/dev/tty[[:space:]]+2>?[[:space:]]*/dev/tty' <<<"$body"
 }
 check "nested Bedrock main menu bypasses command-substitution capture" main_bedrock_attaches_tty
 
