@@ -49,6 +49,122 @@ bedrock_aok_list_strata_menu() {
     return "$rc"
 }
 
+# The information submenu used run_cmd for every diagnostic, which dumps to the
+# terminal with `clear` and (on failure) a `read` prompt — but the Bedrock menu
+# is launched from a $(tui_menu ...) command substitution, so that output lands
+# inside a captured subshell and instantly garbles / crashes the TUI.  Render
+# all read-only reports through the persistent dialog viewer instead.
+bedrock_aok_info_menu() {
+    local c brl
+    bedrock_aok_require || return 0
+    brl=$(bedrock_aok_brl) || return 1
+    while true; do
+        c=$(tui_menu "Bedrock-AOK information" "Diagnostics and documentation:" \
+            report       "System report / health overview" \
+            status       "Bedrock-AOK status" \
+            capabilities "Kernel capability report" \
+            version      "Bedrock-AOK version" \
+            tutorial     "Quick-start tutorial" \
+            back         "Back") || return 0
+        case "$c" in
+            back|"") return 0 ;;
+            report)       bedrock_aok_view_command "Bedrock-AOK report" report ;;
+            status)       bedrock_aok_view_command "Bedrock-AOK status" status ;;
+            capabilities) bedrock_aok_view_command "Bedrock-AOK capabilities" capabilities ;;
+            version)      bedrock_aok_view_command "Bedrock-AOK version" version ;;
+            tutorial)     bedrock_aok_view_command "Bedrock-AOK tutorial" tutorial ;;
+        esac
+    done
+}
+
+# Manage Bedrock-AOK configuration.  Bedrock stores its persistent settings in
+# /bedrock/etc/brl (e.g. brl.conf).  Editing stages the file out, lets the user
+# edit with the system editor, and writes it back; read-only inspection uses the
+# persistent text viewer.  Runtime actions (URL refresh, reload, rollback) are
+# provided too so the whole configuration lifecycle lives under one entry.
+BEDROCK_BRL_ETC="/bedrock/etc/brl"
+
+bedrock_aok_config_view() { # <path-or-dir>
+    bedrock_aok_require || return 1
+    local out rc=0
+    out="${SYSTUI_TMP:?}/bedrock-aok-config.$$.txt"
+    if [ -f "$1" ]; then
+        cat "$1" >"$out" 2>/dev/null || rc=$?
+    elif [ -d "$1" ]; then
+        {
+            echo "Bedrock config directory: $1"
+            echo "=========================="
+            {
+                ls -la "$1" 2>/dev/null
+                echo
+                echo "===== contents ====="
+                for f in "$1"/*; do
+                    [ -f "$f" ] || continue
+                    echo
+                    echo "--- $(basename "$f") ---"
+                    cat "$f" 2>/dev/null
+                done
+            } 2>/dev/null
+        } >"$out"
+    else
+        printf 'Path not found: %s\n' "$1" >"$out"
+        rc=1
+    fi
+    sed -i 's/\x1b\[[0-9;]*[[:alpha:]]//g' "$out" 2>/dev/null || true
+    [ -s "$out" ] || printf '(no output)\n' >"$out"
+    tui_text "Bedrock-AOK configuration" "$out" || true
+    rm -f "$out"
+    return "$rc"
+}
+
+bedrock_aok_config_edit() { # [path]
+    bedrock_aok_require || return 1
+    local path="${1:-$BEDROCK_BRL_ETC/brl.conf}" staged
+    if [ ! -f "$path" ]; then
+        # Prefer brl.conf, else let the user pick any .conf present.
+        path=""
+        for f in "$BEDROCK_BRL_ETC"/*.conf; do
+            [ -f "$f" ] && { path="$f"; break; }
+        done
+        [ -n "$path" ] || { tui_msg "Bedrock config" "No configuration file found under\n$BEDROCK_BRL_ETC."; return 1; }
+    fi
+    tui_yesno "Edit Bedrock config" "Open '$path' with the system editor?" || return 0
+    staged="${SYSTUI_TMP:?}/bedrock-aok-brl-conf"
+    cp "$path" "$staged" 2>/dev/null || { tui_msg "Bedrock config" "Could not read '$path'."; return 1; }
+    if safe_edit "$staged"; then
+        cp "$staged" "$path" 2>/dev/null || { tui_msg "Bedrock config" "Could not write '$path'."; return 1; }
+        tui_yesno "Bedrock config" "Configuration updated. Reload Bedrock so changes take effect?" \
+            && bedrock_aok_run "Reload Bedrock configuration" reload || true
+    fi
+    rm -f "$staged"
+}
+
+bedrock_aok_config_menu() {
+    local c brl
+    bedrock_aok_require || return 0
+    brl=$(bedrock_aok_brl) || return 1
+    while true; do
+        c=$(tui_menu "Bedrock-AOK configuration" \
+            "Manage Bedrock-AOK configuration (stored in $BEDROCK_BRL_ETC):" \
+            edit       "Edit the main configuration file (brl.conf)" \
+            viewall    "View configuration and config directory" \
+            list       "List config directory contents" \
+            urls       "Refresh live stratum source URLs" \
+            reload     "Reload configuration / command wrappers" \
+            rollback   "Manage configuration rollback points" \
+            back       "Back") || return 0
+        case "$c" in
+            back|"") return 0 ;;
+            edit)    bedrock_aok_config_edit ;;
+            viewall) bedrock_aok_config_view "$BEDROCK_BRL_ETC" ;;
+            list)    bedrock_aok_view_command "Bedrock config directory" ls -la "$BEDROCK_BRL_ETC" ;;
+            urls)    bedrock_aok_run "Refresh Bedrock-AOK stratum URLs" update-urls ;;
+            reload)  bedrock_aok_run "Reload Bedrock-AOK" reload ;;
+            rollback) bedrock_aok_rollback_menu ;;
+        esac
+    done
+}
+
 # Replace the strata submenu so all read-only actions use proper dialog viewers
 # and interactive shell execution is attached directly to /dev/tty.
 bedrock_aok_strata_menu() {

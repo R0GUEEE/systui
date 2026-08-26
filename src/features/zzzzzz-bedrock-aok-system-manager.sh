@@ -209,6 +209,7 @@ menu_bedrock_aok() {
             install   "Install Bedrock-AOK from the upstream template" \
             system    "Unified system manager (all/multiple strata)" \
             strata    "Manage individual distributions / strata" \
+            config    "Manage Bedrock-AOK configuration" \
             features  "Additional features (SPACE-to-select)" \
             rollback  "Rollback points" \
             update    "Update Bedrock-AOK / stratum sources" \
@@ -220,6 +221,7 @@ menu_bedrock_aok() {
             install) bedrock_aok_install ;;
             system) bedrock_aok_system_manager_menu ;;
             strata) bedrock_aok_strata_menu ;;
+            config) bedrock_aok_config_menu ;;
             features) bedrock_aok_features_menu ;;
             rollback) bedrock_aok_rollback_menu ;;
             update) bedrock_aok_update_menu ;;
