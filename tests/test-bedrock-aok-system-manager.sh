@@ -39,6 +39,15 @@ has_system_manager_entry() {
 }
 check "Bedrock menu exposes unified system manager" has_system_manager_entry
 
+has_config_entry() {
+    local body
+    body=$(declare -f menu_bedrock_aok)
+    grep -q 'Manage Bedrock-AOK configuration' <<<"$body" &&
+    grep -q 'config)' <<<"$body" &&
+    grep -q 'bedrock_aok_config_menu' <<<"$body"
+}
+check "Bedrock menu exposes config management entry" has_config_entry
+
 has_bulk_update() {
     local body
     body=$(declare -f bedrock_aok_bulk_update)

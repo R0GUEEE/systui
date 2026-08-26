@@ -66,5 +66,62 @@ main_bedrock_attaches_tty() {
 }
 check "nested Bedrock main menu bypasses command-substitution capture" main_bedrock_attaches_tty
 
+# --- Config management + info-menu crash fix (added in this layer) -------------
+config_menu_functions_exist() {
+    declare -F bedrock_aok_config_menu >/dev/null &&
+    declare -F bedrock_aok_config_edit >/dev/null &&
+    declare -F bedrock_aok_config_view >/dev/null
+}
+check "config management functions are defined" config_menu_functions_exist
+
+config_menu_uses_runtime_actions() {
+    local body
+    body=$(declare -f bedrock_aok_config_menu)
+    grep -q 'bedrock_aok_run "Reload Bedrock-AOK" reload' <<<"$body" &&
+    grep -q 'bedrock_aok_rollback_menu' <<<"$body"
+}
+check "config menu exposes reload and rollback" config_menu_uses_runtime_actions
+
+info_menu_uses_viewer_not_run_cmd() {
+    local body
+    body=$(declare -f bedrock_aok_info_menu)
+    # All read-only reports must render through the persistent viewer, never the
+    # terminal-dumping run_cmd (which crashes the Bedrock menu's subshell).
+    [ "$(grep -c 'bedrock_aok_view_command' <<<"$body")" -ge 1 ] &&
+    ! grep -q 'run_cmd' <<<"$body"
+}
+check "info menu renders reports via viewer (no run_cmd crash)" info_menu_uses_viewer_not_run_cmd
+
+info_menu_selects_version_through_viewer() {
+    # Drive the menu to "version": tui_menu must return "version" then "back".
+    # Because tui_menu runs inside $(...) (a subshell), persist state in a file.
+    local state="$SYSTUI_TMP/info-call"; : > "$state"
+    local seen=0
+    tui_menu() {
+        if [ -s "$state" ]; then echo back; else printf x > "$state"; echo version; fi
+    }
+    local got=""
+    bedrock_aok_view_command() { got="${got}${got:+ }$1[$2]"; }
+    bedrock_aok_run() { got="${got}${got:+ }RUN:$1"; }
+    bedrock_aok_rollback_menu() { got="${got}${got:+ }ROLLBACK"; }
+    # bedrock_aok_view_command runs "$brl" "$@"; stub brl to a no-op script.
+    local fake="$SYSTUI_TMP/brl"; : > "$fake"; chmod 0755 "$fake"
+    bedrock_aok_brl() { printf '%s\n' "$fake"; }
+    bedrock_aok_require() { return 0; }
+    bedrock_aok_info_menu
+    # Expect exactly the version viewer invocation (no run_cmd / no crash).
+    [ "$got" = "Bedrock-AOK version[version]" ]
+}
+check "info menu 'version' renders through the viewer" info_menu_selects_version_through_viewer
+
+config_edit_falls_back_to_available_conf() {
+    # When the primary brl.conf is absent but another .conf exists, edit must
+    # still find something to edit (no crash / empty path).
+    local body
+    body=$(declare -f bedrock_aok_config_edit)
+    grep -q '\*.conf' <<<"$body" && grep -q 'No configuration file found' <<<"$body"
+}
+check "config edit falls back to any available .conf" config_edit_falls_back_to_available_conf
+
 printf '%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
