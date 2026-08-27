@@ -976,10 +976,50 @@ rootfs_chroot_options_menu() { # <target>
     done
 }
 
-# Best-effort virtual filesystem setup for chroot operations. Restricted hosts
-# such as iSH-AOK may reject one or more mount types; those failures must not
+# iSH-AOK build number, or empty when not running under iSH-AOK.
+# `uname -v` reports e.g. "iSH-AOK 1.3 (547) built 2026-08-13 04:36Z".
+# The build number is the meaningful part: the marketing version is not bumped
+# between builds, so it cannot be used to tell two builds apart.
+ish_aok_build() {
+    local v; v=$(uname -v 2>/dev/null) || return 1
+    case "$v" in
+        *iSH-AOK*) ;;
+        *) return 1 ;;
+    esac
+    v=${v#*\(}; v=${v%%\)*}
+    case "$v" in
+        ''|*[!0-9]*) return 1 ;;
+        *) printf '%s\n' "$v" ;;
+    esac
+}
+
+# Minimum iSH-AOK build with full support for the mounts below.
+ISH_AOK_MIN_MOUNT_BUILD=548
+
+# Explain a failed chroot mount. Under an older iSH-AOK the cause is usually
+# the emulator rather than the rootfs, and an upgrade fixes it; anywhere else
+# the generic message is all we can honestly say.
+rootfs_mount_warn() { # <what> <target>
+    local build; build=$(ish_aok_build 2>/dev/null || true)
+    if [ -n "$build" ] && [ "$build" -lt "$ISH_AOK_MIN_MOUNT_BUILD" ] 2>/dev/null; then
+        warn "Could not mount $1 in $2 — iSH-AOK build $build predates full mount support (build ${ISH_AOK_MIN_MOUNT_BUILD}+); the build continues without it."
+    else
+        warn "Could not mount $1 in $2"
+    fi
+}
+
+# Best-effort virtual filesystem setup for chroot operations. Any of these
+# mounts may be unavailable on a restricted host, and those failures must not
 # trip the global ERR trap. The list of mounts created by this invocation is
 # returned through ROOTFS_ACTIVE_MOUNTS for precise cleanup.
+#
+# This used to single out iSH-AOK as a host that "may reject one or more mount
+# types". That is no longer accurate and the note has been dropped: as of
+# iSH-AOK build 548 all build types are supported, and every mount below was
+# verified working on an aarch64 iSH-AOK guest -- proc, sysfs, and the /dev,
+# /dev/pts and /AOK bind mounts all succeed. The fallback stays for older
+# builds and for genuinely restricted hosts, but it is no longer the expected
+# path there.
 rootfs_mount_chroot_fs() { # <target>
     local t="$1"
     ROOTFS_ACTIVE_MOUNTS=""
@@ -990,22 +1030,22 @@ rootfs_mount_chroot_fs() { # <target>
     export ROOTFS_MOUNT_TARGET
     mkdir -p "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/etc" || return 1
     if ! mountpoint -q "$t/proc" 2>/dev/null; then
-        mount -t proc proc "$t/proc" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/proc $ROOTFS_ACTIVE_MOUNTS" || warn "Could not mount proc in $t"
+        mount -t proc proc "$t/proc" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/proc $ROOTFS_ACTIVE_MOUNTS" || rootfs_mount_warn proc "$t"
     fi
     if ! mountpoint -q "$t/sys" 2>/dev/null; then
-        mount -t sysfs sysfs "$t/sys" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/sys $ROOTFS_ACTIVE_MOUNTS" || warn "Could not mount sysfs in $t"
+        mount -t sysfs sysfs "$t/sys" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/sys $ROOTFS_ACTIVE_MOUNTS" || rootfs_mount_warn sysfs "$t"
     fi
     if ! mountpoint -q "$t/dev" 2>/dev/null; then
-        mount --bind /dev "$t/dev" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/dev $ROOTFS_ACTIVE_MOUNTS" || warn "Could not bind-mount /dev in $t"
+        mount --bind /dev "$t/dev" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/dev $ROOTFS_ACTIVE_MOUNTS" || rootfs_mount_warn "/dev" "$t"
     fi
     if [ -d /dev/pts ] && ! mountpoint -q "$t/dev/pts" 2>/dev/null; then
-        mount --bind /dev/pts "$t/dev/pts" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/dev/pts $ROOTFS_ACTIVE_MOUNTS" || warn "Could not bind-mount /dev/pts in $t"
+        mount --bind /dev/pts "$t/dev/pts" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/dev/pts $ROOTFS_ACTIVE_MOUNTS" || rootfs_mount_warn "/dev/pts" "$t"
     fi
     if [ "$(rootfs_chroot_option_get "$t" MOUNT_AOK yes)" = yes ]; then
         if [ -d /AOK ]; then
             mkdir -p "$t/AOK"
             if ! mountpoint -q "$t/AOK" 2>/dev/null; then
-                mount --bind /AOK "$t/AOK" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/AOK $ROOTFS_ACTIVE_MOUNTS" || warn "Could not bind-mount /AOK in $t"
+                mount --bind /AOK "$t/AOK" 2>>"$LOGFILE" && ROOTFS_ACTIVE_MOUNTS="$t/AOK $ROOTFS_ACTIVE_MOUNTS" || rootfs_mount_warn "/AOK" "$t"
             fi
         else
             warn "Mount /AOK is enabled, but /AOK does not exist on the host."
