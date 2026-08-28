@@ -21,6 +21,96 @@ bedrock_aok_download() { # <remote-name> <destination>
         tui_msg "Missing downloader" "Bedrock-AOK requires curl or wget."
         return 1
     fi
+    # Upstream compat: brl and bedrockport.sh both call _write_helpers() in
+    # _install_ff() but never define it, so the fastfetch helper scripts they
+    # reference (brl-mem/brl-swap/brl-disk/brl-strata) are never created and
+    # the installer prints "_write_helpers: not found". Inject a working
+    # definition so systui-driven installs/updates are not affected.
+    bedrock_aok_patch_script "$dst" || warn "Could not patch $name (_write_helpers) — install may show an error."
+}
+
+# Write the ${BR}/bin helper scripts that upstream's missing _write_helpers()
+# was supposed to create. Idempotent: only fills in missing files so a
+# user-provided helper is never clobbered.
+bedrock_aok_write_helpers() {
+    local brlpath bin
+    brlpath=$(bedrock_aok_brl 2>/dev/null) || return 1
+    brlpath=$(readlink -f "$brlpath" 2>/dev/null || printf '%s\n' "$brlpath")
+    bin=$(dirname "$brlpath")
+    [ -d "$bin" ] || return 1
+    if [ ! -x "$bin/brl-mem" ]; then
+        cat > "$bin/brl-mem" <<'HELP'
+#!/bin/sh
+free -m 2>/dev/null | awk -F'[ :]+' '/^Mem:/{printf "%dMiB / %dMiB", $3, $2}'
+HELP
+        chmod 0755 "$bin/brl-mem" 2>/dev/null || true
+    fi
+    if [ ! -x "$bin/brl-swap" ]; then
+        cat > "$bin/brl-swap" <<'HELP'
+#!/bin/sh
+free -m 2>/dev/null | awk -F'[ :]+' '/^Swap:/{printf "%dMiB / %dMiB", $3, $2}'
+HELP
+        chmod 0755 "$bin/brl-swap" 2>/dev/null || true
+    fi
+    if [ ! -x "$bin/brl-disk" ]; then
+        cat > "$bin/brl-disk" <<'HELP'
+#!/bin/sh
+df -hP / 2>/dev/null | awk 'NR==2{printf "%s / %s (%s)", $3, $2, $5}'
+HELP
+        chmod 0755 "$bin/brl-disk" 2>/dev/null || true
+    fi
+    if [ ! -x "$bin/brl-strata" ]; then
+        cat > "$bin/brl-strata" <<'HELP'
+#!/bin/sh
+ls -1 /bedrock/run/enabled_strata 2>/dev/null | sed 's/^/  /' || echo none
+HELP
+        chmod 0755 "$bin/brl-strata" 2>/dev/null || true
+    fi
+}
+
+# Inject a working _write_helpers() into a downloaded Bedrock-AOK script.
+# No-op when the script already defines it (or never calls it).
+bedrock_aok_patch_script() { # <script>
+    local f="$1" marker tmp src
+    [ -f "$f" ] || return 1
+    grep -q '^_write_helpers()' "$f" 2>/dev/null && return 0
+    grep -q '^_install_ff()' "$f" 2>/dev/null || return 0
+    marker='# __SYSTUI_WRITE_HELPERS_INSERT__'
+    awk -v m="$marker" '{ if ($0 ~ /^_install_ff\(\)/ && !done) { print m; done=1 } print }' "$f" \
+        > "${f}.systui.tmp" || return 1
+    src=$(mktemp "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-helpers.XXXXXX") || return 1
+    cat > "$src" <<'HELP'
+_write_helpers() {
+    mkdir -p "${BR}/bin" 2>/dev/null || true
+    cat > "${BR}/bin/brl-mem" <<'SH'
+#!/bin/sh
+free -m 2>/dev/null | awk -F'[ :]+' '/^Mem:/{printf "%dMiB / %dMiB", $3, $2}'
+SH
+    cat > "${BR}/bin/brl-swap" <<'SH'
+#!/bin/sh
+free -m 2>/dev/null | awk -F'[ :]+' '/^Swap:/{printf "%dMiB / %dMiB", $3, $2}'
+SH
+    cat > "${BR}/bin/brl-disk" <<'SH'
+#!/bin/sh
+df -hP / 2>/dev/null | awk 'NR==2{printf "%s / %s (%s)", $3, $2, $5}'
+SH
+    cat > "${BR}/bin/brl-strata" <<'SH'
+#!/bin/sh
+ls -1 /bedrock/run/enabled_strata 2>/dev/null | sed 's/^/  /' || echo none
+SH
+    chmod 0755 "${BR}/bin/brl-mem" "${BR}/bin/brl-swap" "${BR}/bin/brl-disk" "${BR}/bin/brl-strata" 2>/dev/null || true
+}
+HELP
+    tmp=$(mktemp "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-patched.XXXXXX") || { rm -f "$src"; return 1; }
+    awk -v f="$src" -v m="$marker" '
+        $0 == m { while ((getline line < f) > 0) print line; close(f); next }
+        { print }
+    ' "${f}.systui.tmp" > "$tmp" || { rm -f "$src" "$tmp" "${f}.systui.tmp"; return 1; }
+    chmod --reference="$f" "$tmp" 2>/dev/null || chmod 0755 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$f"
+    rm -f "$src" "${f}.systui.tmp"
+    log "bedrock-aok: injected _write_helpers() into $(basename "$f")"
+    return 0
 }
 
 bedrock_aok_brl() {
@@ -50,6 +140,8 @@ bedrock_aok_run() { # <description> <brl args...>
     local desc="$1" brl; shift
     bedrock_aok_require || return 1
     brl=$(bedrock_aok_brl) || return 1
+    # Repair any missing fastfetch helpers (upstream never writes them).
+    bedrock_aok_write_helpers
     run_cmd "$desc" "$brl" "$@"
 }
 
