@@ -1411,7 +1411,7 @@ keyring_fetch_latest() {
 
 keyring_repo_artifact() {
     # Prints: format|official repository URL
-    local distro="$1" arch alpine_arch fedora_arch release base url
+    local distro="$1" arch alpine_arch release base url
     arch=$(keyring_host_arch)
     case "$distro" in
         debian)
@@ -1449,17 +1449,18 @@ keyring_repo_artifact() {
             url=$(keyring_fetch_latest "$base/" '^archlinux-keyring-[^/]+-any\.pkg\.tar\.(zst|xz)$') || return 1
             printf 'tar|%s\n' "$url" ;;
         fedora)
+            # fedora-gpg-keys is a noarch package: the keys are identical for
+            # every architecture, so always fetch from the x86_64 tree.
+            # (aarch64/ppc64le live on fedora-secondary and riscv64 has no
+            # dnf tree at all, so an arch-specific path would 404.)
             case "$arch" in
-                x86_64) fedora_arch=x86_64 ;;
-                aarch64) fedora_arch=aarch64 ;;
-                ppc64le) fedora_arch=ppc64le ;;
-                riscv64) fedora_arch=riscv64 ;;
+                x86_64|aarch64|armhf|ppc64le|riscv64) ;;
                 *) return 1 ;;
             esac
             release=$(curl -fsSL 'https://dl.fedoraproject.org/pub/fedora/linux/releases/' \
                 | grep -Eo 'href="[0-9]+/' | tr -dc '0-9\n' | sort -n | tail -n 1)
             [ -n "$release" ] || return 1
-            base="https://dl.fedoraproject.org/pub/fedora/linux/releases/$release/Everything/$fedora_arch/os/Packages/f"
+            base="https://dl.fedoraproject.org/pub/fedora/linux/releases/$release/Everything/x86_64/os/Packages/f"
             url=$(keyring_fetch_latest "$base/" '^fedora-gpg-keys-[^/]+\.noarch\.rpm$') || return 1
             printf 'rpm|%s\n' "$url" ;;
         opensuse)
@@ -3928,7 +3929,8 @@ menu_yay_install() {
     case "$c" in
         makepkg) run_cmd "Install yay" bash -c \
             'cd /tmp && git clone https://aur.archlinux.org/yay.git && cd yay && makepkg -si --noconfirm && cd / && rm -rf /tmp/yay' ;;
-        binary)  run_cmd "Install yay (binary)" bash -c '
+        binary)  case "$(uname -m)" in
+            x86_64|aarch64|arm64) run_cmd "Install yay (binary)" bash -c '
 tag=$(curl -fsSL https://api.github.com/repos/Jguer/yay/releases/latest | sed -n "s/.*\"tag_name\":.*\"\([^\"]*\)\".*/\1/p")
 arch=$(uname -m); [ "$arch" = x86_64 ] && arch=x86_64 || arch=aarch64
 url="https://github.com/Jguer/yay/releases/download/${tag}/yay_${tag#v}_${arch}.tar.gz"
@@ -3936,6 +3938,8 @@ tmp=$(mktemp -d)
 curl -fsSL "$url" | tar -xz -C "$tmp"
 install -m 0755 "$(find "$tmp" -name yay -type f | head -1)" /usr/local/bin/yay
 rm -rf "$tmp"' ;;
+            *) tui_msg "yay" "yay publishes prebuilt binaries only for x86_64 and aarch64.\nOn $(uname -m), use the makepkg method instead." ;;
+        esac ;;
         back|"") return 0 ;;
     esac
 }
@@ -3956,14 +3960,17 @@ menu_paru_install() {
             'cd /tmp && git clone https://aur.archlinux.org/paru.git && cd paru && makepkg -si --noconfirm && cd / && rm -rf /tmp/paru' ;;
         cargo)   command -v cargo >/dev/null || { tui_msg "paru" "cargo is required. Install Rust/Cargo first."; return 0; }
                  run_cmd "Install paru (cargo)" cargo install paru ;;
-        binary)  run_cmd "Install paru (binary)" bash -c '
+        binary)  case "$(uname -m)" in
+            x86_64|aarch64|arm64|armv7l|armv7) run_cmd "Install paru (binary)" bash -c '
 tag=$(curl -fsSL https://api.github.com/repos/morganamilo/paru/releases/latest | sed -n "s/.*\"tag_name\":.*\"\([^\"]*\)\".*/\1/p")
-arch=$(uname -m); [ "$arch" = x86_64 ] && arch=x86_64 || arch=aarch64
+arch=$(uname -m); case "$arch" in x86_64) arch=x86_64;; aarch64|arm64) arch=aarch64;; armv7l|armv7) arch=armv7h;; esac
 url="https://github.com/morganamilo/paru/releases/download/${tag}/paru-${tag}-${arch}.tar.zst"
 tmp=$(mktemp -d)
 curl -fsSL "$url" | tar --zstd -x -C "$tmp" 2>/dev/null || curl -fsSL "$url" | tar -xI zstd -C "$tmp" 2>/dev/null
 install -m 0755 "$(find "$tmp" -name paru -type f | head -1)" /usr/local/bin/paru
 rm -rf "$tmp"' ;;
+            *) tui_msg "paru" "paru publishes prebuilt binaries only for x86_64, aarch64 and armv7h.\nOn $(uname -m), use the makepkg or cargo method instead." ;;
+        esac ;;
         back|"") return 0 ;;
     esac
 }
@@ -4096,7 +4103,7 @@ menu_go_install() {
         back     "Back") || return 0
     case "$c" in
         official) run_cmd "Install Go (official tarball)" bash -c '
-arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64) arch=arm64;; *) arch=386;; esac
+arch=$(uname -m); case "$arch" in x86_64) arch=amd64;; aarch64|arm64) arch=arm64;; riscv64) arch=riscv64;; ppc64le) arch=ppc64le;; s390x) arch=s390x;; *) arch=386;; esac
 ver=$(curl -fsSL "https://go.dev/VERSION?m=text" | head -1)
 url="https://go.dev/dl/${ver}.linux-${arch}.tar.gz"
 rm -rf /usr/local/go

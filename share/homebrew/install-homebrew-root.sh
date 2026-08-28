@@ -28,6 +28,16 @@ die()  { printf '\033[1;31mError:\033[0m %s\n' "$*" >&2; exit 1; }
 [[ ${EUID:-$(id -u)} -eq 0 ]] || die "Run this installer as root."
 [[ $(uname -s) == Linux ]] || die "This installer only supports Linux."
 
+# Homebrew officially supports Linux on x86_64 and aarch64 only; there are no
+# riscv64 (or 32-bit) bottles or a riscv64 brew build, so refuse early with a
+# clear message instead of letting the clone/install fail halfway.
+case "$(uname -m)" in
+    x86_64|aarch64|arm64) ;;
+    *)
+        die "Homebrew does not support $(uname -m) Linux. Supported Linux architectures: x86_64, aarch64."
+        ;;
+esac
+
 log "Detected: $(uname -m) / $(. /etc/os-release 2>/dev/null && printf '%s' "${PRETTY_NAME:-unknown}" || printf unknown)"
 
 # ---- Install build dependencies using whatever PM is available ---------------

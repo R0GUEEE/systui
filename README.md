@@ -451,7 +451,8 @@ The package catalogue now includes:
   Anything compatible but missing is reported as a "what to install" hint
   rather than offered as a choice that fails after selection. `qemu-debootstrap`
   therefore appears only for foreign-architecture targets on hosts that still
-  ship it, and Arch backends only for x86_64.
+  ship it; Arch x86_64 gets pacstrap, ARM goes through Arch Linux ARM, and
+  RISC-V (riscv64) through the archriscv port's rootfs tarball.
 - Backend-specific configuration menus cover variants/flavours, components,
   bootstrap include/exclude lists, keyrings, merged `/usr`, execution modes,
   documentation/locale pruning, cdebootstrap configuration directories and
@@ -518,9 +519,17 @@ The package catalogue now includes:
     refuse to run as uid 0, so systui drops to a normal user when invoking them.
 - Additional bootstrap backends: `bdebstrap` (YAML-driven mmdebstrap wrapper,
   Debian family), `rinse` (bootstraps RPM distributions *from* a Debian host,
-  covering the case `dnf --installroot` cannot), and `alpine-chroot-install`
+  covering the case `dnf --installroot` cannot), `alpine-chroot-install`
   (upstream's own installer; native architecture only, so cross-architecture
-  Alpine roots stay on the `apk.static` backend).
+  Alpine roots stay on the `apk.static` backend), and `archriscv-tarball`
+  (the Arch Linux RISC-V port, for riscv64 Arch targets).
+- **riscv64 (RISC-V 64-bit) targets** are supported wherever an upstream
+  repository actually exists: Debian (trixie+), Ubuntu (ports), Alpine
+  (v3.21+), Gentoo, Devuan (ceres only), openSUSE Tumbleweed (ports), and
+  Arch via the archriscv port. Fedora, Kali, Void and Bedrock do not publish
+  riscv64 packages/installers, so riscv64 is not offered for them. Foreign
+  riscv64 builds route chroot steps through `qemu-riscv64-static`
+  automatically, like the other foreign architectures.
 - `tar.gz` is the default build and management compression format.
 - System Configuration → Packages begins with Package Managers, followed by Repositories and Catalogue.
 - System Configuration → Scanner provides full system reports and package/file queries.
