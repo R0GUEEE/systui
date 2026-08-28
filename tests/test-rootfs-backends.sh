@@ -33,7 +33,10 @@ check "explicit compatible backend is retained" equals "$(rootfs_resolve_backend
 
 # --- catalogue is the single source of truth for distro/arch compatibility ---
 catalogue_tags() { rootfs_backend_catalog "$1" "${2:-}" | cut -d'|' -f1 | tr '\n' ' '; }
-lists_backend()  { rootfs_backend_catalog "$1" "${2:-}" | cut -d'|' -f1 | grep -qx -- "$3"; }
+# Note: consume the catalogue via a here-string loop, not `| grep -qx` —
+# grep exits on the first match and can SIGPIPE the catalogue writer
+# mid-stream, making the check flaky under `set -o pipefail`.
+lists_backend()  { local _t; while IFS='|' read -r _t _; do [ "$_t" = "$3" ] && return 0; done <<< "$(rootfs_backend_catalog "$1" "${2:-}")"; return 1; }
 omits_backend()  { ! lists_backend "$@"; }
 
 no_catalogue()   { ! rootfs_backend_catalog "$1" "${2:-}" >/dev/null 2>&1; }
@@ -68,6 +71,37 @@ check "Arch offers the ARM tarball on arm64" lists_backend arch arm64 alarm-tarb
 check "Arch offers the ARM tarball on armhf" lists_backend arch armhf alarm-tarball
 check "Arch does not offer pacstrap on arm64" omits_backend arch arm64 pacstrap
 check "Arch rejects pacstrap on a non-x86_64 resolution" no_resolution arch pacstrap arm64
+
+# --- RISC-V (riscv64) ------------------------------------------------------
+check "Arch offers the RISC-V port tarball on riscv64" lists_backend arch riscv64 archriscv-tarball
+check "Arch does not offer pacstrap on riscv64" omits_backend arch riscv64 pacstrap
+check "Arch rejects pacstrap on a riscv64 resolution" no_resolution arch pacstrap riscv64
+check "Debian offers debootstrap on riscv64" lists_backend debian riscv64 debootstrap
+check "Alpine offers apk-static on riscv64" lists_backend alpine riscv64 apk-static
+check "qemu binary maps riscv64" equals "$(qemu_bin_for riscv64)" qemu-riscv64-static
+archs_include() { rootfs_distro_archs "$1" 2>/dev/null | cut -d'|' -f1 | grep -qx "$2"; }
+archs_exclude() { ! archs_include "$1" "$2"; }
+check "Debian lists riscv64 as buildable"      archs_include debian riscv64
+check "Ubuntu lists riscv64 as buildable"      archs_include ubuntu riscv64
+check "Alpine lists riscv64 as buildable"      archs_include alpine riscv64
+check "Gentoo lists riscv64 as buildable"      archs_include gentoo riscv64
+check "Devuan lists riscv64 as buildable"      archs_include devuan riscv64
+check "Arch lists riscv64 as buildable"        archs_include arch riscv64
+check "Tumbleweed lists riscv64 as buildable"  archs_include tumbleweed riscv64
+check "Leap omits riscv64 (no ports tree)"     archs_exclude opensuse riscv64
+check "Fedora omits riscv64 (no dnf repo)"     archs_exclude fedora riscv64
+check "Void omits riscv64 (no rootfs tarballs)" archs_exclude void riscv64
+check "Kali omits riscv64 (no packages)"       archs_exclude kali riscv64
+check "Bedrock omits riscv64 (no installer)"   archs_exclude bedrock riscv64
+check "Bedrock asset arch rejects riscv64"     equals "$(rootfs_bedrock_asset_arch riscv64)" ""
+# riscv64 release gating: Alpine riscv64 started at v3.21; Devuan ships
+# riscv64 only in ceres (unstable).
+check "Alpine riscv64 releases start at v3.21" equals \
+    "$(for r in v3.19 v3.20 v3.21 v3.22 edge; do rootfs_alpine_release_supports_arch "$r" riscv64 && printf '%s ' "$r"; done)" \
+    "v3.21 v3.22 edge "
+check "Devuan riscv64 releases are ceres only" equals \
+    "$(for r in daedalus excalibur freia ceres; do rootfs_devuan_release_supports_arch "$r" riscv64 && printf '%s ' "$r"; done)" \
+    "ceres "
 
 # --- Bedrock Linux (meta-distro; hijacks a Debian base) ---------------------
 bedrock_has_candidate() { rootfs_release_candidates bedrock x86_64 | grep -qx "$1"; }

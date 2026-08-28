@@ -144,7 +144,7 @@ rootfs_backend_available() { # <backend>
                 command -v gzip >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
             ;;
-        arch-bootstrap)
+        arch-bootstrap|archriscv-tarball)
             command -v tar >/dev/null 2>&1 && command -v zstd >/dev/null 2>&1 &&
                 { command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; }
             ;;
@@ -183,11 +183,27 @@ rootfs_backend_requirements() { # <backend>
         qemu-debootstrap) printf 'qemu-debootstrap (qemu-user-static) and debootstrap\n' ;;
         apk-static)       printf 'tar, gzip, and curl or wget\n' ;;
         arch-bootstrap)   printf 'tar, zstd, and curl or wget\n' ;;
+        archriscv-tarball) printf 'tar, zstd, and curl or wget (Arch Linux RISC-V rootfs tarball)\n' ;;
         alarm-tarball)    printf 'tar, gzip, and curl or wget (Arch Linux ARM tarball)\n' ;;
         bedrock-hijack)   printf 'tar, sha1sum, and curl or wget; FUSE + xattr filesystem on the build host\n' ;;
         gentoo-stage3|void-tarball) printf 'tar, xz, and curl or wget\n' ;;
         *)                printf 'unknown prerequisites\n' ;;
     esac
+}
+
+# Architecture-aware release gating for riscv64 targets. riscv64 only became a
+# real Alpine architecture in v3.21, and Devuan publishes riscv64 binaries
+# only in ceres (its unstable suite). Release discovery, the release menu and
+# the backend catalogue all consult these predicates so a riscv64 build is
+# never offered a suite that has no packages for it.
+rootfs_alpine_release_supports_arch() { # <release> <arch>
+    [ "$2" = riscv64 ] || return 0
+    [ "$1" = edge ] && return 0
+    printf '%s' "$1" | grep -Eq '^v(3\.(2[1-9]|[3-9][0-9])|[4-9]\.)'
+}
+rootfs_devuan_release_supports_arch() { # <release> <arch>
+    [ "$2" = riscv64 ] || return 0
+    [ "$1" = ceres ]
 }
 
 # Validate backend constraints that only become knowable after the release is
@@ -215,6 +231,11 @@ rootfs_backend_release_supported() { # <distro> <backend> <release> [arch]
             rinse --list-distributions 2>/dev/null | awk '{print $1}' | grep -qx -- "$dist"
             ;;
         *) return 0 ;;
+    esac
+    # Distro-level riscv64 release gates (independent of the backend).
+    case "$distro" in
+        alpine) rootfs_alpine_release_supports_arch "$release" "$arch" || return 1 ;;
+        devuan) rootfs_devuan_release_supports_arch "$release" "$arch" || return 1 ;;
     esac
 }
 
@@ -289,7 +310,9 @@ rootfs_backend_catalog() { # <distro> [arch] [release]
         arch)
             # Official x86_64 Arch comes from the main Arch repos (pacstrap or
             # the bootstrap tarball). ARM is Arch Linux ARM, a separate project
-            # with its own rebootstrapping tarball.
+            # with its own rebootstrapping tarball, and RISC-V is the
+            # archriscv port (archriscv.felixc.at), which ships a complete
+            # rootfs image plus its own binary repositories.
             case "$arch" in
                 ''|amd64|x86_64)
                     printf 'pacstrap|pacstrap — arch-install-scripts\n'
@@ -297,6 +320,9 @@ rootfs_backend_catalog() { # <distro> [arch] [release]
                     ;;
                 arm64|aarch64|armhf|armv7|armv7l)
                     printf 'alarm-tarball|Arch Linux ARM bootstrap tarball\n'
+                    ;;
+                riscv64)
+                    printf 'archriscv-tarball|Arch Linux RISC-V rootfs tarball\n'
                     ;;
                 *) return 1 ;;
             esac
@@ -340,7 +366,15 @@ rootfs_backend_catalog() { # <distro> [arch] [release]
 
 rootfs_backend_supported() { # <distro> <backend> [arch] [release]
     [ -n "${2:-}" ] || return 1
-    rootfs_backend_catalog "$1" "${3:-}" "${4:-}" 2>/dev/null | cut -d'|' -f1 | grep -qx -- "$2"
+    # Consume the catalogue through a here-string loop rather than a
+    # `... | grep -qx` pipeline: grep exits as soon as it matches, which can
+    # SIGPIPE the catalogue writer before it finishes (flaky under pipefail).
+    local out tag
+    out=$(rootfs_backend_catalog "$1" "${3:-}" "${4:-}" 2>/dev/null) || return 1
+    while IFS='|' read -r tag _; do
+        [ "$tag" = "$2" ] && return 0
+    done <<< "$out"
+    return 1
 }
 
 # Resolve "auto" (or validate an explicit choice) into one concrete backend.
@@ -792,17 +826,19 @@ host_debarch() {
         aarch64)       echo arm64 ;;
         armv7l|armv6l) echo armhf ;;
         i686|i386)     echo i386 ;;
+        riscv64)       echo riscv64 ;;
         *)             uname -m ;;
     esac
 }
 
 qemu_bin_for() { # deb arch -> qemu-user-static binary name
     case "$1" in
-        amd64) echo qemu-x86_64-static ;;
-        arm64) echo qemu-aarch64-static ;;
-        armhf) echo qemu-arm-static ;;
-        i386)  echo qemu-i386-static ;;
-        *)     echo "" ;;
+        amd64)   echo qemu-x86_64-static ;;
+        arm64)   echo qemu-aarch64-static ;;
+        armhf)   echo qemu-arm-static ;;
+        i386)    echo qemu-i386-static ;;
+        riscv64) echo qemu-riscv64-static ;;
+        *)       echo "" ;;
     esac
 }
 
@@ -1116,7 +1152,7 @@ rootfs_release_candidates() { # <distro> <arch>
         debian) url="http://deb.debian.org/debian/dists/" ;;
         devuan) url="http://deb.devuan.org/merged/dists/" ;;
         ubuntu)
-            case "$arch" in arm64|armhf) url="http://ports.ubuntu.com/ubuntu-ports/dists/" ;; *) url="http://archive.ubuntu.com/ubuntu/dists/" ;; esac ;;
+            case "$arch" in arm64|armhf|riscv64) url="http://ports.ubuntu.com/ubuntu-ports/dists/" ;; *) url="http://archive.ubuntu.com/ubuntu/dists/" ;; esac ;;
         alpine) url="https://dl-cdn.alpinelinux.org/alpine/" ;;
         fedora) url="https://download.fedoraproject.org/pub/fedora/linux/releases/" ;;
         kali) printf '%s\n' kali-rolling kali-last-snapshot; return 0 ;;
@@ -1135,9 +1171,24 @@ rootfs_release_candidates() { # <distro> <arch>
     names=$(printf '%s' "$html" | sed -nE 's/.*href="([^"/]+)\/?".*/\1/p' | sed 's:/$::' | sort -Vu)
     case "$distro" in
         debian) printf '%s\n' "$names" | grep -E '^(stable|testing|unstable|oldstable|bookworm|trixie|forky|sid)$' ;;
-        devuan) printf '%s\n' "$names" | grep -E '^(daedalus|excalibur|freia|ceres|stable|testing|unstable)$' ;;
+        devuan)
+            if [ "$arch" = riscv64 ]; then
+                # Devuan ships riscv64 binaries only in ceres (unstable).
+                printf '%s\n' "$names" | grep -E '^ceres$'
+            else
+                printf '%s\n' "$names" | grep -E '^(daedalus|excalibur|freia|ceres|stable|testing|unstable)$'
+            fi
+            ;;
         ubuntu) printf '%s\n' "$names" | grep -E '^[a-z]+$' | grep -Ev '(backports|updates|security|proposed)$' ;;
-        alpine) printf '%s\n' "$names" | grep -E '^(v[0-9]+\.[0-9]+|edge)$' ;;
+        alpine)
+            if [ "$arch" = riscv64 ]; then
+                # riscv64 only became an Alpine architecture in v3.21.
+                printf '%s\n' "$names" | grep -E '^(v[0-9]+\.[0-9]+|edge)$' \
+                    | while IFS= read -r r; do rootfs_alpine_release_supports_arch "$r" riscv64 && printf '%s\n' "$r"; done
+            else
+                printf '%s\n' "$names" | grep -E '^(v[0-9]+\.[0-9]+|edge)$'
+            fi
+            ;;
         fedora) printf '%s\n' "$names" | grep -E '^[0-9]+$' ;;
         opensuse) printf '%s\n' "$names" | grep -E '^[0-9]+\.[0-9]+$' ;;
     esac
@@ -1148,9 +1199,25 @@ rootfs_release_menu() { # <distro> <arch>
     candidates=$(rootfs_release_candidates "$distro" "$arch" | tail -n 12)
     case "$distro" in
         debian) def=trixie; [ -n "$candidates" ] || candidates=$'bookworm\ntrixie\nforky\nsid' ;;
-        devuan) def=excalibur; [ -n "$candidates" ] || candidates=$'daedalus\nexcalibur\nfreia\nceres' ;;
+        devuan)
+            if [ "$arch" = riscv64 ]; then
+                # Only ceres carries riscv64 packages.
+                def=ceres
+                [ -n "$candidates" ] || candidates=ceres
+            else
+                def=excalibur
+                [ -n "$candidates" ] || candidates=$'daedalus\nexcalibur\nfreia\nceres'
+            fi ;;
         ubuntu) def=noble; [ -n "$candidates" ] || candidates=$'jammy\nnoble\noracular\nplucky\nquesting' ;;
-        alpine) def=v3.20; [ -n "$candidates" ] || candidates=$'v3.19\nv3.20\nv3.21\nedge' ;;
+        alpine)
+            if [ "$arch" = riscv64 ]; then
+                # riscv64 only became an Alpine architecture in v3.21.
+                def=v3.21
+                [ -n "$candidates" ] || candidates=$'v3.21\nv3.22\nedge'
+            else
+                def=v3.20
+                [ -n "$candidates" ] || candidates=$'v3.19\nv3.20\nv3.21\nedge'
+            fi ;;
         fedora) def=42; [ -n "$candidates" ] || candidates=$'41\n42\n43' ;;
         kali) def=kali-rolling; candidates=$'kali-rolling\nkali-last-snapshot' ;;
         opensuse) def=15.6; [ -n "$candidates" ] || candidates=$'15.5\n15.6' ;;
@@ -1904,7 +1971,8 @@ Register with binfmt_misc: update-binfmts --install
 Common architectures:
   arm64 - ARM 64-bit
   arm   - ARM 32-bit
-  i386  - x86 32-bit"
+  i386  - x86 32-bit
+  riscv64 - RISC-V 64-bit"
             ;;
         *)
             tui_msg "$_label configuration" \
@@ -2154,6 +2222,7 @@ _rootfs_bs_debian_deb_url() {
         "https://packages.debian.org/${suite}/all/${name}/download"
         "https://packages.debian.org/${suite}/amd64/${name}/download"
         "https://packages.debian.org/${suite}/arm64/${name}/download"
+        "https://packages.debian.org/${suite}/riscv64/${name}/download"
     )
 
     local dl_page url c
@@ -2270,7 +2339,7 @@ _rootfs_bs_launchpad_deb_url() {
 
     local section arch url
     for section in main universe restricted multiverse; do
-        for arch in all amd64 arm64 i386 armhf; do
+        for arch in all amd64 arm64 riscv64 i386 armhf; do
             url="http://archive.ubuntu.com/ubuntu/pool/${section}/${pooldir}/${name}/${name}_${version}_${arch}.deb"
             if curl -fsSL -4 -o /dev/null --head "$url" 2>/dev/null; then
                 printf '%s' "$url"
@@ -4151,7 +4220,8 @@ rootfs_backend_missing_cmds() { # <distro> <backend> [arch] [compression]
     case "$backend" in
         apk-static)      command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (for compressed archives)\n'; want_curl=1 ;;
         alpine-chroot-install) want_curl=1 ;;
-        arch-bootstrap)  command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (Zstandard compression)\n'; want_curl=1 ;;
+        arch-bootstrap|archriscv-tarball)
+            command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (Zstandard compression)\n'; want_curl=1 ;;
         alarm-tarball)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (compressed archives)\n'; want_curl=1 ;;
         bedrock-hijack)  command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v sha1sum >/dev/null 2>&1 || printf 'sha1sum|coreutils (checksum verification)\n'; want_curl=1 ;;
         gentoo-stage3)   command -v tar >/dev/null 2>&1 || printf 'tar|tar\n'; command -v xz >/dev/null 2>&1 || printf 'xz|xz-utils (XZ compression)\n'; want_curl=1 ;;
@@ -4162,6 +4232,7 @@ rootfs_backend_missing_cmds() { # <distro> <backend> [arch] [compression]
             if [ "$backend" = qemu-debootstrap ]; then
                 command -v debootstrap >/dev/null 2>&1 || printf 'debootstrap|debootstrap\n'
                 command -v qemu-aarch64-static >/dev/null 2>&1 || command -v qemu-x86_64-static >/dev/null 2>&1 \
+                    || command -v qemu-riscv64-static >/dev/null 2>&1 \
                     || printf 'qemu-user-static|qemu-user-static (+ binfmt-support)\n'
             fi
             ;;
@@ -4224,28 +4295,53 @@ rootfs_check_host_deps() { # <distro> <backend> [arch] [compression]
 # fedora-secondary mirror). Emits "<debarch>|<label>" per line.
 rootfs_distro_archs() { # <distro>
     case "$1" in
-        debian|devuan|ubuntu|kali|gentoo|void)
+        debian|ubuntu|gentoo)
+            # Debian trixie+/sid, Ubuntu (ports) and Gentoo all publish
+            # official riscv64 binaries.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\nriscv64|riscv64 (RISC-V 64-bit)\n'
+            ;;
+        devuan)
+            # riscv64 exists in Devuan only in ceres (the unstable suite).
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\nriscv64|riscv64 (RISC-V 64-bit, ceres only)\n'
+            ;;
+        kali)
+            # Kali's apt repositories do not publish riscv64 packages.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\n'
+            ;;
+        void)
+            # Void does not publish riscv64 rootfs tarballs on its mirrors.
             printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\n'
             ;;
         alpine)
-            # apk.static --arch covers every Alpine architecture.
-            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\n'
+            # apk.static --arch covers every Alpine architecture (riscv64
+            # since v3.21).
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|ARM 32-bit hard-float\ni386|x86 32-bit\nriscv64|riscv64 (RISC-V 64-bit)\n'
             ;;
         arch)
-            # x86_64 (official Arch) plus aarch64/armv7 via Arch Linux ARM.
-            printf 'amd64|x86_64 / amd64\narm64|aarch64 (Arch Linux ARM)\narmhf|armv7 32-bit (Arch Linux ARM)\n'
+            # x86_64 (official Arch) plus aarch64/armv7 via Arch Linux ARM
+            # and riscv64 via the archriscv port.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 (Arch Linux ARM)\narmhf|armv7 32-bit (Arch Linux ARM)\nriscv64|riscv64 (Arch Linux RISC-V port)\n'
             ;;
         fedora)
-            # x86_64 + aarch64/armhfp from the secondary mirror. Fedora i386 is EOL.
+            # x86_64 + aarch64/armhfp from the secondary mirror. Fedora i386
+            # is EOL, and riscv64 is not an officially supported Fedora
+            # architecture (no dnf repository is published for it).
             printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|armhfp (ARM 32-bit)\n'
             ;;
-        opensuse|tumbleweed)
-            # Leap/Tumbleweed ship x86_64 and aarch64; i586 is retired.
+        opensuse)
+            # Leap ships x86_64 and aarch64; i586 is retired and Leap does
+            # not publish riscv64 (only Tumbleweed does, via ports).
             printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\n'
+            ;;
+        tumbleweed)
+            # Tumbleweed ships x86_64 and aarch64, plus riscv64 from the
+            # openSUSE ports tree.
+            printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\nriscv64|riscv64 (RISC-V 64-bit)\n'
             ;;
         bedrock)
             # Bedrock ships hijack installers for x86_64, aarch64, armv7, i386
-            # (i686) and more; map those onto our debarch set.
+            # (i686) and more; map those onto our debarch set. No riscv64
+            # installer is published.
             printf 'amd64|x86_64 / amd64\narm64|aarch64 / arm64\narmhf|armv7 (32-bit ARM)\ni386|x86 32-bit\n'
             ;;
         *) return 1 ;;
@@ -4310,6 +4406,7 @@ rootfs_builder_impl() {
         arm64) alpine_arch="aarch64"; fedora_arch="aarch64"; void_arch="aarch64" ;;
         armhf) alpine_arch="armv7";   fedora_arch="armhfp";  void_arch="armv7l" ;;
         i386)  alpine_arch="x86";     fedora_arch="i386";    void_arch="i686" ;;
+        riscv64) alpine_arch="riscv64"; fedora_arch="riscv64"; void_arch="riscv64" ;;
     esac
 
     # ---- release (repository-backed, architecture-aware) ----
@@ -4489,14 +4586,11 @@ user creation). Install on the host first if you haven't:
         debian) def_mirror="http://deb.debian.org/debian" ;;
         devuan) def_mirror="http://deb.devuan.org/merged" ;;
         ubuntu)
-            if [ "$arch" = "arm64" ] || [ "$arch" = "armhf" ]; then
-                def_mirror="https://ports.ubuntu.com/ubuntu-ports"
-            else
-                def_mirror="https://archive.ubuntu.com/ubuntu"
-            fi ;;
+            case "$arch" in arm64|armhf|riscv64) def_mirror="https://ports.ubuntu.com/ubuntu-ports" ;; *) def_mirror="https://archive.ubuntu.com/ubuntu" ;; esac ;;
         alpine) def_mirror="http://dl-cdn.alpinelinux.org/alpine" ;;
         arch)
             case "$arch" in
+                riscv64) def_mirror="https://archriscv.felixc.at" ;;
                 arm64|aarch64|armhf|armv7*) def_mirror="https://mirror.archlinuxarm.org" ;;
                 *) def_mirror="https://geo.mirror.pkgbuild.com" ;;
             esac ;;
@@ -4510,6 +4604,7 @@ user creation). Install on the host first if you haven't:
         tumbleweed)
             case "$arch" in
                 arm64|aarch64) def_mirror="https://download.opensuse.org/ports/aarch64/tumbleweed/repo/oss" ;;
+                riscv64) def_mirror="https://download.opensuse.org/ports/riscv/tumbleweed/repo/oss" ;;
                 *) def_mirror="https://download.opensuse.org/tumbleweed/repo/oss" ;;
             esac ;;
         gentoo) def_mirror="https://distfiles.gentoo.org/releases" ;;
@@ -4813,7 +4908,8 @@ rootfs_postconfig() {
     local can_chroot=1
     [ -x "$target/bin/sh" ] || can_chroot=0
     if [ "$use_qemu" = 1 ] && ! [ -e /proc/sys/fs/binfmt_misc/qemu-aarch64 ] \
-        && ! [ -e /proc/sys/fs/binfmt_misc/qemu-arm ]; then
+        && ! [ -e /proc/sys/fs/binfmt_misc/qemu-arm ] \
+        && ! [ -e /proc/sys/fs/binfmt_misc/qemu-riscv64 ]; then
         # binfmt entries vary by distro registration; only warn, still try.
         warn "qemu binfmt registration not detected — chroot steps may fail."
     fi
@@ -4973,7 +5069,7 @@ rootfs_select_ubuntu_mirror() { # requested arch release
     local candidates=()
     [ -n "$requested" ] && candidates+=("$requested")
     case "$arch" in
-        arm64|armhf)
+        arm64|armhf|riscv64)
             candidates+=(
                 "https://ports.ubuntu.com/ubuntu-ports"
                 "http://ports.ubuntu.com/ubuntu-ports"
@@ -5390,6 +5486,7 @@ build_alpine_chroot_install() { # release arch mirror target pkgs
         aarch64|arm64) host_alpine_arch=aarch64 ;;
         armv7l|armhf)  host_alpine_arch=armv7 ;;
         i686|i386|x86) host_alpine_arch=x86 ;;
+        riscv64)       host_alpine_arch=riscv64 ;;
     esac
     if [ -n "$host_alpine_arch" ] && [ "$arch" != "$host_alpine_arch" ]; then
         tui_msg "Native only" \
@@ -5441,6 +5538,7 @@ rootfs_apk_arch() { # <debarch|alpine-arch> -> alpine repos basename
         arm64|aarch64) echo aarch64 ;;
         armhf|armv7|armv7l|armv6l) echo armv7 ;;
         i386|x86|i686|i586) echo x86 ;;
+        riscv64) echo riscv64 ;;
         *) echo "$1" ;;
     esac
 }
@@ -5594,6 +5692,22 @@ build_arch() { # mirror target pkgs backend [arch]
         rm -rf "$workdir"
         [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
         return 0
+    elif [ "$backend" = archriscv-tarball ]; then
+        # The archriscv port (archriscv.felixc.at) publishes a complete
+        # rootfs image per release; $mirror is the site root (or a mirror).
+        # The image ships pacman already configured for the archriscv
+        # binary repositories ([core]/[extra]/[unsupported]).
+        rootfs_backend_available archriscv-tarball || { tui_msg "Missing tools" "The Arch Linux RISC-V backend requires tar, zstd, and curl or wget."; return 1; }
+        local tarball="archriscv-latest.tar.zst" workdir; workdir=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-archriscv.XXXXXX") || return 1
+        run_cmd "Downloading Arch Linux RISC-V rootfs" \
+            rootfs_fetch_file "${mirror%/}/images/$tarball" "$workdir/$tarball" || { rm -rf "$workdir"; return 1; }
+        run_cmd "Extracting Arch Linux RISC-V rootfs" \
+            tar -C "$target" --numeric-owner -I zstd -xf "$workdir/$tarball" 2>/dev/null \
+            || tar -C "$target" --numeric-owner -xf "$workdir/$tarball" \
+            || { rm -rf "$workdir"; return 1; }
+        rm -rf "$workdir"
+        [ -n "${mapped// }" ] && warn "Install these inside the chroot: pacman -S $mapped"
+        return 0
     else
         tui_msg "Unsupported backend" "'$backend' cannot build an Arch rootfs."
         return 1
@@ -5672,7 +5786,7 @@ build_opensuse() { # distro release debarch mirror target pkgs
     command -v zypper >/dev/null 2>&1 || {
         tui_msg "Missing tool" "openSUSE bootstrapping requires zypper on the host."; return 1; }
     local suse_arch repo
-    case "$arch" in amd64) suse_arch=x86_64 ;; arm64) suse_arch=aarch64 ;; armhf) suse_arch=armv7hl ;; i386) suse_arch=i586 ;; esac
+    case "$arch" in amd64) suse_arch=x86_64 ;; arm64) suse_arch=aarch64 ;; armhf) suse_arch=armv7hl ;; i386) suse_arch=i586 ;; riscv64) suse_arch=riscv64 ;; esac
     if [ "$distro" = tumbleweed ]; then
         repo="$mirror"
     else
@@ -5693,6 +5807,7 @@ build_gentoo() { # flavor debarch mirror target pkgs
         arm64) garch=arm64; stage="stage3-arm64-$flavor" ;;
         armhf) garch=arm; stage="stage3-armv7a-$flavor" ;;
         i386) garch=x86; stage="stage3-i686-$flavor" ;;
+        riscv64) garch=riscv; stage="stage3-rv64_lp64d-$flavor" ;;
         *) warn "Unsupported Gentoo architecture: $arch"; return 1 ;;
     esac
     url="$mirror/$garch/autobuilds/current-$stage"
@@ -5731,6 +5846,7 @@ build_void() { # arch mirror target pkgs use_qemu
                 armv7l)  void_debarch="armhf" ;;
                 x86_64)  void_debarch="amd64" ;;
                 i686)    void_debarch="i386" ;;
+                riscv64) void_debarch="riscv64" ;;
             esac
             [ -n "$void_debarch" ] && setup_qemu_chroot "$target" "$void_debarch" >/dev/null 2>&1 || true
         fi
