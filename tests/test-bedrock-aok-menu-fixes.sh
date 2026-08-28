@@ -100,5 +100,96 @@ update_menu_is_separated() {
 }
 check "program and stratum updates are distinct" update_menu_is_separated
 
+# --- upstream _write_helpers() compat patch ---------------------------------
+# brl and bedrockport.sh both call _write_helpers() in _install_ff() but the
+# function is never defined upstream, so the fastfetch helpers it should
+# create are missing and the installer prints "_write_helpers: not found".
+# systui injects a working definition at download time.
+patch_injects_definition() {
+    local tmp
+    tmp=$(mktemp -d)
+    cat > "$tmp/fake-script.sh" <<'EOF'
+#!/bin/sh
+_install_ff() {
+    _write_helpers
+    echo done
+}
+EOF
+    bedrock_aok_patch_script "$tmp/fake-script.sh"
+    bash -n "$tmp/fake-script.sh" || { rm -rf "$tmp"; return 1; }
+    rm -rf "$tmp"
+}
+check "patch injects _write_helpers()" patch_injects_definition
+
+patch_precedes_call() {
+    local tmp def call
+    tmp=$(mktemp -d)
+    cat > "$tmp/fake-script.sh" <<'EOF'
+#!/bin/sh
+_install_ff() {
+    _write_helpers
+    echo done
+}
+EOF
+    bedrock_aok_patch_script "$tmp/fake-script.sh"
+    def=$(grep -n '^_write_helpers()' "$tmp/fake-script.sh" | cut -d: -f1)
+    call=$(grep -n '^    _write_helpers$' "$tmp/fake-script.sh" | cut -d: -f1)
+    rm -rf "$tmp"
+    [ -n "$def" ] && [ -n "$call" ] && [ "$def" -lt "$call" ]
+}
+check "definition is inserted before the call site" patch_precedes_call
+
+patch_is_idempotent() {
+    local tmp
+    tmp=$(mktemp -d)
+    cat > "$tmp/fake-script.sh" <<'EOF'
+#!/bin/sh
+_install_ff() {
+    _write_helpers
+}
+EOF
+    bedrock_aok_patch_script "$tmp/fake-script.sh"
+    bedrock_aok_patch_script "$tmp/fake-script.sh"
+    rm -rf "$tmp"
+}
+check "patch is idempotent" patch_is_idempotent
+
+patch_skips_defined() {
+    local tmp
+    tmp=$(mktemp -d)
+    cat > "$tmp/fake-script.sh" <<'EOF'
+#!/bin/sh
+_write_helpers() { :; }
+_install_ff() { _write_helpers; }
+EOF
+    before=$(md5sum "$tmp/fake-script.sh" | cut -d' ' -f1)
+    bedrock_aok_patch_script "$tmp/fake-script.sh"
+    after=$(md5sum "$tmp/fake-script.sh" | cut -d' ' -f1)
+    rm -rf "$tmp"
+    [ "$before" = "$after" ]
+}
+check "patch leaves scripts that define _write_helpers untouched" patch_skips_defined
+
+# The injected definition must create all four fastfetch helper scripts, and
+# only when missing (never clobbering an existing helper).
+if [ ! -e /bedrock ]; then
+    helpers_created() {
+        mkdir -p /bedrock/bin
+        printf '#!/bin/sh\n' > /bedrock/bin/brl && chmod +x /bedrock/bin/brl
+        bedrock_aok_write_helpers
+        [ -x /bedrock/bin/brl-mem ] && [ -x /bedrock/bin/brl-swap ] &&
+            [ -x /bedrock/bin/brl-disk ] && [ -x /bedrock/bin/brl-strata ]
+    }
+    check "write_helpers creates the four helper scripts" helpers_created
+    helpers_are_idempotent() {
+        before=$(md5sum /bedrock/bin/brl-mem | cut -d' ' -f1)
+        bedrock_aok_write_helpers
+        after=$(md5sum /bedrock/bin/brl-mem | cut -d' ' -f1)
+        [ "$before" = "$after" ]
+    }
+    check "write_helpers does not clobber existing helpers" helpers_are_idempotent
+    rm -rf /bedrock
+fi
+
 printf '%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]
