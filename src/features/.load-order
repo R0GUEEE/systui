@@ -18,3 +18,4 @@ zzzzzzzzzzzzz-package-manager-multiselect.sh
 zzzzzzzzzzzzzz-multi-install-optimizer.sh
 zzzzzzzzzzzzzzz-rootfs-build-autoconfig.sh
 zzzzzzzzzzzzzzzz-awesome-linux-catalog-integration.sh
+zzzzzzzzzzzzzzzzz-rootfs-delete-no-confirm.sh
