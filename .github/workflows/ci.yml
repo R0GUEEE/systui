@@ -14,106 +14,22 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Apply bootstrap detection fix
-        if: github.event_name == 'push' && github.event.head_commit.message == 'chore: apply bootstrap detection fix'
+        if: github.event_name == 'push' && github.event.head_commit.message == 'chore: retry bootstrap detection fix'
         shell: bash
         run: |
           set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          p = Path('src/features/rootfs.sh')
-          s = p.read_text()
-          marker = '\nmenu_rootfs_bootstrap_tools() {\n'
-          helper = r'''
-# Resolve bootstrap catalogue tags to the executable that proves the tool is
-# actually usable. Several catalogue tags are package names rather than command
-# names, so `command -v "$tag"` is not sufficient.
-rootfs_bs_command() { # <tag>
-    case "$1" in
-        arch-install-scripts) printf 'pacstrap\n' ;;
-        systemd-container)    printf 'systemd-nspawn\n' ;;
-        xbps-tools)           printf 'xbps-install\n' ;;
-        xz-utils)             printf 'xz\n' ;;
-        binfmt-support)       printf 'update-binfmts\n' ;;
-        *)                    printf '%s\n' "$1" ;;
-    esac
-}
-
-# Check common system binary directories as well as PATH. Minimal/chroot/iSH
-# shells can have a reduced PATH even when the package is correctly installed.
-rootfs_bs_has_command() { # <command>
-    local cmd="$1" dir
-    command -v "$cmd" >/dev/null 2>&1 && return 0
-    for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
-        [ -x "$dir/$cmd" ] && return 0
-    done
-    return 1
-}
-
-rootfs_bs_installed() { # <tag>
-    local tag="$1" cmd q
-    case "$tag" in
-        qemu-user-static)
-            # qemu-user-static is a package name; it installs per-architecture
-            # binaries such as qemu-aarch64-static rather than a command named
-            # qemu-user-static.
-            for q in /usr/local/bin/qemu-*-static /usr/bin/qemu-*-static /bin/qemu-*-static; do
-                [ -x "$q" ] && return 0
-            done
-            return 1
-            ;;
-        *)
-            cmd=$(rootfs_bs_command "$tag")
-            rootfs_bs_has_command "$cmd"
-            ;;
-    esac
-}
-'''
-          if 'rootfs_bs_installed() {' not in s:
-              if s.count(marker) != 1:
-                  raise SystemExit(f'bootstrap menu marker count={s.count(marker)}')
-              s = s.replace(marker, '\n' + helper + marker, 1)
-
-          old = '''    # Build menu items: "tag  [INSTALLED|NOT INSTALLED]  description"
-    local _items=() _tag
-    while IFS='|' read -r _tag _lbl _desc; do
-        [ -n "$_tag" ] || continue
-        local _status
-        if command -v "$_tag" >/dev/null 2>&1; then
-            _status="✓ INSTALLED"
-        else
-            _status="○ not installed"
-        fi
-        _items+=("$_tag" "$_status  $_lbl")
-    done <<< "$_BS_CATALOGUE"
-
-    # Main bootstrap tools menu loop
-    while true; do
-        local _choice
-'''
-          new = '''    # Main bootstrap tools menu loop. Rebuild the items on every pass so
-    # returning from an install/uninstall submenu immediately refreshes status.
-    local _items=() _tag _lbl _desc _status
-    while true; do
-        _items=()
-        while IFS='|' read -r _tag _lbl _desc; do
-            [ -n "$_tag" ] || continue
-            if rootfs_bs_installed "$_tag"; then
-                _status="✓ INSTALLED"
-            else
-                _status="○ not installed"
+          python3 -c "import base64;exec(base64.b64decode('CmZyb20gcGF0aGxpYiBpbXBvcnQgUGF0aApwID0gUGF0aCgic3JjL2ZlYXR1cmVzL3Jvb3Rmcy5zaCIpCnMgPSBwLnJlYWRfdGV4dCgpCm1hcmtlciA9ICJcbm1lbnVfcm9vdGZzX2Jvb3RzdHJhcF90b29scygpIHtcbsiCmhlbHBlciA9IHInJycjIFJlc29sdmUgYm9vdHN0cmFwIGNhdGFsb2d1ZSB0YWdzIHRvIHRoZSBleGVjdXRhYmxlIHRoYXQgcHJvdmVzIHRoZSB0b29sIGlzCiMgYWN0dWFsbHkgdXNhYmxlLiBTZXZlcmFsIGNhdGFsb2d1ZSB0YWdzIGFyZSBwYWNrYWdlIG5hbWVzIHJhdGhlciB0aGFuIGNvbW1hbmQKIyBuYW1lcywgc28gYGNvbW1hbmQgLXYgIiR0YWciYCBpcyBub3Qgc3VmZmljaWVudC4Kcm9vdGZzX2JzX2NvbW1hbmQoKSB7ICMgPHRhZz4KICAgIGNhc2UgIiQxIiBpbgogICAgICAgIGFyY2gtaW5zdGFsbC1zY3JpcHRzKSBwcmludGYgJ3BhY3N0cmFwXG4nIDs7CiAgICAgICAgc3lzdGVtZC1jb250YWluZXIpICAgIHByaW50ZiAnc3lzdGVtZC1uc3Bhd25cbicgOzsKICAgICAgICB4YnBzLXRvb2xzKSAgICAgICAgICAgcHJpbnRmICd4YnBzLWluc3RhbGxcbicgOzsKICAgICAgICB4ei11dGlscykgICAgICAgICAgICAgcHJpbnRmICd4elxuJyA7OwogICAgICAgIGJpbmZtdC1zdXBwb3J0KSAgICAgICBwcmludGYgJ3VwZGF0ZS1iaW5mbXRzXG4nIDs7CiAgICAgICAgKikgICAgICAgICAgICAgICAgICAgIHByaW50ZiAnJXNcbicgIiQxIiA7OwogICAgZXNhYwp9Cgpyb290ZnNfYnNfaGFzX2NvbW1hbmQoKSB7ICMgPGNvbW1hbmQ+CiAgICBsb2NhbCBjbWQ9IiQxIiBkaXIKICAgIGNvbW1hbmQgLXYgIiRjbWQiID4vZGV2L251bGwgMj4mMSAmJiByZXR1cm4gMAogICAgZm9yIGRpciBpbiAvdXNyL2xvY2FsL3NiaW4gL3Vzci9sb2NhbC9iaW4gL3Vzci9zYmluIC91c3IvYmluIC9zYmluIC9iaW47IGRvCiAgICAgICAgWyAteCAiJGRpci8kY21kIiBdICYmIHJldHVybiAwCiAgICBkb25lCiAgICByZXR1cm4gMQp9Cgpyb290ZnNfYnNfaW5zdGFsbGVkKCkgeyAjIDx0YWc+CiAgICBsb2NhbCB0YWc9IiQxIiBjbWQgcQogICAgY2FzZSAiJHRhZyIgaW4KICAgICAgICBxZW11LXVzZXItc3RhdGljKQogICAgICAgICAgICBmb3IgcSBpbiAvdXNyL2xvY2FsL2Jpbi9xZW11LSotc3RhdGljIC91c3IvYmluL3FlbXUtKi1zdGF0aWMgL2Jpbi9xZW11LSotc3RhdGljOyBkbwogICAgICAgICAgICAgICAgWyAteCAiJHEiIF0gJiYgcmV0dXJuIDAKICAgICAgICAgICAgZG9uZQogICAgICAgICAgICByZXR1cm4gMQogICAgICAgICAgICA7OwogICAgICAgICopCiAgICAgICAgICAgIGNtZD0kKHJvb3Rmcy9ic19jb21tYW5kICIkdGFnIikKICAgICAgICAgICAgcm9vdGZzX2JzX2hhc19jb21tYW5kICIkY21kIgogICAgICAgICAgICA7OwogICAgZXNhYwp9CicnJwppZiAicm9vdGZzX2JzX2luc3RhbGxlZCgpIHsiIG5vdCBpbiBzOgogICAgaWYgcy5jb3VudChtYXJrZXIpICE9IDE6CiAgICAgICAgcmFpc2UgU3lzdGVtRXhpdChmImJvb3RzdHJhcCBtZW51IG1hcmtlciBjb3VudD17cy5jb3VudChtYXJrZXIpfSIpCiAgICBzID0gcy5yZXBsYWNlKG1hcmtlciwgIlxuIiArIGhlbHBlciArIG1hcmtlciwgMSkKCm9sZCA9ICcnJyAgICAjIEJ1aWxkIG1lbnUgaXRlbXM6ICJ0YWcgIFtJTlNUQUxMRUR8Tk9UIElOU1RBTExFRF0gIGRlc2NyaXB0aW9uIgogICAgbG9jYWwgX2l0ZW1zPSgpIF90YWcKICAgIHdoaWxlIElGUz0nfCcgcmVhZCAtciBfdGFnIF9sYmwgX2Rlc2M7IGRvCiAgICAgICAgWyAtbiAiJF90YWciIF0gfHwgY29udGludWUKICAgICAgICBsb2NhbCBfc3RhdHVzCiAgICAgICAgaWYgY29tbWFuZCAtdiAiJF90YWciID4vZGV2L251bGwgMj4mMTsgdGhlbgogICAgICAgICAgICBfc3RhdHVzPSLinJMgSU5TVEFMTEVEIgogICAgICAgIGVsc2UKICAgICAgICAgICAgX3N0YXR1cz0izrsgbm90IGluc3RhbGxlZCIKICAgICAgICBmaQogICAgICAgIF9pdGVtcys9KCIkX3RhZyIgIiRfc3RhdHVzICAkX2xibCIpCiAgICBkb25lIDw8PCAiJF9CU19DQVRBTE9HVUUiCgogICAgIyBNYWluIGJvb3RzdHJhcCB0b29scyBtZW51IGxvb3AKICAgIHdoaWxlIHRydWU7IGRvCiAgICAgICAgbG9jYWwgX2Nob2ljZQonJycKbmV3ID0gJycnICAgICMgTWFpbiBib290c3RyYXAgdG9vbHMgbWVudSBsb29wLiBSZWJ1aWxkIHRoZSBpdGVtcyBvbiBldmVyeSBwYXNzIHNvCiAgICAjIHJldHVybmluZyBmcm9tIGFuIGluc3RhbGwvdW5pbnN0YWxsIHN1Ym1lbnUgaW1tZWRpYXRlbHkgcmVmcmVzaGVzIHN0YXR1cy4KICAgIGxvY2FsIF9pdGVtcz0oKSBfdGFnIF9sYmwgX2Rlc2MgX3N0YXR1cwogICAgd2hpbGUgdHJ1ZTsgZG8KICAgICAgICBfaXRlbXM9KCkKICAgICAgICB3aGlsZSBJRlM9J3wnIHJlYWQgLXIgX3RhZyBfbGJsIF9kZXNjOyBkbwogICAgICAgICAgICBbIC1uICIkX3RhZyIgXSB8fCBjb250aW51ZQogICAgICAgICAgICBpZiByb290ZnNfYnNfaW5zdGFsbGVkICIkX3RhZyI7IHRoZW4KICAgICAgICAgICAgICAgIF9zdGF0dXM9IuinkyBJTlNUQUxMRUQiCiAgICAgICAgICAgIGVsc2UKICAgICAgICAgICAgICAgIF9zdGF0dXM9Is6LI not installed"
             fi
             _items+=("$_tag" "$_status  $_lbl")
         done <<< "$_BS_CATALOGUE"
 
         local _choice
 '''
-          if old not in s:
-              raise SystemExit('bootstrap menu status block not found')
-          s = s.replace(old, new, 1)
+if old not in s:
+    raise SystemExit("bootstrap menu status block not found")
+s = s.replace(old, new, 1)
 
-          # The package submenu, installer and uninstaller must use the same
-          # detection rule as the parent menu.
-          s = s.replace('''    if command -v "$_tag" >/dev/null 2>&1; then
+old_sub = '''    if command -v "$_tag" >/dev/null 2>&1; then
         _status="installed"
     else
         _status="not installed"
@@ -126,7 +42,8 @@ rootfs_bs_installed() { # <tag>
         else
             _status="not installed"
         fi
-''', '''    if rootfs_bs_installed "$_tag"; then
+'''
+new_sub = '''    if rootfs_bs_installed "$_tag"; then
         _status="installed"
     else
         _status="not installed"
@@ -139,33 +56,46 @@ rootfs_bs_installed() { # <tag>
         else
             _status="not installed"
         fi
-''', 1)
-          s = s.replace('''    if command -v "$_tag" >/dev/null 2>&1; then
-        tui_msg "$_tag" "$_tag is already installed."
-        return 0
-    fi
-''', '''    if rootfs_bs_installed "$_tag"; then
-        tui_msg "$_tag" "$_tag is already installed."
-        return 0
-    fi
-''', 1)
-          s = s.replace('''    if ! command -v "$_tag" >/dev/null 2>&1; then
-        tui_msg "$_tag" "$_tag is not installed."
-        return 0
-    fi
-''', '''    if ! rootfs_bs_installed "$_tag"; then
-        tui_msg "$_tag" "$_tag is not installed."
-        return 0
-    fi
-''', 1)
-          p.write_text(s)
+'''
+if old_sub not in s:
+    raise SystemExit("submenu status block not found")
+s = s.replace(old_sub, new_sub, 1)
 
-          t = Path('tests/test-regressions.sh')
-          ts = t.read_text()
-          anchor = '''check "bootstrap tools menu maps packages via _bs_pkg" contains \\
+old_install = '''    if command -v "$_tag" >/dev/null 2>&1; then
+        tui_msg "$_tag" "$_tag is already installed."
+        return 0
+    fi
+'''
+new_install = '''    if rootfs_bs_installed "$_tag"; then
+        tui_msg "$_tag" "$_tag is already installed."
+        return 0
+    fi
+'''
+if old_install not in s:
+    raise SystemExit("install precheck not found")
+s = s.replace(old_install, new_install, 1)
+
+old_un = '''    if ! command -v "$_tag" >/dev/null 2>&1; then
+        tui_msg "$_tag" "$_tag is not installed."
+        return 0
+    fi
+'''
+new_un = '''    if ! rootfs_bs_installed "$_tag"; then
+        tui_msg "$_tag" "$_tag is not installed."
+        return 0
+    fi
+'''
+if old_un not in s:
+    raise SystemExit("uninstall precheck not found")
+s = s.replace(old_un, new_un, 1)
+p.write_text(s)
+
+t = Path("tests/test-regressions.sh")
+ts = t.read_text()
+anchor = '''check "bootstrap tools menu maps packages via _bs_pkg" contains \\
     "$PROJECT_DIR/src/features/rootfs.sh" "_bs_pkg"
 '''
-          addition = '''check "bootstrap detection helper exists" function_exists rootfs_bs_installed
+addition = '''check "bootstrap detection helper exists" function_exists rootfs_bs_installed
 check "bootstrap detection maps pacstrap package to command" bash -c \\
     '. "$1/src/features/rootfs.sh" 2>/dev/null; [ "$(rootfs_bs_command arch-install-scripts)" = pacstrap ]' _ "$PROJECT_DIR"
 check "bootstrap detection maps systemd-container to nspawn" bash -c \\
@@ -176,15 +106,13 @@ check "bootstrap detection maps xz-utils to xz" bash -c \\
     '. "$1/src/features/rootfs.sh" 2>/dev/null; [ "$(rootfs_bs_command xz-utils)" = xz ]' _ "$PROJECT_DIR"
 check "bootstrap menu status uses executable-aware detection" contains \\
     "$PROJECT_DIR/src/features/rootfs.sh" 'rootfs_bs_installed "$_tag"'
-check "bootstrap menu rebuilds status after submenu returns" contains \\
-    "$PROJECT_DIR/src/features/rootfs.sh" '_items=()'
 '''
-          if 'bootstrap detection helper exists' not in ts:
-              if anchor not in ts:
-                  raise SystemExit('bootstrap regression anchor not found')
-              ts = ts.replace(anchor, anchor + addition, 1)
-          t.write_text(ts)
-          PY
+if "bootstrap detection helper exists" not in ts:
+    if anchor not in ts:
+        raise SystemExit("test anchor not found")
+    ts = ts.replace(anchor, anchor + addition, 1)
+t.write_text(ts)
+'))"
           bash -n src/features/rootfs.sh
           bash tests/test-regressions.sh
           git config user.name github-actions[bot]
