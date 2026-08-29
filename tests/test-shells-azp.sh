@@ -222,6 +222,28 @@ check "plain: marked block present" contains "$home/.zshrc" "# >>> systui azp pl
 azp_apply root "$home" omz git-fuzzy
 check "omz: re-run does not duplicate" test "$(grep -c 'git-fuzzy' "$home/.zshrc")" -eq 1
 
+# ---- 4. apk install retry (fresh/stale index) --------------------------------
+# A fresh iSH/Alpine system has no package index: the first `apk add` fails,
+# pm_install must refresh the index and retry before giving up.
+apk_bin="$SYSTUI_TMP/apkbin"
+mkdir -p "$apk_bin"
+cat > "$apk_bin/apk" <<'APK'
+#!/bin/sh
+# First `add` fails (no index); `update` creates the index; retried `add` wins.
+case "$1" in
+    add) [ -f "$SYSTUI_TMP/apk-index" ] && { : > "$SYSTUI_TMP/apk-installed"; exit 0; } || exit 1 ;;
+    update) : > "$SYSTUI_TMP/apk-index"; exit 0 ;;
+    *) exit 1 ;;
+esac
+APK
+chmod +x "$apk_bin/apk"
+rm -f "$SYSTUI_TMP/apk-index" "$SYSTUI_TMP/apk-installed"
+check "apk: add retries after index refresh" bash -c '
+    run_cmd() { shift; "$@"; }
+    source "$1"
+    PATH="$2:$PATH" PM=apk pm_install zsh
+    [ -f "$3/apk-installed" ]' _ "$PROJECT_DIR/src/features/sysconfig.sh" "$apk_bin" "$SYSTUI_TMP"
+
 # ---- summary ----------------------------------------------------------------
 printf '\n%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

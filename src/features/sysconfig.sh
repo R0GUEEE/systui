@@ -59,7 +59,16 @@ pm_install() {
     local _pm_rc=0
     case "$PM" in
         apt) run_cmd "apt install $*" apt-get install -y -- "$@"; _pm_rc=$? ;;
-        apk) run_cmd "apk add $*" apk add -- "$@"; _pm_rc=$? ;;
+        apk)
+            # Fresh iSH/Alpine systems often have no package index (or a stale
+            # one), which makes `apk add` fail with "no such package". Refresh
+            # the index once and retry before declaring failure. (The `if !`
+            # form also keeps a failed add from tripping an active `set -e`.)
+            if ! run_cmd "apk add $*" apk add -- "$@"; then
+                run_cmd "apk update (retry after failed add)" apk update
+                run_cmd "apk add $* (retry)" apk add -- "$@"
+            fi
+            _pm_rc=$? ;;
         pacman) run_cmd "pacman -S $*" pacman -S --noconfirm --needed -- "$@"; _pm_rc=$? ;;
         dnf) run_cmd "dnf install $*" dnf install -y -- "$@"; _pm_rc=$? ;;
         yum) run_cmd "yum install $*" yum install -y -- "$@"; _pm_rc=$? ;;
@@ -6142,7 +6151,10 @@ menu_zsh_install() {
     choices+=(back "Back")
     method=$(tui_menu "Install Zsh" "Choose an installation method:" "${choices[@]}") || return 0
     case "$method" in
-        pm)   pm_install zsh ;;
+        pm)
+            if ! pm_install zsh; then
+                tui_msg "Install failed" "zsh could not be installed.\n\nCheck $LOGFILE for details, then try:\n  ${PM:-pm} update && ${PM:-pm} install zsh"
+            fi ;;
         brew) run_cmd "Install Zsh via Homebrew" brew install zsh ;;
         back) return 0 ;;
     esac
