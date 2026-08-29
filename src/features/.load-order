@@ -24,3 +24,4 @@ zzzzzzzzzzzzzzzzzzzz-apt-sources-unified-editor.sh
 zzzzzzzzzzzzzzzzzzzzz-mmdebstrap-no-unshare.sh
 zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
 zzzzzzzzzzzzzzzzzzzzzz-rootfs-no-namespace-backends.sh
+zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
