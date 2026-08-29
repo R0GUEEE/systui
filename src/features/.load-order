@@ -20,3 +20,4 @@ zzzzzzzzzzzzzzz-rootfs-build-autoconfig.sh
 zzzzzzzzzzzzzzzz-awesome-linux-catalog-integration.sh
 zzzzzzzzzzzzzzzzz-rootfs-delete-no-confirm.sh
 zzzzzzzzzzzzzzzzzz-rootfs-unshare-probe.sh
+zzzzzzzzzzzzzzzzzzz-performance-top-level.sh
