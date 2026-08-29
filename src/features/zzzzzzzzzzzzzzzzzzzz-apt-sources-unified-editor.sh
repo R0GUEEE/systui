@@ -151,30 +151,29 @@ repo_sources_listd() {
     done
 }
 
-# The original Repositories and keys menu exposed both "Manage sources" and a
-# separate sources.list.d submenu. APT now has one source manager, so make the
-# existing Manage action open the unified editor and remove the duplicate listd
-# entry from menu_repos.
-repo_manage() {
+# Keep the original generic repository manager intact for non-APT systems.
+# Only the menu dispatch is redirected to the unified APT source manager when
+# APT is active.
+_systui_repo_manage_unified() {
     if [ "$PM" = apt ]; then
         repo_sources_listd
-        return
-    fi
-    # Non-APT managers keep the original generic source manager when it was
-    # captured before this late override.
-    if declare -F _systui_repo_manage_original >/dev/null 2>&1; then
-        _systui_repo_manage_original "$@"
     else
-        tui_msg "Repositories" "Repository source management is not available for $PM."
+        repo_manage "$@"
     fi
 }
 
+# The original Repositories and keys menu exposed both "Manage sources" and a
+# separate sources.list.d submenu. Collapse those into the existing Manage
+# entry, remove listd, and dispatch Manage through the unified route above.
 if declare -F menu_repos >/dev/null 2>&1; then
     eval "$(declare -f menu_repos | awk '
         /listd[[:space:]]+\"/ { next }
         /listd\)[[:space:]]+repo_sources_listd/ { next }
         /manage[[:space:]]+\"Manage sources/ {
             sub(/Manage sources[^\"]*/, "Manage repository sources")
+        }
+        /manage\)[[:space:]]+repo_manage/ {
+            sub(/repo_manage/, "_systui_repo_manage_unified")
         }
         { print }
     ')"
