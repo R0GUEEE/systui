@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 ###############################################################################
 # systui Update Script
-# Fetches a clean committed revision into a root-owned cache and reinstalls it.
+# Fetches the requested remote branch into a root-owned cache and reinstalls it.
+# The remote branch is authoritative: local cache changes are always discarded.
 ###############################################################################
 
 set -Eeuo pipefail
@@ -23,6 +24,9 @@ Options:
   --force       Recreate the root-owned update cache before updating.
   --no-deps     Skip dependency installation during reinstall.
   -h, --help    Show this help.
+
+Local modifications in the update cache are always discarded. The selected
+remote branch is authoritative and force-overwrites tracked and untracked files.
 
 Environment overrides:
   SYSTUI_REPO_URL      Git repository URL.
@@ -74,9 +78,21 @@ case "$BRANCH" in
     -*|*..*|*~*|*^*|*:*|*\?*|*\**|*\[*|*\\*|*' '*) die "Unsafe branch name: $BRANCH" ;;
 esac
 
-if [ "$FORCE" -eq 1 ] && [ -e "$CACHE_DIR" ]; then info "Recreating update cache: $CACHE_DIR"; rm -rf -- "$CACHE_DIR"; fi
-if [ -e "$CACHE_DIR" ] && [ ! -d "$CACHE_DIR/.git" ]; then die "$CACHE_DIR exists but is not a Git checkout. Use --force or set SYSTUI_UPDATE_CACHE."; fi
-if [ ! -d "$CACHE_DIR/.git" ]; then info "Creating root-owned update cache..."; git clone --no-checkout -- "$REPO_URL" "$CACHE_DIR"; fi
+if [ "$FORCE" -eq 1 ] && [ -e "$CACHE_DIR" ]; then
+    info "Recreating update cache: $CACHE_DIR"
+    rm -rf -- "$CACHE_DIR"
+fi
+
+# A stale/non-Git cache cannot be trusted. Replace it automatically because
+# systui-update's contract is to mirror the selected remote revision exactly.
+if [ -e "$CACHE_DIR" ] && [ ! -d "$CACHE_DIR/.git" ]; then
+    info "Replacing non-Git update cache: $CACHE_DIR"
+    rm -rf -- "$CACHE_DIR"
+fi
+if [ ! -d "$CACHE_DIR/.git" ]; then
+    info "Creating root-owned update cache..."
+    git clone --no-checkout -- "$REPO_URL" "$CACHE_DIR"
+fi
 chown -R root:root "$CACHE_DIR"
 chmod go-w "$CACHE_DIR"
 
@@ -85,8 +101,18 @@ info "Remote: $REPO_URL"
 info "Branch: $BRANCH"
 info "Cache:  $CACHE_DIR"
 git_cache remote set-url origin "$REPO_URL"
-git_cache fetch --prune --tags origin "$BRANCH"
-git_cache checkout -B "$BRANCH" "origin/$BRANCH"
+
+# Discard all local tracked and untracked changes before doing anything that
+# may be blocked by a dirty checkout. Ignore reset failure for an unborn/no-HEAD
+# cache created with --no-checkout; fetch below establishes the target commit.
+git_cache reset --hard HEAD >/dev/null 2>&1 || true
+git_cache clean -fdx
+
+git_cache fetch --force --prune --tags origin "$BRANCH"
+
+# Force the local branch and worktree to exactly match the remote branch.
+# checkout -f handles tracked modifications; reset+clean make the result exact.
+git_cache checkout -f -B "$BRANCH" "origin/$BRANCH"
 git_cache reset --hard "origin/$BRANCH"
 git_cache clean -fdx
 
@@ -95,6 +121,7 @@ git_cache ls-files --error-unmatch install.sh >/dev/null 2>&1 || die "Fetched re
 TARGET_SHA=$(git_cache rev-parse --verify HEAD)
 info "Installing commit: $TARGET_SHA"
 chmod 0755 "$CACHE_DIR/install.sh"
+[ ! -f "$CACHE_DIR/update.sh" ] || chmod 0755 "$CACHE_DIR/update.sh"
 
 if [ "$NO_DEPS" -eq 1 ]; then
     SYSTUI_SKIP_DEPS=1 INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh"
