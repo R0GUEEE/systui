@@ -179,7 +179,10 @@ if declare -F rootfs_tar_create >/dev/null 2>&1 && ! declare -F _systui_base_roo
     eval "$(declare -f rootfs_tar_create | sed '1s/^rootfs_tar_create[[:space:]]*()/_systui_base_rootfs_tar_create ()/')"
 fi
 rootfs_tar_create() {
-    local fmt="$1" src="$2" out="$3"
+    local fmt="$1" src="$2" out="$3" pid rc=0 bytes=0
+    shift 3
+    local -a extra=("$@")
+
     if [ -x "$src/lib/systemd/systemd" ] || [ -x "$src/usr/lib/systemd/systemd" ]; then
         log "rootfs: verifying direct /sbin/init before packing $src"
         if [ ! -x "$src/sbin/init" ] || [ -L "$src/sbin/init" ] || ! grep -q '^REAL_SYSTEMD=' "$src/sbin/init" 2>/dev/null; then
@@ -187,8 +190,52 @@ rootfs_tar_create() {
         fi
         [ -x "$src/sbin/init" ] || return 1
         [ ! -L "$src/sbin/init" ] || return 1
+
+        # Never archive live pseudo-filesystems. Build/chroot helpers may leave
+        # proc, sysfs, devpts, /dev or /run mounted below the target on iSH-AOK;
+        # traversing those trees can make tar block indefinitely or produce an
+        # invalid rootfs archive. Keep the mountpoint directories themselves but
+        # exclude their runtime contents.
+        extra+=(
+            '--exclude=./proc/*'
+            '--exclude=./sys/*'
+            '--exclude=./dev/*'
+            '--exclude=./run/*'
+            '--exclude=./tmp/*'
+        )
+
+        rm -f -- "$out" 2>/dev/null || true
+        log "rootfs: packing systemd image with virtual filesystems excluded"
+
+        # Run compression in the background only so the foreground can report
+        # activity. This is especially important on iSH-AOK where gzip on a
+        # complete Ubuntu ARM64 tree can be slow enough to look frozen.
+        ( _systui_base_rootfs_tar_create "$fmt" "$src" "$out" "${extra[@]}" ) &
+        pid=$!
+        while kill -0 "$pid" 2>/dev/null; do
+            if [ -f "$out" ]; then
+                bytes=$(wc -c < "$out" 2>/dev/null || printf '0')
+                printf '>>> Packing rootfs: %s bytes written\n' "$bytes"
+            else
+                printf '>>> Packing rootfs: preparing archive...\n'
+            fi
+            sleep 5
+        done
+        if wait "$pid"; then
+            rc=0
+        else
+            rc=$?
+        fi
+        [ "$rc" -eq 0 ] || {
+            warn "Rootfs archive creation failed with status $rc"
+            return "$rc"
+        }
+        bytes=$(wc -c < "$out" 2>/dev/null || printf '0')
+        printf '>>> Rootfs archive complete: %s bytes\n' "$bytes"
+        return 0
     fi
-    _systui_base_rootfs_tar_create "$@"
+
+    _systui_base_rootfs_tar_create "$fmt" "$src" "$out" "${extra[@]}"
 }
 
 export -f rootfs_install_ish_systemd_compat rootfs_postconfig rootfs_tar_create
