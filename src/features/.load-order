@@ -22,3 +22,4 @@ zzzzzzzzzzzzzzzzz-rootfs-delete-no-confirm.sh
 zzzzzzzzzzzzzzzzzz-rootfs-unshare-probe.sh
 zzzzzzzzzzzzzzzzzzzz-apt-sources-unified-editor.sh
 zzzzzzzzzzzzzzzzzzzzz-mmdebstrap-no-unshare.sh
+zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
