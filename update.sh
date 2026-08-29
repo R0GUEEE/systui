@@ -1,19 +1,17 @@
 #!/usr/bin/env bash
 ###############################################################################
 # systui Update Script
-# Fetches the requested remote branch into a root-owned cache and reinstalls it.
-# The remote branch is authoritative: local cache changes are always discarded.
+# Replaces the local systui installation with a fresh copy of GitHub main.
 ###############################################################################
 
 set -Eeuo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr}"
 STATE_DIR="${SYSTUI_STATE_DIR:-/etc/systui}"
-REMOTE_FILE="$STATE_DIR/source-url"
-BRANCH_FILE="$STATE_DIR/source-branch"
 CACHE_DIR="${SYSTUI_UPDATE_CACHE:-/var/lib/systui/source}"
-FORCE=0
+LIB_DIR="$INSTALL_PREFIX/lib/systui"
+REPO_URL="https://github.com/R0GUEEE/systui.git"
+BRANCH="main"
 NO_DEPS=0
 
 usage() {
@@ -21,24 +19,27 @@ usage() {
 Usage: $0 [options]
 
 Options:
-  --force       Recreate the root-owned update cache before updating.
+  --force       Accepted for compatibility; updates are always full replacements.
   --no-deps     Skip dependency installation during reinstall.
   -h, --help    Show this help.
 
-Local modifications in the update cache are always discarded. The selected
-remote branch is authoritative and force-overwrites tracked and untracked files.
+Every update is a clean replacement from:
+  $REPO_URL
+  branch: $BRANCH
+
+Local source changes, cached files, recorded branches, and the previous installed
+systui library tree are discarded. GitHub main is authoritative.
 
 Environment overrides:
-  SYSTUI_REPO_URL      Git repository URL.
-  SYSTUI_BRANCH        Branch to update (default: recorded branch or main).
-  SYSTUI_UPDATE_CACHE  Root-owned clean checkout (default: /var/lib/systui/source).
+  SYSTUI_UPDATE_CACHE  Temporary clean checkout (default: /var/lib/systui/source).
   INSTALL_PREFIX       Installation prefix (default: /usr).
+  SYSTUI_STATE_DIR     State directory (default: /etc/systui).
 USAGE
 }
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --force) FORCE=1 ;;
+        --force) ;;
         --no-deps) NO_DEPS=1 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -48,80 +49,43 @@ done
 
 info() { printf '\033[0;34m[INFO]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[0;32m[OK]\033[0m %s\n' "$*"; }
-warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
 die()  { printf '\033[0;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
 command -v git >/dev/null 2>&1 || die "git is required to update systui."
 
 if [ "$(id -u)" -ne 0 ]; then
     args=("$0")
-    [ "$FORCE" -eq 1 ] && args+=(--force)
     [ "$NO_DEPS" -eq 1 ] && args+=(--no-deps)
     command -v sudo >/dev/null 2>&1 || die "Run this script as root."
-    exec sudo --preserve-env=SYSTUI_REPO_URL,SYSTUI_BRANCH,SYSTUI_UPDATE_CACHE,INSTALL_PREFIX,SYSTUI_STATE_DIR "${args[@]}"
+    exec sudo --preserve-env=SYSTUI_UPDATE_CACHE,INSTALL_PREFIX,SYSTUI_STATE_DIR "${args[@]}"
 fi
 
 mkdir -p "$STATE_DIR" "$(dirname "$CACHE_DIR")"
 chmod 0755 "$STATE_DIR" "$(dirname "$CACHE_DIR")" 2>/dev/null || true
 
-REPO_URL="${SYSTUI_REPO_URL:-}"
-if [ -z "$REPO_URL" ] && [ -r "$REMOTE_FILE" ]; then REPO_URL=$(cat "$REMOTE_FILE"); fi
-if [ -z "$REPO_URL" ] && git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    REPO_URL=$(git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)
-fi
-[ -n "$REPO_URL" ] || die "No repository URL is recorded. Set SYSTUI_REPO_URL or reinstall from a Git checkout."
-
-BRANCH="${SYSTUI_BRANCH:-}"
-if [ -z "$BRANCH" ] && [ -r "$BRANCH_FILE" ]; then BRANCH=$(cat "$BRANCH_FILE"); fi
-[ -n "$BRANCH" ] || BRANCH=main
-case "$BRANCH" in
-    -*|*..*|*~*|*^*|*:*|*\?*|*\**|*\[*|*\\*|*' '*) die "Unsafe branch name: $BRANCH" ;;
-esac
-
-if [ "$FORCE" -eq 1 ] && [ -e "$CACHE_DIR" ]; then
-    info "Recreating update cache: $CACHE_DIR"
-    rm -rf -- "$CACHE_DIR"
-fi
-
-# A stale/non-Git cache cannot be trusted. Replace it automatically because
-# systui-update's contract is to mirror the selected remote revision exactly.
-if [ -e "$CACHE_DIR" ] && [ ! -d "$CACHE_DIR/.git" ]; then
-    info "Replacing non-Git update cache: $CACHE_DIR"
-    rm -rf -- "$CACHE_DIR"
-fi
-if [ ! -d "$CACHE_DIR/.git" ]; then
-    info "Creating root-owned update cache..."
-    git clone --no-checkout -- "$REPO_URL" "$CACHE_DIR"
-fi
+info "Replacing update checkout with a fresh GitHub main clone..."
+rm -rf -- "$CACHE_DIR"
+git clone --depth 1 --single-branch --branch "$BRANCH" -- "$REPO_URL" "$CACHE_DIR"
 chown -R root:root "$CACHE_DIR"
 chmod go-w "$CACHE_DIR"
 
-git_cache() { git -C "$CACHE_DIR" "$@"; }
-info "Remote: $REPO_URL"
-info "Branch: $BRANCH"
-info "Cache:  $CACHE_DIR"
-git_cache remote set-url origin "$REPO_URL"
-
-# Discard all local tracked and untracked changes before doing anything that
-# may be blocked by a dirty checkout. Ignore reset failure for an unborn/no-HEAD
-# cache created with --no-checkout; fetch below establishes the target commit.
-git_cache reset --hard HEAD >/dev/null 2>&1 || true
-git_cache clean -fdx
-
-git_cache fetch --force --prune --tags origin "$BRANCH"
-
-# Force the local branch and worktree to exactly match the remote branch.
-# checkout -f handles tracked modifications; reset+clean make the result exact.
-git_cache checkout -f -B "$BRANCH" "origin/$BRANCH"
-git_cache reset --hard "origin/$BRANCH"
-git_cache clean -fdx
-
-git_cache ls-files --error-unmatch install.sh >/dev/null 2>&1 || die "Fetched revision does not track install.sh."
-[ -f "$CACHE_DIR/install.sh" ] || die "Fetched revision does not contain install.sh."
-TARGET_SHA=$(git_cache rev-parse --verify HEAD)
-info "Installing commit: $TARGET_SHA"
+[ -f "$CACHE_DIR/install.sh" ] || die "GitHub main does not contain install.sh."
 chmod 0755 "$CACHE_DIR/install.sh"
 [ ! -f "$CACHE_DIR/update.sh" ] || chmod 0755 "$CACHE_DIR/update.sh"
+
+TARGET_SHA=$(git -C "$CACHE_DIR" rev-parse --verify HEAD)
+info "Remote: $REPO_URL"
+info "Branch: $BRANCH"
+info "Commit: $TARGET_SHA"
+
+# The fresh checkout is separate from the installed tree, so it is safe to
+# remove the complete installed library before reinstalling. This prevents
+# stale feature files, deleted upstream files, or local modifications from
+# surviving an update.
+if [ -e "$LIB_DIR" ]; then
+    info "Removing previous systui installation tree: $LIB_DIR"
+    rm -rf -- "$LIB_DIR"
+fi
 
 if [ "$NO_DEPS" -eq 1 ]; then
     SYSTUI_SKIP_DEPS=1 INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh"
@@ -130,8 +94,9 @@ else
 fi
 
 printf '%s\n' "$CACHE_DIR" > "$STATE_DIR/source-dir"
-printf '%s\n' "$REPO_URL" > "$REMOTE_FILE"
-printf '%s\n' "$BRANCH" > "$BRANCH_FILE"
+printf '%s\n' "$REPO_URL" > "$STATE_DIR/source-url"
+printf '%s\n' "$BRANCH" > "$STATE_DIR/source-branch"
 printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/installed-commit"
-chmod 0644 "$STATE_DIR/source-dir" "$REMOTE_FILE" "$BRANCH_FILE" "$STATE_DIR/installed-commit"
-ok "systui updated and reinstalled successfully ($TARGET_SHA)."
+chmod 0644 "$STATE_DIR/source-dir" "$STATE_DIR/source-url" "$STATE_DIR/source-branch" "$STATE_DIR/installed-commit"
+
+ok "systui completely replaced with GitHub main ($TARGET_SHA)."
