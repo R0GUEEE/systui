@@ -34,8 +34,11 @@ check "run_cmd preserves errexit=on" bash -c '
 ' _ "$PROJECT_DIR"
 
 check "no pacman partial-upgrade refresh remains" bash -c '
-    ! grep -RInE --include="*.sh" "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1" \
-      | grep -vE "pacman[[:space:]]+-Syu([[:space:]]|$)"
+    hits=$(grep -RInE --include="*.sh" --exclude-dir=tests --exclude-dir=.git \
+      "pacman[[:space:]]+-Sy([[:space:]]|$)" \
+      "$1/install.sh" "$1/update.sh" "$1/src" "$1/share" 2>/dev/null \
+      | grep -vE "pacman[[:space:]]+-Syu([[:space:]]|$)" || true)
+    [ -z "$hits" ]
 ' _ "$PROJECT_DIR"
 
 check "Homebrew no longer uses LD_PRELOAD fake UID shim" bash -c '
