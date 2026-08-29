@@ -45,3 +45,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-mmdebstrap-ish-exec.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-clean-bootstrap-recovery.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ultimate-provision-apt-nonblocking.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ultimate-provision-apt-batches.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ultimate-provision-install-rescue.sh
