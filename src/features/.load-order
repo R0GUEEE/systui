@@ -3,6 +3,7 @@ rootfs.sh
 sysconfig.sh
 ultimate-provision.sh
 zz-rootfs-distro-managers.sh
+zz-rootfs-distro-manager-multiselect.sh
 zzz-bedrock-aok.sh
 zzzz-bedrock-aok-menu-fixes.sh
 zzzzz-bedrock-aok-ui-fixes.sh
