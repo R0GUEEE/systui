@@ -3,6 +3,55 @@
 # ROOTFS WORKBENCH — readiness-driven init repairs
 ###############################################################################
 
+# systemd package maintainer scripts require a functioning /proc and usually
+# /sys + /dev while dpkg configures the package. The generic Workbench mount
+# helper is deliberately best-effort for restricted kernels, and a non-zero
+# mount count does not prove that /proc itself is mounted. Verify each required
+# tree here and fall back to bind-mounting the host virtual filesystem, which is
+# more reliable on iSH-AOK than creating a fresh proc/sysfs instance.
+rootfs_wb_init_mount_required() { # <target>
+    local t="$1" mp src
+    ROOTFS_INIT_TEMP_MOUNTS=""
+    mkdir -p "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/run" "$t/tmp" || return 1
+
+    for mp in proc sys dev dev/pts; do
+        mountpoint -q "$t/$mp" 2>/dev/null && continue
+        src="/$mp"
+        case "$mp" in
+            proc)
+                mount -t proc proc "$t/proc" 2>>"$LOGFILE" || \
+                    mount --bind /proc "$t/proc" 2>>"$LOGFILE" || return 1
+                ;;
+            sys)
+                mount -t sysfs sysfs "$t/sys" 2>>"$LOGFILE" || \
+                    mount --bind /sys "$t/sys" 2>>"$LOGFILE" || return 1
+                ;;
+            dev|dev/pts)
+                [ -e "$src" ] || return 1
+                mount --bind "$src" "$t/$mp" 2>>"$LOGFILE" || return 1
+                ;;
+        esac
+        ROOTFS_INIT_TEMP_MOUNTS="$t/$mp $ROOTFS_INIT_TEMP_MOUNTS"
+    done
+
+    # Do not trust mount(8)'s exit status alone. systemd checks procfs semantics,
+    # so verify a proc-only path that must exist when /proc is usable.
+    [ -r "$t/proc/self/status" ] || {
+        warn "Init repair requires a mounted procfs, but $t/proc is not usable"
+        rootfs_wb_init_unmount_required
+        return 1
+    }
+    return 0
+}
+
+rootfs_wb_init_unmount_required() {
+    local mp
+    for mp in ${ROOTFS_INIT_TEMP_MOUNTS:-}; do
+        umount "$mp" 2>>"$LOGFILE" || umount -l "$mp" 2>>"$LOGFILE" || true
+    done
+    ROOTFS_INIT_TEMP_MOUNTS=""
+}
+
 rootfs_wb_ish_systemd_target() { # <target>
     local t="$1"
     { [ -x "$t/lib/systemd/systemd" ] || [ -x "$t/usr/lib/systemd/systemd" ]; } && return 0
@@ -18,7 +67,7 @@ rootfs_wb_ish_reinstall_systemd_init() { # <target>
     local t="$1" rc=0
     [ -r "$t/var/lib/dpkg/status" ] || return 1
     rootfs_wb_ish_fix_dirs "$t" || return 1
-    [ "$(rootfs_wb_mount_count "$t" 2>/dev/null || echo 0)" -gt 0 ] || rootfs_wb_mount_persistent "$t" || return 1
+    rootfs_wb_init_mount_required "$t" || return 1
 
     declare -F rootfs_ish_activate_gnu_coreutils >/dev/null 2>&1 && \
         rootfs_ish_activate_gnu_coreutils "$t" >/dev/null 2>&1 || true
@@ -36,6 +85,7 @@ rootfs_wb_ish_reinstall_systemd_init() { # <target>
             apt-get install --reinstall -y systemd systemd-sysv
         fi
     ' || rc=$?
+    rootfs_wb_init_unmount_required
     [ "$rc" -eq 0 ] || return "$rc"
 
     if declare -F rootfs_install_ish_systemd_compat >/dev/null 2>&1; then
@@ -46,22 +96,26 @@ rootfs_wb_ish_reinstall_systemd_init() { # <target>
 }
 
 rootfs_wb_ish_reinstall_runit_init() { # <target>
-    local t="$1"
+    local t="$1" rc=0
     [ -r "$t/var/lib/dpkg/status" ] || return 1
     rootfs_wb_ish_fix_dirs "$t" || return 1
-    [ "$(rootfs_wb_mount_count "$t" 2>/dev/null || echo 0)" -gt 0 ] || rootfs_wb_mount_persistent "$t" || return 1
-    in_chroot "$t" sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get -f install -y && apt-get install --reinstall -y runit runit-services' || return $?
+    rootfs_wb_init_mount_required "$t" || return 1
+    in_chroot "$t" sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get -f install -y && apt-get install --reinstall -y runit runit-services' || rc=$?
+    rootfs_wb_init_unmount_required
+    [ "$rc" -eq 0 ] || return "$rc"
     [ -x "$t/usr/sbin/runit" ] || return 1
     rm -f "$t/sbin/init"
     ln -s ../usr/sbin/runit "$t/sbin/init"
 }
 
 rootfs_wb_ish_reinstall_openrc_init() { # <target>
-    local t="$1"
+    local t="$1" rc=0
     [ -r "$t/var/lib/dpkg/status" ] || return 1
     rootfs_wb_ish_fix_dirs "$t" || return 1
-    [ "$(rootfs_wb_mount_count "$t" 2>/dev/null || echo 0)" -gt 0 ] || rootfs_wb_mount_persistent "$t" || return 1
-    in_chroot "$t" sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get -f install -y && apt-get install --reinstall -y openrc' || return $?
+    rootfs_wb_init_mount_required "$t" || return 1
+    in_chroot "$t" sh -c 'export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get -f install -y && apt-get install --reinstall -y openrc' || rc=$?
+    rootfs_wb_init_unmount_required
+    [ "$rc" -eq 0 ] || return "$rc"
     [ -x "$t/sbin/openrc-init" ] || return 1
     rm -f "$t/sbin/init"
     ln -s openrc-init "$t/sbin/init"
@@ -126,6 +180,7 @@ rootfs_wb_ish_apply_repair() { # <target> <tag>
     esac
 }
 
-export -f rootfs_wb_ish_systemd_target rootfs_wb_ish_reinstall_systemd_init \
+export -f rootfs_wb_init_mount_required rootfs_wb_init_unmount_required \
+    rootfs_wb_ish_systemd_target rootfs_wb_ish_reinstall_systemd_init \
     rootfs_wb_ish_reinstall_runit_init rootfs_wb_ish_reinstall_openrc_init \
     rootfs_wb_ish_repair_choices rootfs_wb_ish_apply_repair
