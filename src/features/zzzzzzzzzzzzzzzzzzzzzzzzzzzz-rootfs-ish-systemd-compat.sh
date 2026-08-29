@@ -38,6 +38,7 @@ rootfs_install_ish_systemd_compat() { # <target>
     cat > "$t/usr/local/sbin/systui-ish-init" <<EOF
 #!/bin/sh
 REAL_SYSTEMD='$real_systemd'
+
 is_ish_kernel() {
     v=''
     [ -r /proc/version ] && IFS= read -r v < /proc/version 2>/dev/null || true
@@ -45,32 +46,59 @@ is_ish_kernel() {
     [ -e /proc/ish ] && return 0
     return 1
 }
-if ! is_ish_kernel; then exec "\$REAL_SYSTEMD" "\$@"; fi
+
+# Some launchers explicitly ask init for a session shell. Never run the PID 1
+# supervisor in that case; hand the caller a normal Bash session immediately.
+case "\${1:-}" in
+    shell|session-shell|--shell|--session-shell)
+        shift
+        if [ -x /bin/bash ]; then exec /bin/bash "\$@"; fi
+        exec /bin/sh "\$@"
+        ;;
+esac
+
+if ! is_ish_kernel; then
+    exec "\$REAL_SYSTEMD" "\$@"
+fi
+
 export container=ish-aok SYSTEMD_IN_CHROOT=1 SYSTEMD_IGNORE_CHROOT=1
 export SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=warning
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 mkdir -p /run /run/lock /tmp /proc /sys /dev /dev/pts 2>/dev/null || true
 chmod 1777 /tmp 2>/dev/null || true
+
 if command -v mountpoint >/dev/null 2>&1; then
     mountpoint -q /proc 2>/dev/null || mount -t proc proc /proc 2>/dev/null || true
     mountpoint -q /sys 2>/dev/null || mount -t sysfs sysfs /sys 2>/dev/null || true
     mountpoint -q /dev/pts 2>/dev/null || mount -t devpts devpts /dev/pts 2>/dev/null || true
 fi
+
 [ -e /etc/machine-id ] || : > /etc/machine-id
 [ -s /etc/machine-id ] || {
     command -v systemd-machine-id-setup >/dev/null 2>&1 && systemd-machine-id-setup >/dev/null 2>&1 || true
 }
+
 host_name=''
 [ -r /etc/hostname ] && IFS= read -r host_name < /etc/hostname 2>/dev/null || true
 [ -n "\$host_name" ] && hostname "\$host_name" 2>/dev/null || true
-for script in /etc/init.d/rcS /etc/rc.local; do [ -x "\$script" ] && "\$script" >/dev/console 2>&1 || true; done
-for svc in dbus cron crond rsyslog ssh sshd networking network-manager; do
-    [ -x "/etc/init.d/\$svc" ] && "/etc/init.d/\$svc" start >/dev/console 2>&1 || true
+
+# Do not let a slow or incompatible init script block PID 1 startup. iSH-AOK
+# launches the user session shell separately, so compatibility services run in
+# the background and init remains a quiet supervisor.
+for script in /etc/init.d/rcS /etc/rc.local; do
+    [ -x "\$script" ] && "\$script" >/dev/console 2>&1 &
 done
+for svc in dbus cron crond rsyslog ssh sshd networking network-manager; do
+    [ -x "/etc/init.d/\$svc" ] && "/etc/init.d/\$svc" start >/dev/console 2>&1 &
+done
+
+# Reap children and stay alive as PID 1 without opening or owning an interactive
+# terminal. This is the key difference from the old compatibility layer, which
+# launched Bash here and prevented iSH-AOK from starting its session shell.
+trap 'exit 0' TERM INT HUP
 while :; do
-    if [ -x /bin/bash ]; then /bin/bash --noprofile --norc; else /bin/sh; fi
-    rc=\$?
-    echo "iSH compatibility shell exited with status \$rc; restarting." >/dev/console 2>/dev/null || true
+    wait 2>/dev/null || true
     sleep 1
 done
 EOF
@@ -98,7 +126,8 @@ EOF
 ENABLED=yes
 REAL_SYSTEMD=$real_systemd
 MODE=auto
-DESCRIPTION=Use real systemd on normal Linux and the systui iSH PID1 compatibility supervisor on iSH-AOK.
+SESSION_SHELL=/bin/bash
+DESCRIPTION=Use real systemd on normal Linux and a non-interactive PID1 compatibility supervisor on iSH-AOK.
 EOF
 
     mkdir -p "$t/etc/profile.d"
