@@ -33,3 +33,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-engines.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-existing-repair.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-ubuntu-gnu-coreutils.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-osc-compat.sh
