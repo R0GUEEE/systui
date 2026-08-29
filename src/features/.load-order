@@ -29,3 +29,4 @@ zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzz-common-openssh.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-engines.sh
