@@ -3,33 +3,24 @@
 # ROOTFS BUILDER — iSH-AOK systemd shell/procfs compatibility
 ###############################################################################
 
-rootfs_ish_patch_systemd_osc_profile() { # <target>
-    local t="$1" profile tmp
+rootfs_ish_disable_systemd_osc_profile() { # <target>
+    local t="$1" active="$1/etc/profile.d/80-systemd-osc-context.sh"
 
-    for profile in \
-        "$t/usr/lib/profile.d/80-systemd-osc-context.sh" \
-        "$t/etc/profile.d/80-systemd-osc-context.sh"
-    do
-        [ -f "$profile" ] || continue
-        grep -q 'SYSTUI_ISH_OSC_PROCFS_GUARD' "$profile" 2>/dev/null && continue
+    # systemd installs the OSC profile under /usr/lib/systemd/profile.d and
+    # activates it through systemd-tmpfiles as /etc/profile.d/80-systemd-osc-context.sh.
+    # iSH-AOK does not expose /proc/sys/kernel/random/{uuid,boot_id}, so disable
+    # only this optional shell integration using systemd's documented mask.
+    mkdir -p "$t/etc/profile.d" "$t/etc/tmpfiles.d" || return 1
 
-        tmp="$profile.systui-tmp.$$"
-        {
-            cat <<'EOF'
-# SYSTUI_ISH_OSC_PROCFS_GUARD
-# systemd's OSC shell integration expects Linux procfs UUID interfaces that
-# iSH-AOK does not implement. Disable only this optional prompt integration
-# when those interfaces are absent; normal Linux kernels continue unchanged.
-if [ ! -r /proc/sys/kernel/random/uuid ] || [ ! -r /proc/sys/kernel/random/boot_id ]; then
-    return 0 2>/dev/null || exit 0
-fi
-EOF
-            cat "$profile"
-        } > "$tmp" || { rm -f "$tmp"; return 1; }
-        cat "$tmp" > "$profile" || { rm -f "$tmp"; return 1; }
-        rm -f "$tmp"
-        log "rootfs: guarded systemd OSC procfs probes for iSH-AOK in $profile"
-    done
+    # Remove an existing active symlink/file so Bash cannot source it on the
+    # next Workbench entry. Do not modify the vendor copy under /usr/lib.
+    rm -f -- "$active" || return 1
+
+    # Prevent systemd-tmpfiles from recreating the profile link later.
+    rm -f -- "$t/etc/tmpfiles.d/20-systemd-osc-context.conf" 2>/dev/null || true
+    ln -s /dev/null "$t/etc/tmpfiles.d/20-systemd-osc-context.conf" || return 1
+
+    log "rootfs: disabled unsupported systemd OSC shell integration for iSH-AOK"
 }
 
 rootfs_ish_install_proc_random_cat() { # <target>
@@ -121,8 +112,8 @@ rootfs_install_ish_systemd_compat() {
     _systui_base_rootfs_install_ish_systemd_compat_osc "$@" || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
 
-    rootfs_ish_patch_systemd_osc_profile "$t" || {
-        warn "Could not install the iSH-AOK systemd OSC procfs compatibility guard."
+    rootfs_ish_disable_systemd_osc_profile "$t" || {
+        warn "Could not disable unsupported systemd OSC shell integration for iSH-AOK."
         return 1
     }
     rootfs_ish_install_proc_random_cat "$t" || {
@@ -131,5 +122,5 @@ rootfs_install_ish_systemd_compat() {
     }
 }
 
-export -f rootfs_ish_patch_systemd_osc_profile rootfs_ish_install_proc_random_cat \
+export -f rootfs_ish_disable_systemd_osc_profile rootfs_ish_install_proc_random_cat \
     rootfs_install_ish_systemd_compat
