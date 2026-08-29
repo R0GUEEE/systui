@@ -7,8 +7,8 @@
 # iSH-AOK cannot run those service starts normally. Wrap the normal Debian
 # package installer so package configuration happens with the rootfs virtual
 # filesystems prepared and service starts suppressed. If the install itself
-# returns non-zero after unpacking, retry dpkg configuration once before
-# declaring the package stage failed.
+# returns non-zero after unpacking, repair the runtime scaffolding and retry
+# pending dpkg configuration before declaring the package stage failed.
 ###############################################################################
 
 _rootfs_ish_host() {
@@ -38,9 +38,72 @@ EOF
     printf '1\n'
 }
 
+_rootfs_ish_pkg_policy_force() { # <target>
+    local p="$1/usr/sbin/policy-rc.d"
+    mkdir -p "$1/usr/sbin" || return 1
+    cat >"$p" <<'EOF'
+#!/bin/sh
+exit 101
+EOF
+    chmod 0755 "$p"
+}
+
 _rootfs_ish_pkg_policy_cleanup() { # <target> <created>
     [ "${2:-0}" = 1 ] || return 0
     rm -f -- "$1/usr/sbin/policy-rc.d" 2>/dev/null || true
+}
+
+_rootfs_ish_pkg_runtime_prepare() { # <target>
+    local t="$1" mid
+    mkdir -p "$t/run" "$t/run/dbus" "$t/run/systemd" "$t/run/sshd" \
+             "$t/var/lib/dbus" "$t/etc" "$t/tmp" || return 1
+
+    # systemd/dbus maintainer scripts expect a stable machine-id. Do not invoke
+    # systemd-machine-id-setup here: on iSH it may probe kernel facilities that
+    # are incomplete. Generate a valid 32-hex identifier if one is absent.
+    if [ ! -s "$t/etc/machine-id" ]; then
+        if command -v od >/dev/null 2>&1 && [ -r /dev/urandom ]; then
+            mid=$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')
+        else
+            mid=$(printf '%032x' "$$" 2>/dev/null || true)
+        fi
+        case "$mid" in
+           ????????????????????????????????) printf '%s\n' "$mid" >"$t/etc/machine-id" ;;
+            *) printf '00000000000000000000000000000001\n' >"$t/etc/machine-id" ;;
+        esac
+        chmod 0444 "$t/etc/machine-id" 2>/dev/null || true
+    fi
+
+    if [ ! -e "$t/var/lib/dbus/machine-id" ]; then
+        ln -s /etc/machine-id "$t/var/lib/dbus/machine-id" 2>/dev/null || \
+            cp -f "$t/etc/machine-id" "$t/var/lib/dbus/machine-id" 2>/dev/null || true
+    fi
+
+    # Debian treats /var/run as /run. Minimal bootstrap trees can lack it.
+    if [ ! -e "$t/var/run" ]; then
+        ln -s /run "$t/var/run" 2>/dev/null || mkdir -p "$t/var/run"
+    fi
+    return 0
+}
+
+_rootfs_ish_pkg_repair() { # <target>
+    local t="$1"
+
+    # The base installer creates and then unconditionally removes policy-rc.d.
+    # Recreate it before *every* recovery pass so postinst scripts cannot start
+    # systemd, dbus, sshd, cron, or other daemons inside iSH/chroot.
+    _rootfs_ish_pkg_policy_force "$t" || return 1
+    _rootfs_ish_pkg_runtime_prepare "$t" || return 1
+
+    if declare -F rootfs_chroot_exec >/dev/null 2>&1; then
+        rootfs_chroot_exec "$t" "Repair iSH package configuration" \
+            "export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 SYSTEMD_IGNORE_CHROOT=1; mkdir -p /run/dbus /run/systemd /run/sshd /var/lib/dbus; dpkg --configure -a; rc=\$?; [ \$rc -eq 0 ] || true; apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confold -f install -y; apt_rc=\$?; dpkg --configure -a; final_rc=\$?; [ \$final_rc -eq 0 ] && [ \$apt_rc -eq 0 ]"
+        return $?
+    fi
+
+    command -v chroot >/dev/null 2>&1 || return 1
+    chroot "$t" /bin/sh -c \
+        'export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 SYSTEMD_IGNORE_CHROOT=1; mkdir -p /run/dbus /run/systemd /run/sshd /var/lib/dbus; dpkg --configure -a || true; apt-get -o Dpkg::Use-Pty=0 -o Dpkg::Options::=--force-confold -f install -y || exit $?; dpkg --configure -a'
 }
 
 if declare -F rootfs_install_deb_packages >/dev/null 2>&1 && \
@@ -70,29 +133,22 @@ rootfs_install_deb_packages() { # <target> <space-separated packages>
         fi
     fi
 
+    _rootfs_ish_pkg_runtime_prepare "$t" || warn "rootfs: could not fully prepare package runtime directories"
     policy_created=$(_rootfs_ish_pkg_policy_prepare "$t" 2>/dev/null || echo 0)
 
     # The underlying installer performs the requested apt install normally.
-    # Service startup is blocked by policy-rc.d while package files and service
-    # definitions are still installed as usual.
-    if SYSTEMD_OFFLINE=1 DEBIAN_FRONTEND=noninteractive \
+    if SYSTEMD_OFFLINE=1 SYSTEMD_IN_CHROOT=1 SYSTEMD_IGNORE_CHROOT=1 \
+       DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true \
         _systui_base_rootfs_install_deb_packages_ishpkg "$t" "$pkgs"; then
         rc=0
     else
         rc=$?
-        warn "rootfs: package install returned $rc; retrying pending dpkg configuration in iSH-safe mode"
+        warn "rootfs: package install returned $rc; repairing pending systemd/dbus/sshd package configuration"
 
-        # Most failures at this point are postinst failures after packages were
-        # already unpacked. Give dpkg one deterministic recovery pass while the
-        # virtual filesystems and policy-rc.d guard are still active.
-        if declare -F rootfs_chroot_exec >/dev/null 2>&1; then
-            if rootfs_chroot_exec "$t" "Repair iSH package configuration" \
-                "export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true SYSTEMD_OFFLINE=1; dpkg --configure -a && apt-get -f install -y"; then
-                rc=0
-            fi
-        elif command -v chroot >/dev/null 2>&1; then
-            chroot "$t" /bin/sh -c \
-                'export DEBIAN_FRONTEND=noninteractive DEBCONF_NONINTERACTIVE_SEEN=true SYSTEMD_OFFLINE=1; dpkg --configure -a && apt-get -f install -y' && rc=0
+        # The base installer removes policy-rc.d on return, so recreate the
+        # service guard here before retrying any maintainer scripts.
+        if _rootfs_ish_pkg_repair "$t"; then
+            rc=0
         fi
     fi
 
@@ -105,4 +161,6 @@ rootfs_install_deb_packages() { # <target> <space-separated packages>
     return "$rc"
 }
 
-export -f _rootfs_ish_host _rootfs_ish_pkg_policy_prepare _rootfs_ish_pkg_policy_cleanup rootfs_install_deb_packages
+export -f _rootfs_ish_host _rootfs_ish_pkg_policy_prepare _rootfs_ish_pkg_policy_force \
+    _rootfs_ish_pkg_policy_cleanup _rootfs_ish_pkg_runtime_prepare _rootfs_ish_pkg_repair \
+    rootfs_install_deb_packages
