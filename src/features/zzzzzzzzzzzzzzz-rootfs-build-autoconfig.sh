@@ -38,7 +38,7 @@ rootfs_target_collision_resolve() { # <distro> <release> <arch> <initial-target>
                 rootfs_rm_tree "$target" || { tui_msg "Overwrite failed" "Could not remove the existing rootfs:\n$target"; return 1; }
                 break ;;
             rename)
-                name=$(tui_input "Rootfs name" "Name under $ROOTFS_BASE:" "${distro}-${release}-${arch}-2") || return 1
+                name=$(_systui_base_tui_input "Rootfs name" "Name under $ROOTFS_BASE:" "${distro}-${release}-${arch}-2") || return 1
                 [ -n "$name" ] || continue
                 valid_safe_name "$name" || { tui_msg "Invalid name" "Use letters, numbers, dots, underscores and hyphens only."; continue; }
                 target="$ROOTFS_BASE/$name" ;;
@@ -48,15 +48,15 @@ rootfs_target_collision_resolve() { # <distro> <release> <arch> <initial-target>
     printf '%s\n' "$target"
 }
 
-# Capture the original builder once, changing only its function name.  No body
+# Capture the original builder once, changing only its function name. No body
 # transformation is performed, so sourcing this feature cannot expose or run
 # wizard statements at top level.
 if declare -F rootfs_builder_impl >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_builder_impl >/dev/null 2>&1; then
     eval "$(declare -f rootfs_builder_impl | sed '1s/^rootfs_builder_impl[[:space:]]*()/_systui_base_rootfs_builder_impl ()/')"
 fi
 
-# Save the small UI helpers used by the builder so the wrapper can auto-answer
-# deterministic steps only while a rootfs build is actually running.
+# Save the UI helpers used by the builder. The wrappers below only auto-answer
+# them while rootfs_builder_impl is active.
 for _systui_ui_fn in tui_input tui_password tui_yesno tui_check tui_radio; do
     if declare -F "$_systui_ui_fn" >/dev/null 2>&1 && ! declare -F "_systui_base_${_systui_ui_fn}" >/dev/null 2>&1; then
         eval "$(declare -f "$_systui_ui_fn" | sed "1s/^${_systui_ui_fn}[[:space:]]*()/_systui_base_${_systui_ui_fn} ()/")"
@@ -64,13 +64,16 @@ for _systui_ui_fn in tui_input tui_password tui_yesno tui_check tui_radio; do
 done
 unset _systui_ui_fn
 
-# These wrappers delegate normally unless rootfs_builder_impl set the private
-# build flag. Bash dynamic scoping lets the wrappers see the builder's local
-# distro/def_mirror variables without exporting or persisting them.
+# Bash dynamic scoping lets these helpers see the builder's local distro,
+# release, arch, and def_mirror variables without exporting persistent state.
 tui_input() {
     if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
         case "${1:-}" in
             "Rootfs Builder 7/13") printf '%s\n' "${def_mirror:-${3:-}}"; return 0 ;;
+            "Rootfs Builder 8/13")
+                rootfs_target_collision_resolve "${distro:-rootfs}" "${release:-current}" "${arch:-unknown}" "${3:-$ROOTFS_BASE/rootfs}"
+                return $?
+                ;;
             "Rootfs Builder 9/13") printf '%s-iSH\n' "${distro^}"; return 0 ;;
             User) printf 'ish\n'; return 0 ;;
             Timezone) printf 'UTC\n'; return 0 ;;
@@ -112,14 +115,13 @@ tui_radio() {
     _systui_base_tui_radio "$@"
 }
 
-# The backend and package catalogue are derived automatically only during the
-# guided build. Save their originals for all other callers.
-if declare -F rootfs_backend_menu >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_backend_menu >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_backend_menu | sed '1s/^rootfs_backend_menu[[:space:]]*()/_systui_base_rootfs_backend_menu ()/')"
-fi
-if declare -F rootfs_package_catalog >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_package_catalog >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_package_catalog | sed '1s/^rootfs_package_catalog[[:space:]]*()/_systui_base_rootfs_package_catalog ()/')"
-fi
+# Backend/config/package choices are automatic only in the guided builder.
+for _systui_rootfs_fn in rootfs_backend_menu rootfs_backend_config_menu rootfs_package_catalog; do
+    if declare -F "$_systui_rootfs_fn" >/dev/null 2>&1 && ! declare -F "_systui_base_${_systui_rootfs_fn}" >/dev/null 2>&1; then
+        eval "$(declare -f "$_systui_rootfs_fn" | sed "1s/^${_systui_rootfs_fn}[[:space:]]*()/_systui_base_${_systui_rootfs_fn} ()/")"
+    fi
+done
+unset _systui_rootfs_fn
 
 rootfs_backend_menu() {
     if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
@@ -127,6 +129,14 @@ rootfs_backend_menu() {
     else
         _systui_base_rootfs_backend_menu "$@"
     fi
+}
+
+rootfs_backend_config_menu() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
+        rootfs_backend_auto_optimize "$1" "$2"
+        return 0
+    fi
+    _systui_base_rootfs_backend_config_menu "$@"
 }
 
 rootfs_package_catalog() {
