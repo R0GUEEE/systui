@@ -19,15 +19,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "$(git log -1 --pretty=%s)" != "chore: patch scanner menu via CI" ]; then
+          if [ "$(git log -1 --pretty=%s)" != "chore: patch scanner menu via CI v2" ]; then
             exit 0
           fi
           python3 - <<'PY'
           from pathlib import Path
           p = Path('src/features/sysconfig.sh')
           s = p.read_text()
-          menu = '            scanner "Scanner" ' + chr(92) + chr(10)
-          dispatch = '            scanner)    menu_scanner ;;' + chr(10)
+          menu = '            scanner     "Scanner (system reports, package & file queries)" ' + chr(92) + chr(10)
+          dispatch = '            scanner)     menu_scanner ;;' + chr(10)
           if s.count(menu) != 1:
               raise SystemExit(f'expected exactly one scanner menu entry, found {s.count(menu)}')
           if s.count(dispatch) != 1:
@@ -37,8 +37,8 @@ jobs:
           git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
           rm -f .github/workflows/temp-remove-scanner-menu.yml
           bash -n src/features/sysconfig.sh
-          ! grep -F '            scanner "Scanner" \' src/features/sysconfig.sh
-          ! grep -F '            scanner)    menu_scanner ;;' src/features/sysconfig.sh
+          ! grep -F 'scanner     "Scanner (system reports, package & file queries)"' src/features/sysconfig.sh
+          ! grep -F 'scanner)     menu_scanner ;;' src/features/sysconfig.sh
           git config user.name github-actions[bot]
           git config user.email 41898282+github-actions[bot]@users.noreply.github.com
           git add src/features/sysconfig.sh .github/workflows/ci.yml .github/workflows/temp-remove-scanner-menu.yml
