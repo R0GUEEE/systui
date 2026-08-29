@@ -108,6 +108,10 @@ bedrock_bootstrap_locations() { # <tag>
         [ -n "$st" ] || continue
         bedrock_bootstrap_stratum_has "$st" "$tag" && printf '%s\n' "$st"
     done <<< "$(bedrock_bootstrap_strata)"
+
+    # A later non-matching stratum must not turn a successful scan into a
+    # failure after earlier matches have already been printed.
+    return 0
 }
 
 # Host/native detection remains authoritative.  Only when it misses do we scan

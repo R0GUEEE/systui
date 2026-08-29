@@ -256,6 +256,18 @@ check "apk key seeding no longer uses the BusyBox-unsafe wildcard fetch" not_con
 check "build_alpine fails loudly on unknown host arch" contains \
     "$PROJECT_DIR/src/features/rootfs.sh" "Unknown host architecture"
 
+# Rootfs build preset and bootstrap multi-install behavior
+check "rootfs builder no longer prompts for a build preset" not_contains \
+    "$PROJECT_DIR/src/features/rootfs.sh" "Build preset (SPACE to select):"
+check "rootfs builder automatically uses the minimal preset" contains \
+    "$PROJECT_DIR/src/features/rootfs.sh" "preset=minimal"
+check "bootstrap menu exposes multi-select installation" contains \
+    "$PROJECT_DIR/src/features/rootfs.sh" "Install multiple bootstrap tools (SPACE to select)"
+check "bootstrap multi-install uses tui_check" contains \
+    "$PROJECT_DIR/src/features/rootfs.sh" 'tui_check "Install bootstrap tools"'
+check "bootstrap multi-install uses Bedrock-aware installed detection" contains \
+    "$PROJECT_DIR/src/features/rootfs.sh" 'if rootfs_bs_installed "$_tag"; then'
+
 # Rootfs bootstrap tools menu checks
 check "menu_rootfs_bootstrap_tools function exists" function_exists menu_rootfs_bootstrap_tools
 check "bootstrap tools menu wired into menu_rootfs" contains \
