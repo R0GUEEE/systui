@@ -500,9 +500,9 @@ sysctl_key_has_one_owner() {
     [ "$(sysctl_owners_of "$1" | wc -l)" -le 1 ]
 }
 
-# The Scanner feature was defined but unreachable from any menu.
-check "Scanner is reachable from System Configuration" contains "$SYSCFG" 'scanner)     menu_scanner'
-check "Scanner has a System Configuration entry"       contains "$SYSCFG" 'scanner     "Scanner'
+# Scanner is intentionally removed from the System Configuration menu.
+check "Scanner is not reachable from System Configuration" lacks "$SYSCFG" 'scanner)     menu_scanner'
+check "Scanner has no System Configuration entry"       lacks "$SYSCFG" 'scanner     "Scanner'
 
 # menu_pm_config duplicated Package Managers and was never called.
 check "dead menu_pm_config is gone"                    lacks "$SYSCFG" 'menu_pm_config() {'
