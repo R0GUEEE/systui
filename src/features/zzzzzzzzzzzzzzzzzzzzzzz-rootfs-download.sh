@@ -99,8 +99,6 @@ rootfs_download_unpack() { # <archive.tar.gz> <target-dir>
     return 1
 }
 
-# List archives stored directly under ROOTFS_BASE. The tag is the full path so
-# the selection is unambiguous while the description stays compact.
 rootfs_wb_archive_menu() { # -> selected archive path
     local base="${ROOTFS_BASE:-/opt/rootfs}" f size
     local -a items=()
@@ -110,14 +108,10 @@ rootfs_wb_archive_menu() { # -> selected archive path
         size=$(du -h "$f" 2>/dev/null | awk '{print $1}')
         items+=("$f" "$(basename "$f")${size:+  [$size]}")
     done < <(find "$base" -maxdepth 1 -type f \( -name '*.tar.gz' -o -name '*.tgz' -o -name '*.tar.xz' -o -name '*.tar.zst' -o -name '*.tar' \) -print 2>/dev/null | sort)
-    if [ ${#items[@]} -eq 0 ]; then
-        tui_msg "No tarballs" "No rootfs tarballs were found in:\n$base"
-        return 1
-    fi
+    if [ ${#items[@]} -eq 0 ]; then tui_msg "No tarballs" "No rootfs tarballs were found in:\n$base"; return 1; fi
     tui_menu_no_tags "Unpack rootfs" "Select a tarball from $base:" "${items[@]}"
 }
 
-# Workbench unpack now scans ROOTFS_BASE instead of asking for an archive path.
 rootfs_wb_unpack() { # -> prints the new rootfs directory, or nothing
     local src dst default_name
     src=$(rootfs_wb_archive_menu) || return 1
@@ -132,24 +126,15 @@ rootfs_wb_unpack() { # -> prints the new rootfs directory, or nothing
     esac
     dst=$(tui_input "Unpack rootfs" "Extract into (must be empty or new):" "${ROOTFS_BASE:-/opt/rootfs}/$default_name") || return 1
     [ -n "$dst" ] || return 1
-    if [ -e "$dst" ] && [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then
-        tui_msg "Destination not empty" "$dst already contains files. Choose an empty or new directory."
-        return 1
-    fi
+    if [ -e "$dst" ] && [ -n "$(ls -A "$dst" 2>/dev/null)" ]; then tui_msg "Destination not empty" "$dst already contains files. Choose an empty or new directory."; return 1; fi
     mkdir -p "$dst" || return 1
     case "$src" in
         *.tar.gz|*.tgz) run_cmd "Unpacking $(basename "$src")" tar -xzf "$src" -C "$dst" ;;
         *.tar.xz) run_cmd "Unpacking $(basename "$src")" tar -xJf "$src" -C "$dst" ;;
         *.tar.zst)
-            if tar --help 2>&1 | grep -q -- '--zstd'; then
-                run_cmd "Unpacking $(basename "$src")" tar --zstd -xf "$src" -C "$dst"
-            elif command -v zstd >/dev/null 2>&1; then
-                run_cmd "Unpacking $(basename "$src")" sh -c 'zstd -dc "$1" | tar -xf - -C "$2"' _ "$src" "$dst"
-            else
-                tui_msg "Missing zstd" "Install zstd to unpack $(basename "$src")."
-                rootfs_rm_tree "$dst" 2>/dev/null || true
-                return 1
-            fi ;;
+            if tar --help 2>&1 | grep -q -- '--zstd'; then run_cmd "Unpacking $(basename "$src")" tar --zstd -xf "$src" -C "$dst"
+            elif command -v zstd >/dev/null 2>&1; then run_cmd "Unpacking $(basename "$src")" sh -c 'zstd -dc "$1" | tar -xf - -C "$2"' _ "$src" "$dst"
+            else tui_msg "Missing zstd" "Install zstd to unpack $(basename "$src")."; rootfs_rm_tree "$dst" 2>/dev/null || true; return 1; fi ;;
         *.tar) run_cmd "Unpacking $(basename "$src")" tar -xf "$src" -C "$dst" ;;
     esac || { rootfs_rm_tree "$dst" 2>/dev/null || true; return 1; }
     printf '%s\n' "$(rootfs_wb_abspath "$dst")"
@@ -174,11 +159,25 @@ rootfs_download() {
     fi
 }
 
+# Rootfs management is consolidated in the Workbench; no separate Manage entry.
 menu_rootfs() {
     while true; do
         local c
-        c=$(tui_menu "Rootfs" "Mini root filesystems:" build "Build a new rootfs (guided)" download "Download a prebuilt rootfs (always tar.gz)" manage "Manage existing rootfs directories" workbench "Chroot workbench" bootstrap "Bootstrap tools" distros "Distro managers" back "Back") || return 0
+        c=$(tui_menu "Rootfs" "Mini root filesystems:" \
+            build "Build a new rootfs (guided)" \
+            download "Download a prebuilt rootfs (always tar.gz)" \
+            workbench "Chroot workbench (manage rootfs)" \
+            bootstrap "Bootstrap tools" \
+            distros "Distro managers" \
+            back "Back") || return 0
         [ -n "$c" ] || return 0
-        case "$c" in build) rootfs_builder || true ;; download) rootfs_download || true ;; manage) rootfs_manage || true ;; workbench) menu_rootfs_workbench || true ;; bootstrap) menu_rootfs_bootstrap_tools || true ;; distros) menu_rootfs_distro_managers || true ;; back) return 0 ;; esac
+        case "$c" in
+            build) rootfs_builder || true ;;
+            download) rootfs_download || true ;;
+            workbench) menu_rootfs_workbench || true ;;
+            bootstrap) menu_rootfs_bootstrap_tools || true ;;
+            distros) menu_rootfs_distro_managers || true ;;
+            back) return 0 ;;
+        esac
     done
 }
