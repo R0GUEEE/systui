@@ -48,8 +48,9 @@ build_debfamily() {
 
     if rootfs_ish_ubuntu_needs_gnu_coreutils "$distro" "$release"; then
         ROOTFS_BACKEND_INCLUDE=$(rootfs_ish_append_word "$saved_include" coreutils-from-gnu)
-        # Do not explicitly install the incompatible provider. The essential
-        # `coreutils` meta package is satisfied by coreutils-from-gnu instead.
+        # The essential `coreutils` meta package can be satisfied by the GNU
+        # provider. Prevent the incompatible Rust provider from being selected
+        # as an additional package by bootstrap dependency resolution.
         ROOTFS_BACKEND_EXCLUDE=$(rootfs_ish_append_word "$saved_exclude" coreutils-from-uutils)
         ROOTFS_BACKEND_EXCLUDE=$(rootfs_ish_append_word "$ROOTFS_BACKEND_EXCLUDE" rust-coreutils)
         log "rootfs: forcing coreutils-from-gnu for Ubuntu $release on iSH-AOK"
@@ -62,4 +63,25 @@ build_debfamily() {
     return "$rc"
 }
 
-export -f rootfs_ish_host_builtin_detect rootfs_ish_ubuntu_needs_gnu_coreutils build_debfamily
+# Package installation runs `dpkg --configure -a`. If a partial/older bootstrap
+# already selected uutils, activate the GNU-prefixed binaries before that point.
+# This is host-side only and therefore remains safe even while dpkg is broken.
+if declare -F rootfs_install_deb_packages >/dev/null 2>&1 && \
+   ! declare -F _systui_base_rootfs_install_deb_packages >/dev/null 2>&1; then
+    eval "$(declare -f rootfs_install_deb_packages | sed '1s/^rootfs_install_deb_packages[[:space:]]*()/_systui_base_rootfs_install_deb_packages ()/')"
+fi
+
+rootfs_install_deb_packages() { # <target> <packages>
+    local target="$1" release
+    if rootfs_ish_host_builtin_detect; then
+        release=$(rootfs_ish_target_release "$target" 2>/dev/null || true)
+        case "$release" in
+            ubuntu\|resolute\|*|ubuntu\|\|26.04*)
+                rootfs_ish_activate_gnu_coreutils "$target" >/dev/null 2>&1 || true
+                ;;
+        esac
+    fi
+    _systui_base_rootfs_install_deb_packages "$@"
+}
+
+export -f rootfs_ish_host_builtin_detect rootfs_ish_ubuntu_needs_gnu_coreutils build_debfamily rootfs_install_deb_packages
