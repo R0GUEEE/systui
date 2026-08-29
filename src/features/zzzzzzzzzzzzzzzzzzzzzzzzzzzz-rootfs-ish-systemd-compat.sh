@@ -35,11 +35,6 @@ rootfs_install_ish_systemd_compat() { # <target>
 
     mkdir -p "$t/sbin" "$t/usr/local/sbin" "$t/etc/systui" "$t/etc/sysctl.d" "$t/run" "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/tmp"
 
-    # systemd ships a vendor sysctl that raises kernel.pid_max. A chroot/rootfs
-    # on iSH-AOK shares the host kernel and is not allowed to change that host
-    # sysctl, so systemd-sysctl prints "Operation not permitted" on startup.
-    # Mask the vendor drop-in through /etc, which is the supported override
-    # mechanism and survives systemd package upgrades without modifying /usr.
     ln -sfn /dev/null "$t/etc/sysctl.d/50-pid-max.conf" || return 1
 
     cat > "$t/usr/local/sbin/systui-ish-init" <<EOF
@@ -48,9 +43,23 @@ REAL_SYSTEMD='$real_systemd'
 
 is_ish_kernel() {
     v=''
+    r=''
+    a=''
+
+    # /proc may intentionally be absent when a user invokes /sbin/init from a
+    # freshly-entered iSH chroot. Do not let that make the compatibility
+    # launcher mistake iSH-AOK for a normal Linux host and exec real systemd.
     [ -r /proc/version ] && IFS= read -r v < /proc/version 2>/dev/null || true
     case "\$v" in *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) return 0 ;; esac
     [ -e /proc/ish ] && return 0
+
+    if command -v uname >/dev/null 2>&1; then
+        r=\$(uname -r 2>/dev/null || true)
+        a=\$(uname -a 2>/dev/null || true)
+        case "\$r \$a" in *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) return 0 ;; esac
+    fi
+
+    case "\${container:-} \${SYSTUI_ISH_AOK:-}" in *ish-aok*|*iSH-AOK*|*yes*) return 0 ;; esac
     return 1
 }
 
@@ -66,7 +75,7 @@ if ! is_ish_kernel; then
     exec "\$REAL_SYSTEMD" "\$@"
 fi
 
-export container=ish-aok SYSTEMD_IN_CHROOT=1 SYSTEMD_IGNORE_CHROOT=1
+export container=ish-aok SYSTUI_ISH_AOK=yes SYSTEMD_IN_CHROOT=1 SYSTEMD_IGNORE_CHROOT=1
 export SYSTEMD_LOG_TARGET=console SYSTEMD_LOG_LEVEL=warning
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
@@ -103,9 +112,6 @@ done
 EOF
     chmod 0755 "$t/usr/local/sbin/systui-ish-init"
 
-    # Preserve the distro-provided init exactly once. New systemd rootfs builds
-    # commonly have /sbin/init as a symlink to systemd; keep that target for
-    # normal-Linux fallback, then replace /sbin/init with a real executable.
     if [ -L "$t/sbin/init" ]; then
         init_path=$(readlink "$t/sbin/init" 2>/dev/null || true)
         if [ "$init_path" != /usr/local/sbin/systui-ish-init ]; then
@@ -125,9 +131,6 @@ EOF
         fi
     fi
 
-    # Install the compatibility launcher DIRECTLY at /sbin/init. This avoids
-    # relying on symlink resolution during iSH-AOK rootfs startup and guarantees
-    # every freshly built systemd image contains an executable init entrypoint.
     cp "$t/usr/local/sbin/systui-ish-init" "$t/sbin/init" || return 1
     chmod 0755 "$t/sbin/init" || return 1
 
@@ -146,8 +149,8 @@ EOF
     cat > "$t/etc/profile.d/systui-ish-systemd-compat.sh" <<'EOF'
 _systui_proc_version=''
 [ -r /proc/version ] && IFS= read -r _systui_proc_version < /proc/version 2>/dev/null || true
-case "$_systui_proc_version" in
-    *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) export container=ish-aok SYSTEMD_IN_CHROOT=1 ;;
+case "$_systui_proc_version $(uname -r 2>/dev/null || true)" in
+    *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) export container=ish-aok SYSTUI_ISH_AOK=yes SYSTEMD_IN_CHROOT=1 ;;
 esac
 unset _systui_proc_version
 EOF
@@ -163,27 +166,13 @@ rootfs_postconfig() {
     local target="$1" init_choice="$5" rc=0
     _systui_base_rootfs_postconfig "$@" || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
-
-    # Install /sbin/init during the build itself, before integrity validation
-    # and before any archive is created. systemd builds must leave postconfig
-    # with a usable direct init executable already present in the target tree.
     if [ "$init_choice" = systemd ]; then
-        rootfs_install_ish_systemd_compat "$target" || {
-            warn "Could not install /sbin/init for the iSH-AOK systemd compatibility layer."
-            return 1
-        }
-        [ -x "$target/sbin/init" ] || {
-            warn "Systemd rootfs postconfig completed without an executable /sbin/init."
-            return 1
-        }
-        [ ! -L "$target/sbin/init" ] || {
-            warn "Systemd rootfs /sbin/init is unexpectedly still a symlink."
-            return 1
-        }
+        rootfs_install_ish_systemd_compat "$target" || { warn "Could not install /sbin/init for the iSH-AOK systemd compatibility layer."; return 1; }
+        [ -x "$target/sbin/init" ] || { warn "Systemd rootfs postconfig completed without an executable /sbin/init."; return 1; }
+        [ ! -L "$target/sbin/init" ] || { warn "Systemd rootfs /sbin/init is unexpectedly still a symlink."; return 1; }
     fi
 }
 
-# Final archive guard for recovered/interrupted or manually modified builds.
 if declare -F rootfs_tar_create >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_tar_create >/dev/null 2>&1; then
     eval "$(declare -f rootfs_tar_create | sed '1s/^rootfs_tar_create[[:space:]]*()/_systui_base_rootfs_tar_create ()/')"
 fi
@@ -191,7 +180,6 @@ rootfs_tar_create() {
     local fmt="$1" src="$2" out="$3" pid rc=0 bytes=0
     shift 3
     local -a extra=("$@")
-
     if [ -x "$src/lib/systemd/systemd" ] || [ -x "$src/usr/lib/systemd/systemd" ]; then
         log "rootfs: verifying direct /sbin/init before packing $src"
         if [ ! -x "$src/sbin/init" ] || [ -L "$src/sbin/init" ] || ! grep -q '^REAL_SYSTEMD=' "$src/sbin/init" 2>/dev/null; then
@@ -199,51 +187,21 @@ rootfs_tar_create() {
         fi
         [ -x "$src/sbin/init" ] || return 1
         [ ! -L "$src/sbin/init" ] || return 1
-
-        # Never archive live pseudo-filesystems. Build/chroot helpers may leave
-        # proc, sysfs, devpts, /dev or /run mounted below the target on iSH-AOK;
-        # traversing those trees can make tar block indefinitely or produce an
-        # invalid rootfs archive. Keep the mountpoint directories themselves but
-        # exclude their runtime contents.
-        extra+=(
-            '--exclude=./proc/*'
-            '--exclude=./sys/*'
-            '--exclude=./dev/*'
-            '--exclude=./run/*'
-            '--exclude=./tmp/*'
-        )
-
+        extra+=('--exclude=./proc/*' '--exclude=./sys/*' '--exclude=./dev/*' '--exclude=./run/*' '--exclude=./tmp/*')
         rm -f -- "$out" 2>/dev/null || true
         log "rootfs: packing systemd image with virtual filesystems excluded"
-
-        # Run compression in the background only so the foreground can report
-        # activity. This is especially important on iSH-AOK where gzip on a
-        # complete Ubuntu ARM64 tree can be slow enough to look frozen.
         ( _systui_base_rootfs_tar_create "$fmt" "$src" "$out" "${extra[@]}" ) &
         pid=$!
         while kill -0 "$pid" 2>/dev/null; do
-            if [ -f "$out" ]; then
-                bytes=$(wc -c < "$out" 2>/dev/null || printf '0')
-                printf '>>> Packing rootfs: %s bytes written\n' "$bytes"
-            else
-                printf '>>> Packing rootfs: preparing archive...\n'
-            fi
+            if [ -f "$out" ]; then bytes=$(wc -c < "$out" 2>/dev/null || printf '0'); printf '>>> Packing rootfs: %s bytes written\n' "$bytes"; else printf '>>> Packing rootfs: preparing archive...\n'; fi
             sleep 5
         done
-        if wait "$pid"; then
-            rc=0
-        else
-            rc=$?
-        fi
-        [ "$rc" -eq 0 ] || {
-            warn "Rootfs archive creation failed with status $rc"
-            return "$rc"
-        }
+        if wait "$pid"; then rc=0; else rc=$?; fi
+        [ "$rc" -eq 0 ] || { warn "Rootfs archive creation failed with status $rc"; return "$rc"; }
         bytes=$(wc -c < "$out" 2>/dev/null || printf '0')
         printf '>>> Rootfs archive complete: %s bytes\n' "$bytes"
         return 0
     fi
-
     _systui_base_rootfs_tar_create "$fmt" "$src" "$out" "${extra[@]}"
 }
 
