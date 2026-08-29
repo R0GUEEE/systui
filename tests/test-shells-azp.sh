@@ -28,11 +28,13 @@ INIT=systemd
 export LOGFILE PM INIT SYSTUI_TMP
 
 # Fake git: clones create the destination with a loadable .plugin.zsh so the
-# plain-install path can auto-detect a source file.
+# plain-install path can auto-detect a source file. Every invocation is logged
+# so tests can assert exact clone flags (e.g. --recurse-submodules).
 fake_bin="$SYSTUI_TMP/bin"
 mkdir -p "$fake_bin"
 cat > "$fake_bin/git" <<'GIT'
 #!/bin/sh
+echo "$*" >> "$GIT_ARGLOG"
 # git clone --depth 1 <url> <dest>   |   git -C <dir> pull --ff-only
 if [ "$1" = clone ]; then
     last=
@@ -43,6 +45,7 @@ fi
 exit 0
 GIT
 chmod +x "$fake_bin/git"
+export GIT_ARGLOG="$SYSTUI_TMP/git-args.log"
 export PATH="$fake_bin:$PATH"
 
 # shellcheck source=../src/features/sysconfig.sh
@@ -152,6 +155,21 @@ check "azp_repo_for resolves a tag" test "$(azp_repo_for git-fuzzy)" = "bigH/git
 check_fails "azp_repo_for fails for unknown tag" bash -c 'source "$1"; azp_repo_for nope >/dev/null 2>&1' _ \
     "$PROJECT_DIR/src/features/sysconfig.sh"
 
+# zsh-abbr is kept (submodule clones make it load-safe); autojump was dropped
+# because the repo has no loadable .zsh for the plain installer.
+check "zsh-abbr stays in catalogue" bash -c \
+    'source "$1"; grep -Fq "olets/zsh-abbr" <<<"$AZP_CATALOG"' _ "$PROJECT_DIR/src/features/sysconfig.sh"
+check "autojump removed from catalogue (no loadable .zsh)" bash -c \
+    'source "$1"; ! grep -Fq "wting/autojump" <<<"$AZP_CATALOG"' _ "$PROJECT_DIR/src/features/sysconfig.sh"
+check "azp clones use --recurse-submodules (zsh-abbr hang fix)" contains \
+    "$PROJECT_DIR/src/features/sysconfig.sh" "git clone --depth 1 --recurse-submodules"
+check "omz external clones use --recurse-submodules" contains \
+    "$PROJECT_DIR/src/features/sysconfig.sh" "git clone --depth 1 --recurse-submodules https://github.com/\$repo ~/.oh-my-zsh/custom/plugins/\$t"
+check "omz plugin install warms compinit dump" contains \
+    "$PROJECT_DIR/src/features/sysconfig.sh" 'zsh -f -c "autoload -Uz compinit && compinit"'
+check "azp omz install warms compinit dump" contains \
+    "$PROJECT_DIR/src/features/sysconfig.sh" "autoload -Uz compinit && compinit"
+
 # Existing plugin catalogues were enriched from awesome-zsh-plugins too.
 check "OMZ external plugins include enhancd" contains \
     "$PROJECT_DIR/src/features/sysconfig.sh" "enhancd|b4b4r07/enhancd|Enhanced cd"
@@ -182,6 +200,7 @@ printf 'plugins=(git)\n' > "$home/.zshrc"
 azp_apply root "$home" omz git-fuzzy
 check "omz: plugin cloned into custom/plugins" test -f "$oz/custom/plugins/git-fuzzy/test.plugin.zsh"
 check "omz: plugins=() extended" contains "$home/.zshrc" "plugins=(git git-fuzzy)"
+check "omz: clone used --recurse-submodules" contains "$GIT_ARGLOG" "--recurse-submodules"
 
 # zinit target: zinit light lines in a marked block
 rm -f "$home/.zshrc"
