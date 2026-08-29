@@ -20,11 +20,14 @@ systui_local_files_mount() { # <icloud|iphone>
         *) return 1 ;;
     esac
 
-    mkdir -p "$mountpoint" || {
+    # Local Files mounts require these exact locations. mkdir -p is harmless
+    # when the directory already exists.
+    if ! mkdir -p "$mountpoint"; then
         tui_msg "Local Files" "Could not create $mountpoint."
         return 1
-    }
+    fi
 
+    # Do not stack another mount on an already-mounted destination.
     if mountpoint -q "$mountpoint" 2>/dev/null || grep -qs " $mountpoint " /proc/mounts 2>/dev/null; then
         tui_msg "Local Files" "$label is already mounted at:\n$mountpoint"
         return 0
@@ -42,7 +45,7 @@ systui_local_files_mount() { # <icloud|iphone>
 menu_local_files() {
     while true; do
         local c
-        c=$(tui_menu "Local Files" "Mount iOS device folders into the system:" \
+        c=$(tui_menu "Local Files" "Mount iOS Local Files:" \
             icloud "Mount iCloud at /mnt/iCloud" \
             iphone "Mount iPhone at /mnt/iPhone" \
             back   "Back") || return 0
@@ -54,67 +57,17 @@ menu_local_files() {
     done
 }
 
-# Explicit Storage menu. Keep the useful mount operations and Advanced menu,
-# remove the redundant/unsafe top-level entries requested by the user:
-# usage, SMART, reserve, format, tmpfs, swap, label, and fstab.
+# Storage is intentionally limited to the iOS Local Files integration.
+# Generic usage/SMART/reserve/format/tmpfs/swap/label/fstab/list/mount/
+# unmount/bind entries are omitted from this menu.
 menu_storage() {
     while true; do
         local c
-        c=$(tui_menu "Storage" "Storage & mounts:" \
-            list       "List block devices & mounts" \
-            mount      "Mount a device" \
-            umount     "Unmount a device/path" \
-            bind       "Create a bind mount" \
-            localfiles "Local Files (iCloud and iPhone mounts)" \
-            advanced   "Advanced storage operations" \
+        c=$(tui_menu "Storage" "Storage configuration:" \
+            localfiles "Local Files (iCloud and iPhone)" \
             back       "Back") || return 0
-
         case "$c" in
-            list)
-                {
-                    echo "=== Block devices ==="
-                    lsblk -o NAME,SIZE,TYPE,FSTYPE,LABEL,MOUNTPOINTS 2>/dev/null || lsblk 2>/dev/null || true
-                    echo
-                    echo "=== Mounted filesystems ==="
-                    df -hT 2>/dev/null || mount
-                } > "${SYSTUI_TMP}/storage" 2>&1
-                tui_text "Storage" "${SYSTUI_TMP}/storage"
-                ;;
-            mount)
-                local dev dst opts
-                dev=$(tui_input "Mount device" "Device or source to mount:" "/dev/") || continue
-                [ -n "$dev" ] || continue
-                dst=$(tui_input "Mount device" "Mount point:" "/mnt/") || continue
-                [ -n "$dst" ] || continue
-                opts=$(tui_input "Mount device" "Mount options (blank = defaults):" "") || continue
-                mkdir -p "$dst" || { tui_msg "Mount failed" "Could not create $dst."; continue; }
-                if [ -n "$opts" ]; then
-                    run_cmd "Mounting $dev at $dst" mount -o "$opts" "$dev" "$dst"
-                else
-                    run_cmd "Mounting $dev at $dst" mount "$dev" "$dst"
-                fi
-                ;;
-            umount)
-                local target
-                target=$(tui_input "Unmount" "Device or mount point to unmount:" "/mnt/") || continue
-                [ -n "$target" ] || continue
-                run_cmd "Unmounting $target" umount "$target"
-                ;;
-            bind)
-                local src dst
-                src=$(tui_input "Bind mount" "Source directory:" "/") || continue
-                [ -d "$src" ] || { tui_msg "Bind mount" "$src is not a directory."; continue; }
-                dst=$(tui_input "Bind mount" "Destination mount point:" "/mnt/") || continue
-                [ -n "$dst" ] || continue
-                mkdir -p "$dst" || { tui_msg "Bind mount" "Could not create $dst."; continue; }
-                run_cmd "Bind mounting $src at $dst" mount --bind "$src" "$dst"
-                ;;
-            localfiles)
-                menu_local_files
-                ;;
-            advanced)
-                menu_storage_advanced
-                ;;
+            localfiles) menu_local_files ;;
             back|"") return 0 ;;
         esac
     done
