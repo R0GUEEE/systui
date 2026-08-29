@@ -8,7 +8,7 @@ systui_local_files_mount() { # <icloud|iphone>
     local kind="$1" fstype mountpoint label
     case "$kind" in
         icloud)
-            fstype="iOS"
+            fstype="ios"
             mountpoint="/mnt/iCloud"
             label="iCloud"
             ;;
