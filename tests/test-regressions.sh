@@ -545,7 +545,7 @@ check "unknown archive format is rejected"      contains "$ROOTFS" 'Unsupported 
 check "profile.d is created before writing"     contains "$ROOTFS" 'mkdir -p "$target/etc/profile.d"'
 check "runit service dir is created"            contains "$ROOTFS" 'mkdir -p "$target/etc/runit/runsvdir/default"'
 check "backend config menu cannot loop forever" contains "$ROOTFS" 'Backends without tool options'
-check "release menu always preselects an entry" contains "$ROOTFS" 'have_default'
+check "release menu uses the portable menu widget" contains "$ROOTFS" 'tui_menu "Rootfs Builder 3/13"'
 
 # --- Chroot workbench wiring ------------------------------------------------
 check "workbench is on the Rootfs menu"      contains "$ROOTFS" 'workbench  "Chroot workbench'

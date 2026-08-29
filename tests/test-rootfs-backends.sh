@@ -89,7 +89,7 @@ release_menu_is_offline_by_default() {
     tmp=$(mktemp -d)
     (
         rootfs_release_candidates() { : > "$tmp/network-called"; sleep 30; }
-        tui_radio() { printf '%s\n' trixie; }
+        tui_menu() { printf '%s\n' trixie; }
         result=$(LOGFILE="$tmp/log" rootfs_release_menu debian amd64)
         [ "$result" = trixie ] && [ ! -e "$tmp/network-called" ]
     )
@@ -104,7 +104,7 @@ release_menu_refreshes_only_on_request() {
     tmp=$(mktemp -d)
     (
         rootfs_release_candidates() { : > "$tmp/network-called"; printf '%s\n' bookworm trixie; }
-        tui_radio() {
+        tui_menu() {
             if [ -e "$tmp/refreshed" ]; then printf '%s\n' trixie
             else : > "$tmp/refreshed"; printf '%s\n' refresh
             fi
@@ -117,6 +117,26 @@ release_menu_refreshes_only_on_request() {
     return "$rc"
 }
 check "release discovery runs only after refresh" release_menu_refreshes_only_on_request
+
+release_menu_uses_plain_menu_tags() {
+    local tmp result
+    tmp=$(mktemp -d)
+    (
+        tui_menu() {
+            printf '%s\n' "$@" > "$tmp/menu-args"
+            printf '%s\n' trixie
+        }
+        result=$(rootfs_release_menu debian amd64)
+        [ "$result" = trixie ] || return 1
+        # The release picker must pass tag/description pairs to --menu; the
+        # old radiolist form added on/off fields and broke on iSH dialog.
+        ! grep -Eq '^(on|off)$' "$tmp/menu-args"
+    )
+    local rc=$?
+    rm -rf "$tmp"
+    return "$rc"
+}
+check "release menu uses portable menu entries" release_menu_uses_plain_menu_tags
 
 # Arch Linux: x86_64 uses the official repos; ARM uses Arch Linux ARM.
 check "Arch offers pacstrap on amd64" lists_backend arch amd64 pacstrap

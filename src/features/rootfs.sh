@@ -1199,14 +1199,14 @@ rootfs_release_candidates() { # <distro> <arch>
 }
 
 rootfs_release_menu() { # <distro> <arch>
-    local distro="$1" arch="$2" candidates="" discovered="" tags=() r def state
+    local distro="$1" arch="$2" candidates="" discovered="" tags=() r def
     # Keep the interactive path offline-safe. Repository discovery used to run
     # synchronously before this dialog appeared; on iSH a stalled downloader or
     # an incompatible BusyBox parser made the wizard look broken immediately
     # after architecture selection. Maintained defaults render instantly, while
     # an explicit refresh below still provides live repository data on demand.
     case "$distro" in
-        debian) def=trixie; candidates=$'bookworm\ntrixie\nforky\nsid' ;;
+        debian) def=trixie; candidates=$'trixie\nbookworm\nforky\nsid' ;;
         devuan)
             if [ "$arch" = riscv64 ]; then
                 # Only ceres carries riscv64 packages.
@@ -1214,9 +1214,9 @@ rootfs_release_menu() { # <distro> <arch>
                 candidates=ceres
             else
                 def=excalibur
-                candidates=$'daedalus\nexcalibur\nfreia\nceres'
+                candidates=$'excalibur\ndaedalus\nfreia\nceres'
             fi ;;
-        ubuntu) def=noble; candidates=$'jammy\nnoble\noracular\nplucky\nquesting' ;;
+        ubuntu) def=noble; candidates=$'noble\njammy\noracular\nplucky\nquesting' ;;
         alpine)
             if [ "$arch" = riscv64 ]; then
                 # riscv64 only became an Alpine architecture in v3.21.
@@ -1224,11 +1224,11 @@ rootfs_release_menu() { # <distro> <arch>
                 candidates=$'v3.21\nv3.22\nedge'
             else
                 def=v3.20
-                candidates=$'v3.19\nv3.20\nv3.21\nedge'
+                candidates=$'v3.20\nv3.19\nv3.21\nedge'
             fi ;;
-        fedora) def=42; candidates=$'41\n42\n43' ;;
+        fedora) def=42; candidates=$'42\n41\n43' ;;
         kali) def=kali-rolling; candidates=$'kali-rolling\nkali-last-snapshot' ;;
-        opensuse) def=15.6; candidates=$'15.5\n15.6' ;;
+        opensuse) def=15.6; candidates=$'15.6\n15.5' ;;
         tumbleweed) def=current; candidates=current ;;
         gentoo) def=openrc; candidates=$'openrc\nsystemd' ;;
         bedrock) def=current; candidates=$'current\n0.7.31\n0.7.30' ;;
@@ -1237,23 +1237,21 @@ rootfs_release_menu() { # <distro> <arch>
     esac
     while true; do
         tags=()
-        local have_default=0
         while IFS= read -r r; do
             [ -n "$r" ] || continue
-            state=off; [ "$r" = "$def" ] && { state=on; have_default=1; }
-            tags+=("$r" "$distro $r" "$state")
+            tags+=("$r" "$distro $r")
         done <<< "$candidates"
-        # Live discovery is trimmed to the last 12 entries, so $def is not
-        # guaranteed to survive. Always preselect a valid entry for dialog.
-        if [ "$have_default" = 0 ] && [ ${#tags[@]} -ge 3 ]; then
-            tags[2]=on
-        fi
-        tags+=(refresh "Refresh releases from the repository (network)" off \
-               custom "Enter a release manually" off)
-        r=$(tui_radio "Rootfs Builder 3/13" "Release (SPACE selects; refresh is optional):" "${tags[@]}") || return 1
+        # Use a plain menu here instead of a dynamically-built radiolist. Some
+        # iSH dialog/whiptail builds mishandle radiolists when control entries
+        # are appended, which leaves the wizard stuck after architecture.
+        # A menu also needs no synthetic on/off state and always returns one
+        # tag, including for the refresh/custom actions below.
+        tags+=(refresh "Refresh releases from the repository (network)" \
+               custom "Enter a release manually")
+        r=$(tui_menu "Rootfs Builder 3/13" "Release (ENTER selects; refresh is optional):" "${tags[@]}") || return 1
         case "$r" in
             refresh)
-                discovered=$(rootfs_release_candidates "$distro" "$arch" 2>>"$LOGFILE" | tail -n 12)
+                discovered=$(rootfs_release_candidates "$distro" "$arch" 2>>"${LOGFILE:-/dev/null}" | tail -n 12)
                 if [ -n "$discovered" ]; then
                     candidates="$discovered"
                 else
