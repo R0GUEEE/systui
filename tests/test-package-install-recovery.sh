@@ -33,7 +33,7 @@ check "Alpine repository recovery offers community" contains "$FILE" 'Enable $re
 check "Fedora repository recovery offers RPM Fusion" contains "$FILE" 'Enable RPM Fusion Free'
 check "multi installs skip unresolved packages" contains "$FILE" 'Packages skipped'
 check "single installs return to the previous menu on failure" contains "$FILE" 'Returning to the previous menu.'
-check "Pacman refresh does not install packages during metadata refresh" contains "$FILE" 'pacman -Syy --noconfirm'
+check "Pacman recovery uses a full sync and upgrade" contains "$FILE" 'pacman -Syu --noconfirm'
 
 bash -n "$FILE"
 check "package recovery layer passes bash syntax" true
