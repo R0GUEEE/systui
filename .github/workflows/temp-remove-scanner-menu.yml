@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   apply:
-    if: github.event.head_commit.message == 'chore: apply scanner-menu removal'
+    if: github.event.head_commit.message == 'chore: retry scanner-menu removal'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -23,8 +23,8 @@ jobs:
           from pathlib import Path
           p = Path('src/features/sysconfig.sh')
           s = p.read_text()
-          menu = '            scanner "Scanner" \\\n'
-          dispatch = '            scanner)    menu_scanner ;;\n'
+          menu = '            scanner "Scanner" ' + chr(92) + chr(10)
+          dispatch = '            scanner)    menu_scanner ;;' + chr(10)
           if s.count(menu) != 1:
               raise SystemExit(f'expected exactly one scanner menu entry, found {s.count(menu)}')
           if s.count(dispatch) != 1:
