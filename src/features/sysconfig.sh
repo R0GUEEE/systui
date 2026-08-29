@@ -5279,8 +5279,7 @@ menu_blesh() { # <user> <home>
 install_blesh() { # <user>
     local u="$1"
     run_cmd "Installing ble.sh for $u" su - "$u" -c \
-        "mkdir -p ~/.local/share && curl -fsSL https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz -o ${SYSTUI_TMP}/ble.tar.xz && \
-         tar -xJf ${SYSTUI_TMP}/ble.tar.xz -C ~/.local/share/ && rm -rf ~/.local/share/blesh && mv ~/.local/share/ble-nightly ~/.local/share/blesh && rm -f ${SYSTUI_TMP}/ble.tar.xz"
+        "tmp_ble=\$(mktemp -d \"\${TMPDIR:-/tmp}/systui-ble.XXXXXX\") || exit 1; trap 'rm -rf \"\$tmp_ble\"' EXIT; mkdir -p ~/.local/share && curl -fsSL https://github.com/akinomyoga/ble.sh/releases/download/nightly/ble-nightly.tar.xz -o \"\$tmp_ble/ble.tar.xz\" && tar -xJf \"\$tmp_ble/ble.tar.xz\" -C ~/.local/share/ && rm -rf ~/.local/share/blesh && mv ~/.local/share/ble-nightly ~/.local/share/blesh"
     local home_dir; home_dir=$(user_home "$u")
     grep -q 'blesh/ble.sh' "$home_dir/.bashrc" 2>/dev/null || {
         echo '[[ $- == *i* ]] && source ~/.local/share/blesh/ble.sh' >> "$home_dir/.bashrc"
@@ -5317,10 +5316,11 @@ menu_shell_hierarchy() {
 shell_pkg() { # <shell>
     case "$1" in
         pwsh)
-            case "$PM" in
-                emerge) echo app-shells/pwsh-bin ;;
-                *) echo powershell ;;
-            esac
+            # Only Gentoo carries a native package (app-shells/pwsh-bin).
+            # Debian/Fedora/openSUSE/Arch/Alpine have none in their own repos;
+            # the GitHub release tarball is the universal install path. An
+            # empty result lets callers fall through to the GitHub installer.
+            [ "$PM" = emerge ] && echo app-shells/pwsh-bin
             return 0 ;;
     esac
     case "$PM" in
@@ -5341,7 +5341,7 @@ shell_pkg() { # <shell>
 # Uninstall a shell defensively: never remove the shell running systui, never
 # remove a shell that is still some user's login shell, clean up /etc/shells.
 safe_remove_shell() { # <shell>
-    local sh="$1" bin users="" u
+    local sh="$1" bin users="" u pkg real
     bin=$(command -v "$sh" 2>/dev/null) || { tui_msg "Not installed" "$sh is not installed."; return 0; }
     [ "$sh" = "$(basename "${SHELL:-}")" ] && {
         tui_msg "Refusing" "$sh is the shell currently running systui (SHELL=$SHELL)."; return 0; }
@@ -5351,7 +5351,14 @@ safe_remove_shell() { # <shell>
     [ -n "$users" ] && {
         tui_msg "In use" "$sh is the login shell of:$users\nChange it first (Shells ▸ Set default shell)."; return 0; }
     tui_yesno "Uninstall $sh" "Remove $sh via ${PM:-pm}?" || return 0
-    pm_remove "$(shell_pkg "$sh")"
+    # pwsh is usually installed from the GitHub tarball (not a package): remove
+    # the unpacked tree and the /usr/local/bin symlink, then skip pm_remove.
+    if [ "$sh" = pwsh ] && [ -L "$bin" ]; then
+        real=$(readlink "$bin" 2>/dev/null || true)
+        case "$real" in /opt/microsoft/powershell/*) rm -rf /opt/microsoft/powershell/7; rm -f "$bin" ;; esac
+    fi
+    pkg=$(shell_pkg "$sh")
+    [ -n "$pkg" ] && pm_remove "$pkg"
     sed -i "\|^${bin}\$|d" /etc/shells 2>/dev/null || true
 }
 
@@ -5390,7 +5397,10 @@ pwsh_github_install() {
 menu_shell_install_any() { # <shell> <display>
     local sh="$1" disp="$2" method pkg choices=()
     pkg=$(shell_pkg "$sh")
-    choices=(pm "Package manager (${PM:-pm} install ${pkg:-$sh})")
+    # Only offer the package-manager route when a native package actually
+    # exists — e.g. pwsh has none on apt/apk/pacman/dnf, so the GitHub path is
+    # the real option and a "pm install powershell" would just fail.
+    [ -n "$pkg" ] && choices=(pm "Package manager (${PM:-pm} install $pkg)")
     case "$sh" in
         pwsh)  choices+=(github "GitHub release binary (latest stable, auto-detect arch)") ;;
         xonsh) choices+=(pip "pip (pip install xonsh — Python environment)") ;;
@@ -6366,6 +6376,13 @@ menu_shell_github_plugins() {
                 bash)
                     dest="$h/.local/share/$tag"
                     fm_as_user "$u" "mkdir -p ~/.local/share; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"
+                    # ble.sh ships only a Makefile (no pre-built ble.sh), so
+                    # build it before sourcing; it also needs GNU awk.
+                    if [ "$tag" = ble-sh ]; then
+                        command -v make >/dev/null 2>&1 || pm_install make
+                        command -v gawk >/dev/null 2>&1 || pm_install gawk
+                        fm_as_user "$u" "make -C '$dest'"
+                    fi
                     rc="$h/.bashrc"; plugin_add_line "$rc" "${init/#\~/$h}" "$u" ;;
                 zsh)
                     dest="$h/.local/share/zsh-plugins/$tag"
@@ -6511,6 +6528,20 @@ azp_apply() {
                 repo=$(azp_repo_for "$tag") || continue
                 dest="$h/.oh-my-zsh/custom/plugins/$tag"
                 fm_as_user "$u" "if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"
+                # oh-my-zsh only sources custom/plugins/<tag>/<tag>.plugin.zsh,
+                # but several curated repos ship a differently-named loader
+                # (e.g. git-open-pr.plugin.zsh, zsh-history-filter.plugin.zsh,
+                # plugin.zsh). Detect the real entry point and shim it so the
+                # plugin actually loads instead of silently doing nothing.
+                srcf=$(zsh_plugin_file "$dest" 2>/dev/null || true)
+                if [ -z "$srcf" ]; then
+                    warn "No loadable .zsh file found for $tag — check its README."
+                    continue
+                fi
+                if [ "$srcf" != "$tag.plugin.zsh" ]; then
+                    printf 'source "${0:A:h}/%s"\n' "$srcf" > "$dest/$tag.plugin.zsh"
+                    chown "$u" "$dest/$tag.plugin.zsh" 2>/dev/null || true
+                fi
                 case "$current" in *" $tag "*) ;; *) add="$add $tag" ;; esac
             done
             if [ -n "$add" ]; then
