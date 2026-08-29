@@ -27,6 +27,39 @@ rootfs_ish_target_needs_safe_shell() { # <target>
     grep -qE '^Package: (rust-coreutils|coreutils-from-uutils)$' "$t/var/lib/dpkg/status" 2>/dev/null
 }
 
+# Ubuntu's gnu-coreutils package installs GNU implementations under gnu-prefixed
+# names (gnucat, gnuid, gnuuname, ...). The uutils provider depends on that
+# package, so a broken Resolute root normally already has the safe binaries.
+# Switch the public command names to them entirely from the HOST; this does not
+# execute a single binary from the damaged chroot and lets dpkg maintainer
+# scripts run again on iSH-AOK.
+rootfs_ish_activate_gnu_coreutils() { # <target>
+    local t="$1" src name dest count=0
+    [ -x "$t/usr/bin/gnucat" ] || return 1
+
+    for src in "$t"/usr/bin/gnu*; do
+        [ -e "$src" ] || continue
+        name=${src##*/}
+        name=${name#gnu}
+        [ -n "$name" ] || continue
+        dest="$t/usr/bin/$name"
+        rm -f -- "$dest" 2>/dev/null || continue
+        ln -s "gnu$name" "$dest" 2>/dev/null || continue
+        count=$((count + 1))
+    done
+
+    if [ -x "$t/usr/sbin/gnuchroot" ]; then
+        rm -f -- "$t/usr/sbin/chroot" 2>/dev/null || true
+        ln -s gnuchroot "$t/usr/sbin/chroot" 2>/dev/null || true
+    fi
+
+    [ "$count" -gt 0 ] || return 1
+    mkdir -p "$t/etc/systui"
+    printf 'provider=gnu-coreutils\nreason=ish-aok-rust-coreutils-auxv\n' > "$t/etc/systui/coreutils-compat.conf"
+    log "rootfs: activated $count GNU coreutils command links in $t for iSH-AOK"
+    return 0
+}
+
 rootfs_ish_make_safe_shell() { # <target>
     local t="$1"
     mkdir -p "$t/usr/local/sbin"
@@ -34,8 +67,6 @@ rootfs_ish_make_safe_shell() { # <target>
 #!/bin/sh
 # Ubuntu Resolute may provide essential coreutils through uutils/rust-coreutils.
 # On iSH-AOK those binaries can panic while rustix reads the auxiliary vector.
-# Enter bash without profile/rc processing so no external coreutils are invoked
-# before the user reaches a prompt.
 if [ -x /bin/bash ]; then
     exec /bin/bash --noprofile --norc
 fi
@@ -54,19 +85,17 @@ rootfs_wb_enter() { # <target>
     local t="$1" old_shell="" safe_shell=0 rc=0
 
     if declare -F rootfs_wb_is_ish_kernel >/dev/null 2>&1 && rootfs_wb_is_ish_kernel; then
-        # Apply the safe shell BEFORE running any in-rootfs repair command.
-        # apt/dpkg maintainer scripts can invoke Rust coreutils too, so trying
-        # to repair first can panic before Workbench ever reaches the shell.
         if rootfs_ish_target_needs_safe_shell "$t"; then
+            # First repair the command links without entering the rootfs. This
+            # is enough to recover dpkg when gnu-coreutils is already present.
+            rootfs_ish_activate_gnu_coreutils "$t" >/dev/null 2>&1 || true
+
             old_shell=$(rootfs_chroot_option_get "$t" SHELL /bin/bash)
             rootfs_ish_make_safe_shell "$t"
             rootfs_chroot_option_set "$t" SHELL /usr/local/sbin/systui-ish-safe-shell >/dev/null 2>&1 || true
             safe_shell=1
         fi
 
-        # Install/update the systemd compatibility files using host-side file
-        # operations only. Skip the package-provider migration here; that is a
-        # build-time concern and can itself execute the broken coreutils.
         if [ -x "$t/lib/systemd/systemd" ] || [ -x "$t/usr/lib/systemd/systemd" ] || \
            [ -e "$t/etc/systui/ish-systemd-compat.conf" ]; then
             SYSTUI_ISH_COMPAT_SKIP_COREUTILS_MIGRATION=1 rootfs_install_ish_systemd_compat "$t" || true
@@ -81,4 +110,4 @@ rootfs_wb_enter() { # <target>
     return "$rc"
 }
 
-export -f rootfs_ish_target_release rootfs_ish_target_needs_safe_shell rootfs_ish_make_safe_shell rootfs_wb_enter
+export -f rootfs_ish_target_release rootfs_ish_target_needs_safe_shell rootfs_ish_activate_gnu_coreutils rootfs_ish_make_safe_shell rootfs_wb_enter
