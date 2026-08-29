@@ -8,7 +8,7 @@ bedrock_aok_pick_strata_multi() { # <title> <prompt>
     while IFS= read -r st; do
         [ -n "$st" ] || continue
         opts+=("$st" "$st" off)
-    done < <(bedrock_aok_installed_strata)
+    done <<< "$(bedrock_aok_installed_strata)"
     if [ ${#opts[@]} -eq 0 ]; then
         tui_msg "No strata installed" "No Bedrock-AOK strata are currently installed."
         return 1
@@ -39,7 +39,7 @@ bedrock_aok_system_overview() {
             echo
             echo "[$st]"
             "$brl" show "$st" 2>&1 || "$brl" status "$st" 2>&1 || true
-        done < <(bedrock_aok_installed_strata)
+        done <<< "$(bedrock_aok_installed_strata)"
         echo
         echo "Health"
         echo "------"
@@ -133,7 +133,7 @@ bedrock_aok_bulk_health_fix() {
             fix)
                 while IFS= read -r st; do
                     [ -n "$st" ] && run_cmd "Fix $st" "$brl" fix "$st" || true
-                done < <(bedrock_aok_installed_strata)
+                done <<< "$(bedrock_aok_installed_strata)"
                 ;;
             verify) run_cmd "Verify Bedrock-AOK" "$brl" verify || true ;;
             repair) run_cmd "Repair Bedrock-AOK" "$brl" verify --repair || true ;;

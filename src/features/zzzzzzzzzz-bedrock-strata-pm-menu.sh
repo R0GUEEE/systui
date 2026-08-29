@@ -322,7 +322,7 @@ bedrock_stratum_pm_menu_section() {
     while IFS= read -r st; do
         [ -n "$st" ] || continue
         opts+=("$st" "Stratum $st ($(bedrock_stratum_pm_of "$st"))" off)
-    done < <(bedrock_stratum_pm_strata)
+    done <<< "$(bedrock_stratum_pm_strata)"
     if [ ${#opts[@]} -eq 0 ]; then
         tui_msg "Bedrock strata" "No Bedrock strata are currently installed."
         return 0

@@ -164,7 +164,7 @@ all_managers_have_hints() {
     while IFS='|' read -r tag bin label; do
         [ -n "$tag" ] || continue
         [ -n "$(rootfs_dm_install_hint "$tag")" ] || return 1
-    done < <(rootfs_dm_managers)
+    done <<< "$(rootfs_dm_managers)"
 }
 chroot_store_is_known() {
     # Upstream documents /data/local/chroot-distro as the fixed path.

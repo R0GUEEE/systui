@@ -19,7 +19,7 @@ bedrock_aok_pick_stratum() { # <title> <prompt>
     while IFS= read -r st; do
         [ -n "$st" ] || continue
         opts+=("$st" "$st" off)
-    done < <(bedrock_aok_installed_strata)
+    done <<< "$(bedrock_aok_installed_strata)"
     if [ ${#opts[@]} -eq 0 ]; then
         tui_msg "No strata installed" "No Bedrock-AOK strata are currently installed."
         return 1

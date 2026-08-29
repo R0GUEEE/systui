@@ -387,7 +387,7 @@ rootfs_dm_select_catalog_entries() { # <tag> <query> -> selected refs, one/line
         [ -n "$ref" ] || continue
         args+=("$ref" "${desc:-$ref}" off)
         count=$((count + 1))
-    done < <(rootfs_dm_catalog_for_install "$tag" "$query" 2>/dev/null || true)
+    done <<< "$(rootfs_dm_catalog_for_install "$tag" "$query" 2>/dev/null || true)"
     [ "$count" -gt 0 ] || return 1
     selected=$(tui_check "Install with $tag" \
         "SPACE selects one or more distributions/images; Enter installs the selected entries." \
@@ -499,7 +499,7 @@ rootfs_dm_installed_names() { # <tag>
             while IFS= read -r d; do
                 [ -n "$d" ] || continue
                 rootfs_dm_rootfs_name "$tag" "$d"
-            done < <(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)
+            done <<< "$(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)"
             ;;
         schroot)
             rootfs_dm_capture "$tag" --list 2>/dev/null | sed -E 's/^[^:]+://' | sed '/^[[:space:]]*$/d'
@@ -514,7 +514,7 @@ rootfs_dm_pick_installed() { # <tag> -> name
     while IFS= read -r name; do
         [ -n "$name" ] || continue
         args+=("$name" "$name")
-    done < <(rootfs_dm_installed_names "$tag" 2>/dev/null || true)
+    done <<< "$(rootfs_dm_installed_names "$tag" 2>/dev/null || true)"
     if [ ${#args[@]} -eq 0 ]; then
         tui_input "$tag" "Installed container/session name:" ""
         return
@@ -541,7 +541,7 @@ rootfs_dm_adopt() { # <tag>
         [ -d "$d" ] || continue
         name=$(rootfs_dm_rootfs_name "$tag" "$d")
         args+=("$d" "$name  $(du -sh "$d" 2>/dev/null | cut -f1)")
-    done < <(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)
+    done <<< "$(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)"
     [ ${#args[@]} -gt 0 ] || { tui_msg "Nothing installed" "No usable rootfs trees found under $store."; return 0; }
     sel=$(tui_menu_no_tags "Open in workbench" "Installed roots:" "${args[@]}") || return 0
     [ -n "$sel" ] && rootfs_wb_menu_for "$sel"

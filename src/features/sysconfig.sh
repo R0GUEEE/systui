@@ -1350,7 +1350,7 @@ repo_manage() {
             while read -r id state; do
                 [ -z "$id" ] && continue
                 [ "$state" = enabled ] && args+=("$id" "" on) || args+=("$id" "" off)
-            done < <(dnf repolist --all 2>/dev/null | awk 'NR>1 {print $1, $NF}')
+            done <<< "$(dnf repolist --all 2>/dev/null | awk 'NR>1 {print $1, $NF}')"
             [ ${#args[@]} -eq 0 ] && { tui_msg "None" "No repositories reported by dnf."; return; }
             local sel
             sel=$(tui_check "Manage dnf repositories" \
@@ -6657,7 +6657,7 @@ menu_shell_github_plugins() {
             fish) dest="$h/.config/fish/functions" ;;
         esac
         args+=("$tag" "$desc — $repo [$shells]" off)
-    done < <(shell_github_catalog)
+    done <<< "$(shell_github_catalog)"
     chosen=$(tui_check "GitHub shell plugins — $u" "SPACE selects projects to install/update and integrate:" "${args[@]}") || return 0
     command -v git >/dev/null 2>&1 || pm_install git
     for tag in $chosen; do
@@ -6683,7 +6683,7 @@ menu_shell_github_plugins() {
                     command -v fish >/dev/null 2>&1 || pm_install fish
                     fm_as_user "$u" "fish -lc 'type -q fisher; or begin; set t (mktemp); curl -fL --proto =https --tlsv1.2 https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish -o \"\$t\"; source \"\$t\"; rm -f \"\$t\"; end; $init'" ;;
             esac
-        done < <(shell_github_catalog)
+        done <<< "$(shell_github_catalog)"
     done
     tui_msg "Shell plugins" "Selected GitHub projects were installed or updated for $u."
 }
@@ -6960,7 +6960,9 @@ menu_shell_plugins() {
             zoxide) menu_plugin_simple_init "zoxide" zoxide zoxide 'eval "$(zoxide init bash)"' 'eval "$(zoxide init zsh)"' 'zoxide init fish | source' "$u" "$home_dir" "$home_dir/.config/zoxide/config.toml" ;;
             atuin) menu_plugin_simple_init "Atuin" atuin atuin 'eval "$(atuin init bash)"' 'eval "$(atuin init zsh)"' 'atuin init fish | source' "$u" "$home_dir" "$home_dir/.config/atuin/config.toml" ;;
             direnv) menu_plugin_simple_init "direnv" direnv direnv 'eval "$(direnv hook bash)"' 'eval "$(direnv hook zsh)"' 'direnv hook fish | source' "$u" "$home_dir" "$home_dir/.config/direnv/direnvrc" ;;
-            carapace) menu_plugin_simple_init "Carapace" carapace carapace 'source <(carapace _carapace bash)' 'source <(carapace _carapace zsh)' 'carapace _carapace fish | source' "$u" "$home_dir" "$home_dir/.config/carapace/bridges.yaml" ;;
+            # eval "$(...)" instead of source <(...): iSH lacks a working
+            # /dev/fd, so process substitution fails in the user's shell too.
+            carapace) menu_plugin_simple_init "Carapace" carapace carapace 'eval "$(carapace _carapace bash)"' 'eval "$(carapace _carapace zsh)"' 'carapace _carapace fish | source' "$u" "$home_dir" "$home_dir/.config/carapace/bridges.yaml" ;;
             syntax) menu_plugin_simple_init "Zsh syntax highlighting" zsh-syntax-highlighting zsh-syntax-highlighting '' '@detect:zsh-syntax-highlighting' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
             github) menu_shell_github_plugins "$u" "$home_dir" ;;
             azp) menu_azp "$u" "$home_dir" ;;
@@ -9624,7 +9626,7 @@ mc_link_skins() { # <user> <home>
         # Never clobber a real skin file that lives at the top level.
         [ -e "$dir/$name" ] && continue
         ln -sf "$ini" "$dir/$name" 2>/dev/null && linked=$((linked + 1))
-    done < <(find "$dir" -mindepth 2 -name '*.ini' 2>/dev/null)
+    done <<< "$(find "$dir" -mindepth 2 -name '*.ini' 2>/dev/null)"
     [ "$linked" -gt 0 ] && log "mc: linked $linked skin file(s) into $dir"
     chown -h -R "$u":"$(id -gn "$u")" "$dir" 2>/dev/null || true
     return 0
@@ -9638,7 +9640,7 @@ mc_skin_menu() { # <user> <home> <ini>
     while IFS= read -r skin; do
         [ -n "$skin" ] || continue
         args+=("$skin" "$skin" "$(_rootfs_radio_state "$current" "$skin")")
-    done < <(mc_available_skins "$h")
+    done <<< "$(mc_available_skins "$h")"
     skin=$(tui_radio "Midnight Commander skin" \
         "Installed and built-in skins (SPACE selects).\nInstall more from the plugin manager:" "${args[@]}") || return 0
     [ -n "$skin" ] || return 0
@@ -10924,7 +10926,7 @@ fm_plugin_registry() { # <fm>
         [ -n "$tag" ] || continue
         printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tag" "Curated" "$tag" "$repo" "$dest" "$desc"
         seen="$seen $dest"
-    done < <(fm_plugin_catalog "$fm")
+    done <<< "$(fm_plugin_catalog "$fm")"
     dir=$(fm_plugin_cache_dir); tsv="$dir/$fm.tsv"
     [ -s "$tsv" ] || return 0
     while IFS=$'\t' read -r tag cat name repo dest desc; do
@@ -11858,7 +11860,7 @@ awesome_linux_browse_file() { # filtered TSV
         local args=() id category name url source desc
         while IFS=$'\t' read -r id category name url source desc; do
             [ -n "$id" ] && args+=("$id" "$name — ${desc:-No description available}")
-        done < <(sed -n "${start},${end}p" "$file")
+        done <<< "$(sed -n "${start},${end}p" "$file")"
         [ "$end" -lt "$total" ] && args+=(__next "Next page")
         [ "$page" -gt 0 ] && args+=(__prev "Previous page")
         args+=(__back "Back")
@@ -11890,7 +11892,7 @@ awesome_linux_category_level() { # <catalog> <prefix> <title>
         [ -n "$path" ] || continue
         label=${path%% / *}
         printf '%s\n' "$label"
-    done < <(awk -F '\t' '{print $2}' "$catalog") | sort -fu > "$labels"
+    done <<< "$(awk -F '\t' '{print $2}' "$catalog")" | sort -fu > "$labels"
     while IFS= read -r label; do
         [ -n "$label" ] || continue
         n=$((n+1)); tag=$(printf 'c%04d' "$n")

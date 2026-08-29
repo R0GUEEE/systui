@@ -62,7 +62,7 @@ bedrock_sysconfig_package_candidates() { # <package>
         [ -n "$ver" ] || continue
         [ "$ver" != "(none)" ] || continue
         printf '%s\t%s\t%s\n' "$ver" "$st" "$pm"
-    done < <(bedrock_sysconfig_strata)
+    done <<< "$(bedrock_sysconfig_strata)"
 }
 
 # Map a version string to a lexicographically-sortable numeric key so the

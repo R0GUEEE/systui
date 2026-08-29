@@ -89,7 +89,7 @@ bedrock_sysconfig_package_sources() { # <package>
             pm=$(bedrock_sysconfig_stratum_pm "$st")
             printf '%s|%s\n' "$st" "$pm"
         fi
-    done < <(bedrock_sysconfig_strata)
+    done <<< "$(bedrock_sysconfig_strata)"
 }
 
 bedrock_sysconfig_install_fallback() { # <package>
@@ -186,7 +186,7 @@ pm_search() {
     while IFS= read -r st; do
         [ -n "$st" ] || continue
         bedrock_sysconfig_search_one "$st" "$term"
-    done < <(bedrock_sysconfig_strata)
+    done <<< "$(bedrock_sysconfig_strata)"
 }
 
 bedrock_sysconfig_info_one() { # <stratum> <package>
@@ -219,7 +219,7 @@ pkg_show_info() {
         [ -n "$st" ] || continue
         bedrock_sysconfig_pkg_available "$st" "$pkg" || continue
         bedrock_sysconfig_info_one "$st" "$pkg"
-    done < <(bedrock_sysconfig_strata)
+    done <<< "$(bedrock_sysconfig_strata)"
 }
 
 return 0 2>/dev/null || true

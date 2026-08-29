@@ -264,7 +264,7 @@ rootfs_backend_components_compatible() { # <distro> <csv>
     while IFS= read -r item; do
         [ -n "$item" ] || continue
         case "$allowed" in *" $item "*) ;; *) return 1 ;; esac
-    done < <(printf '%s' "$csv" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+    done <<< "$(printf '%s' "$csv" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
     return 0
 }
 
@@ -397,7 +397,7 @@ rootfs_resolve_backend() { # <distro> <selected> [arch] [release]
             printf '%s\n' "$tag"
             return 0
         fi
-    done < <(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)
+    done <<< "$(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)"
     # Nothing installed: still name the preferred backend for this distro so
     # the caller can say which tool to install instead of failing anonymously.
     [ -n "$first" ] || return 1
@@ -420,7 +420,7 @@ rootfs_backend_menu() { # <distro> [arch] [release]
         else
             missing+=("$tag — needs $(rootfs_backend_requirements "$tag")")
         fi
-    done < <(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)
+    done <<< "$(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)"
 
     if [ "$usable" -eq 0 ]; then
         local hint=""
@@ -1498,7 +1498,7 @@ rootfs_catalog_select_category() { # category title [family]
         [ -n "$tag" ] || continue
         rootfs_catalog_available_for "$tag" "$family" || continue
         args+=("$tag" "$desc" "$state")
-    done < <(rootfs_catalog_items "$category")
+    done <<< "$(rootfs_catalog_items "$category")"
     [ ${#args[@]} -gt 0 ] || return 0
     tui_check "Additional packages: $title" "SPACE toggles packages; ENTER adds selection:" "${args[@]}"
 }
@@ -1516,7 +1516,7 @@ rootfs_catalog_search() { # [family]
             if printf '%s %s\n' "$tag" "$desc" | grep -qi -- "$q"; then
                 args+=("$tag" "$desc" off)
             fi
-        done < <(rootfs_catalog_items "$category")
+        done <<< "$(rootfs_catalog_items "$category")"
     done
     if [ ${#args[@]} -eq 0 ]; then
         tui_msg "Package catalogue" "No catalogue entries matched: $q"
@@ -2900,7 +2900,7 @@ rootfs_wb_engine_menu() { # <target>
         rootfs_wb_engine_available "$tag" || continue
         args+=("$tag" "$label [$(rootfs_wb_engine_status "$tag")]" \
                "$(_rootfs_radio_state "$current" "$tag")")
-    done < <(rootfs_wb_engines)
+    done <<< "$(rootfs_wb_engines)"
     if [ ${#args[@]} -eq 0 ]; then
         tui_msg "No execution engine" \
 "None of chroot, proot, systemd-nspawn or unshare is installed.
@@ -2946,7 +2946,7 @@ rootfs_wb_engine_argv() { # <target> <engine> <command> [args...]
             while IFS= read -r bind; do
                 [ -n "$bind" ] || continue
                 printf '%s\n%s\n' -b "$bind"
-            done < <(rootfs_wb_binds_as_proot "$t")
+            done <<< "$(rootfs_wb_binds_as_proot "$t")"
             if needs_qemu "$arch"; then
                 qbin=$(qemu_bin_for "$arch")
                 [ -n "$qbin" ] && command -v "$qbin" >/dev/null 2>&1 &&
@@ -2959,7 +2959,7 @@ rootfs_wb_engine_argv() { # <target> <engine> <command> [args...]
             while IFS= read -r bind; do
                 [ -n "$bind" ] || continue
                 printf '%s\n%s\n' --bind "$bind"
-            done < <(rootfs_wb_binds_as_proot "$t")
+            done <<< "$(rootfs_wb_binds_as_proot "$t")"
             ;;
         unshare)
             # --mount-proc gives the namespace its own /proc, so no host mount
@@ -3002,7 +3002,7 @@ rootfs_wb_binds_as_proot() { # <target>
         [ -n "$entry" ] || continue
         src=${entry%%>*}; dst=${entry#*>}
         printf '%s:%s\n' "$src" "$dst"
-    done < <(rootfs_wb_binds_get "$1")
+    done <<< "$(rootfs_wb_binds_get "$1")"
 }
 
 rootfs_wb_binds_menu() { # <target>
@@ -3013,7 +3013,7 @@ rootfs_wb_binds_menu() { # <target>
         while IFS= read -r entry; do
             [ -n "$entry" ] || continue
             args+=("$entry" "${entry%%>*}  ->  ${entry#*>}")
-        done < <(rootfs_wb_binds_get "$t")
+        done <<< "$(rootfs_wb_binds_get "$t")"
         # tui_menu_no_tags hides the tag column, so the internal tags below
         # are never shown; entries are always "src>dst" and cannot collide
         # with the plain action words.
@@ -3084,7 +3084,7 @@ rootfs_wb_detach_all() { # <target>
         [ -n "$mp" ] || continue
         umount "$mp" 2>>"$LOGFILE" && continue
         umount -l "$mp" 2>>"$LOGFILE" || { warn "Could not detach $mp"; failed=1; }
-    done < <(rootfs_wb_live_mounts "$t")
+    done <<< "$(rootfs_wb_live_mounts "$t")"
     # Session bookkeeping is now stale; clear it so a later teardown does not
     # try to unmount paths that are already gone.
     ROOTFS_ACTIVE_MOUNTS=""
@@ -3104,7 +3104,7 @@ rootfs_wb_mount_report() { # <target>
         echo
         if [ "$n" -gt 0 ]; then
             echo "--- Active mounts (deepest first; this is the order they detach) ---"
-            while IFS= read -r mp; do [ -n "$mp" ] && echo "  $mp"; done < <(rootfs_wb_live_mounts "$t")
+            while IFS= read -r mp; do [ -n "$mp" ] && echo "  $mp"; done <<< "$(rootfs_wb_live_mounts "$t")"
         else
             echo "--- Active mounts ---"
             echo "  (none — the tree is safe to archive, move or delete)"
@@ -3114,7 +3114,7 @@ rootfs_wb_mount_report() { # <target>
         if rootfs_wb_binds_get "$t" | grep -q .; then
             while IFS= read -r mp; do
                 [ -n "$mp" ] && printf '  %s -> %s\n' "${mp%%>*}" "${mp#*>}"
-            done < <(rootfs_wb_binds_get "$t")
+            done <<< "$(rootfs_wb_binds_get "$t")"
         else
             echo "  (none)"
         fi
@@ -3144,7 +3144,7 @@ rootfs_wb_mount_persistent() { # <target>
         mkdir -p "$t$dst" 2>/dev/null || true
         mountpoint -q "$t$dst" 2>/dev/null && continue
         mount --bind "$src" "$t$dst" 2>>"$LOGFILE" || warn "Could not bind $src -> $t$dst"
-    done < <(rootfs_wb_binds_get "$t")
+    done <<< "$(rootfs_wb_binds_get "$t")"
     tui_msg "Mounted" \
 "Virtual filesystems and configured binds are mounted under:
 $t
@@ -3178,7 +3178,8 @@ rootfs_wb_enter() { # <target>
         owned=1
     fi
 
-    mapfile -t argv < <(rootfs_wb_engine_argv "$t" "$engine" "$shell" -l) || true
+    mapfile -t argv <<< "$(rootfs_wb_engine_argv "$t" "$engine" "$shell" -l)" || true
+    [ -n "${argv[0]:-}" ] || argv=()
     if [ ${#argv[@]} -eq 0 ]; then
         [ "$owned" = 1 ] && rootfs_unmount_chroot_fs "$t" "${ROOTFS_ACTIVE_MOUNTS:-}"
         tui_msg "Engine error" "Could not build a command line for engine '$engine'."
@@ -3218,7 +3219,8 @@ rootfs_wb_run_once() { # <target>
         rootfs_mount_chroot_fs "$t" || true
         owned=1
     fi
-    mapfile -t argv < <(rootfs_wb_engine_argv "$t" "$engine" /bin/sh -c "$cmd") || true
+    mapfile -t argv <<< "$(rootfs_wb_engine_argv "$t" "$engine" /bin/sh -c "$cmd")" || true
+    [ -n "${argv[0]:-}" ] || argv=()
     if [ ${#argv[@]} -gt 0 ]; then
         run_cmd "[$engine] $cmd" "${argv[@]}" || rc=$?
     else
@@ -3467,7 +3469,7 @@ rootfs_dm_binary() { # <tag>
     local tag bin label
     while IFS='|' read -r tag bin label; do
         [ "$tag" = "$1" ] && { printf '%s\n' "$bin"; return 0; }
-    done < <(rootfs_dm_managers)
+    done <<< "$(rootfs_dm_managers)"
     return 1
 }
 
@@ -3475,7 +3477,7 @@ rootfs_dm_label() { # <tag>
     local tag bin label
     while IFS='|' read -r tag bin label; do
         [ "$tag" = "$1" ] && { printf '%s\n' "$label"; return 0; }
-    done < <(rootfs_dm_managers)
+    done <<< "$(rootfs_dm_managers)"
     printf '%s\n' "$1"
 }
 
@@ -3750,7 +3752,7 @@ rootfs_dm_pick_distro() { # <tag> -> alias on stdout
     while IFS='|' read -r alias desc; do
         [ -n "$alias" ] || continue
         args+=("$alias" "$alias — ${desc:-distribution}")
-    done < <(rootfs_dm_parse_distros "$tag" 2>/dev/null || true)
+    done <<< "$(rootfs_dm_parse_distros "$tag" 2>/dev/null || true)"
 
     if [ ${#args[@]} -eq 0 ]; then
         # Parsing found nothing usable; never guess, just ask.
@@ -3782,7 +3784,7 @@ rootfs_dm_pick_installed() { # <tag> -> alias
     while IFS= read -r d; do
         [ -n "$d" ] || continue
         args+=("$(basename "$d")" "$(basename "$d")  $(du -sh "$d" 2>/dev/null | cut -f1)")
-    done < <(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)
+    done <<< "$(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)"
     if [ ${#args[@]} -eq 0 ]; then
         tui_input "$tag" "Installed distribution name:" ""
         return
@@ -3934,7 +3936,7 @@ Configure > Rootfs location."
                 while IFS= read -r d; do
                     [ -n "$d" ] || continue
                     args+=("$d" "$(basename "$d")  $(du -sh "$d" 2>/dev/null | cut -f1)")
-                done < <(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)
+                done <<< "$(rootfs_dm_installed_dirs "$tag" 2>/dev/null || true)"
                 if [ ${#args[@]} -eq 0 ]; then
                     tui_msg "Nothing installed" "No distributions found under:\n$store"
                     continue
@@ -3961,7 +3963,7 @@ menu_rootfs_distro_managers() {
         while IFS='|' read -r tag bin label; do
             [ -n "$tag" ] || continue
             args+=("$tag" "$label  $(rootfs_dm_available "$tag" && echo '[installed]' || echo '[not installed]')")
-        done < <(rootfs_dm_managers)
+        done <<< "$(rootfs_dm_managers)"
         c=$(tui_menu_no_tags "Distro managers" \
 "Tools that install a ready-made distribution in one command.
 They own their rootfs store, so they appear here rather than as
@@ -4387,7 +4389,7 @@ rootfs_builder_impl() {
         # amd64 is the natural default; others are manually selected.
         if [ "$_arch" = amd64 ]; then _astate=on; default_has_x86=1; else _astate=off; fi
         arch_items+=("$_arch" "${_alabel:-$_arch}" "$_astate")
-    done < <(rootfs_distro_archs "$distro" 2>/dev/null)
+    done <<< "$(rootfs_distro_archs "$distro" 2>/dev/null)"
     if [ ${#arch_items[@]} -eq 0 ]; then
         tui_msg "No architectures" "This distribution has no supported build architecture on this version of systui."
         return 0
