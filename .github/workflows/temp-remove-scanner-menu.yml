@@ -1,0 +1,43 @@
+name: Temporary scanner menu removal
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    if: github.event.head_commit.message == 'chore: apply scanner-menu removal'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Remove Scanner from System Configuration menu
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/features/sysconfig.sh')
+          s = p.read_text()
+          menu = '            scanner "Scanner" \\\n'
+          dispatch = '            scanner)    menu_scanner ;;\n'
+          if s.count(menu) != 1:
+              raise SystemExit(f'expected exactly one scanner menu entry, found {s.count(menu)}')
+          if s.count(dispatch) != 1:
+              raise SystemExit(f'expected exactly one scanner dispatch, found {s.count(dispatch)}')
+          s = s.replace(menu, '', 1).replace(dispatch, '', 1)
+          p.write_text(s)
+          PY
+          bash -n src/features/sysconfig.sh
+          ! grep -F '            scanner "Scanner" \' src/features/sysconfig.sh
+          ! grep -F '            scanner)    menu_scanner ;;' src/features/sysconfig.sh
+          rm -f .github/workflows/temp-remove-scanner-menu.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/features/sysconfig.sh .github/workflows/temp-remove-scanner-menu.yml
+          git commit -m 'ui: remove Scanner from System Configuration'
+          git push origin HEAD:main
