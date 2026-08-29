@@ -165,7 +165,7 @@ run_strict() {
         _manifest="$SYSTUI_LIBDIR/src/features/.load-order"
         [ -r "$_manifest" ] || { echo "systui: missing feature load manifest" >&2; exit 1; }
         while IFS= read -r _rel || [ -n "$_rel" ]; do
-            case "$_rel" in ''|'#'*) continue ;; esac
+            case "$_rel" in ""|\#*) continue ;; esac
             _f="$SYSTUI_LIBDIR/src/features/$_rel"
             [ -f "$_f" ] || { echo "systui: manifest references missing feature: $_rel" >&2; exit 1; }
             . "$_f" || exit 1
