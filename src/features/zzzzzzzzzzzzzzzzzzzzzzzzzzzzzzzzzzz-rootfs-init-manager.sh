@@ -13,17 +13,28 @@ rootfs_wb_init_detect() { # <target>
 }
 
 rootfs_wb_init_install_apt() { # <target> <init>
-    local t="$1" init="$2" cmd
+    local t="$1" init="$2" cmd rc=0
     rootfs_wb_ish_fix_dirs "$t" 2>/dev/null || mkdir -p "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/run" "$t/tmp"
-    [ "$(rootfs_wb_mount_count "$t" 2>/dev/null || echo 0)" -gt 0 ] || rootfs_wb_mount_persistent "$t" || return 1
+    if declare -F rootfs_wb_init_mount_required >/dev/null 2>&1; then
+        rootfs_wb_init_mount_required "$t" || return 1
+    else
+        rootfs_mount_chroot_fs "$t" || true
+        [ -r "$t/proc/self/status" ] || { tui_msg "Missing /proc" "The init package cannot be configured because /proc is not mounted inside the rootfs."; return 1; }
+    fi
     case "$init" in
         systemd) cmd='apt-get update && apt-get -f install -y && apt-get install --reinstall -y systemd systemd-sysv' ;;
         runit) cmd='apt-get update && apt-get -f install -y && apt-get install -y runit runit-services' ;;
         openrc) cmd='apt-get update && apt-get -f install -y && apt-get install -y openrc' ;;
         sysvinit) cmd='apt-get update && apt-get -f install -y && apt-get install -y sysvinit-core sysvinit-utils' ;;
-        *) return 2 ;;
+        *) rc=2 ;;
     esac
-    in_chroot "$t" sh -c "export DEBIAN_FRONTEND=noninteractive; $cmd" || return $?
+    if [ "$rc" -eq 0 ]; then
+        in_chroot "$t" sh -c "export DEBIAN_FRONTEND=noninteractive; $cmd" || rc=$?
+    fi
+    if declare -F rootfs_wb_init_unmount_required >/dev/null 2>&1; then
+        rootfs_wb_init_unmount_required
+    fi
+    return "$rc"
 }
 
 rootfs_wb_init_wire() { # <target> <init>
