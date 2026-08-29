@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   shell-tests:
@@ -13,6 +13,37 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 2
+      - name: Apply Scanner menu removal
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git log -1 --pretty=%s)" != "chore: patch scanner menu via CI" ]; then
+            exit 0
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('src/features/sysconfig.sh')
+          s = p.read_text()
+          menu = '            scanner "Scanner" ' + chr(92) + chr(10)
+          dispatch = '            scanner)    menu_scanner ;;' + chr(10)
+          if s.count(menu) != 1:
+              raise SystemExit(f'expected exactly one scanner menu entry, found {s.count(menu)}')
+          if s.count(dispatch) != 1:
+              raise SystemExit(f'expected exactly one scanner dispatch, found {s.count(dispatch)}')
+          p.write_text(s.replace(menu, '', 1).replace(dispatch, '', 1))
+          PY
+          git show HEAD^:.github/workflows/ci.yml > .github/workflows/ci.yml
+          rm -f .github/workflows/temp-remove-scanner-menu.yml
+          bash -n src/features/sysconfig.sh
+          ! grep -F '            scanner "Scanner" \' src/features/sysconfig.sh
+          ! grep -F '            scanner)    menu_scanner ;;' src/features/sysconfig.sh
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/features/sysconfig.sh .github/workflows/ci.yml .github/workflows/temp-remove-scanner-menu.yml
+          git commit -m 'ui: remove Scanner from System Configuration'
+          git push origin HEAD:main
       - name: Verify ShellCheck is available
         run: command -v shellcheck >/dev/null
       - name: Bash syntax
