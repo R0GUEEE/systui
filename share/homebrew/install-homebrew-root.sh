@@ -32,14 +32,25 @@ case "$(uname -m)" in
 esac
 
 run_as_brew_user() {
+    # Never inherit a root-only working directory (commonly /root). Homebrew
+    # validates the current directory after privileges are dropped and refuses
+    # to run when the target account cannot traverse it.
+    local workdir="$PWD"
     if command -v runuser >/dev/null 2>&1; then
-        runuser -u "$BREW_USER" -- env HOME="$BREW_HOME" USER="$BREW_USER" LOGNAME="$BREW_USER" "$@"
+        runuser -u "$BREW_USER" -- test -x "$workdir" >/dev/null 2>&1 || workdir="$BREW_HOME"
+        runuser -u "$BREW_USER" -- env HOME="$BREW_HOME" USER="$BREW_USER" LOGNAME="$BREW_USER" \
+            bash -c 'cd "$1" && shift && exec "$@"' bash "$workdir" "$@"
     elif command -v sudo >/dev/null 2>&1; then
-        sudo -H -u "$BREW_USER" env HOME="$BREW_HOME" USER="$BREW_USER" LOGNAME="$BREW_USER" "$@"
+        sudo -H -u "$BREW_USER" test -x "$workdir" >/dev/null 2>&1 || workdir="$BREW_HOME"
+        sudo -H -u "$BREW_USER" env HOME="$BREW_HOME" USER="$BREW_USER" LOGNAME="$BREW_USER" \
+            bash -c 'cd "$1" && shift && exec "$@"' bash "$workdir" "$@"
     elif command -v su >/dev/null 2>&1; then
         local quoted=() arg
+        if ! su -s /bin/bash "$BREW_USER" -c "test -x $(printf %q "$workdir")" >/dev/null 2>&1; then
+            workdir="$BREW_HOME"
+        fi
         for arg in "$@"; do printf -v arg '%q' "$arg"; quoted+=("$arg"); done
-        su -s /bin/bash "$BREW_USER" -c "HOME=$(printf %q "$BREW_HOME") USER=$(printf %q "$BREW_USER") LOGNAME=$(printf %q "$BREW_USER") ${quoted[*]}"
+        su -s /bin/bash "$BREW_USER" -c "cd $(printf %q "$workdir") && HOME=$(printf %q "$BREW_HOME") USER=$(printf %q "$BREW_USER") LOGNAME=$(printf %q "$BREW_USER") ${quoted[*]}"
     else
         die "Need runuser, sudo, or su to execute Homebrew without root privileges."
     fi
@@ -132,10 +143,15 @@ if [ -r "\$ROOT_ENV_FILE" ]; then
 fi
 
 if [ "\$(id -u)" -eq 0 ]; then
+    BREW_CWD="\$PWD"
     if command -v runuser >/dev/null 2>&1; then
-        exec runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" "\$REAL_BREW" "\$@"
+        runuser -u "\$BREW_USER" -- test -x "\$BREW_CWD" >/dev/null 2>&1 || BREW_CWD="\$BREW_HOME"
+        exec runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" \
+            bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
     elif command -v sudo >/dev/null 2>&1; then
-        exec sudo -H -u "\$BREW_USER" env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" "\$REAL_BREW" "\$@"
+        sudo -H -u "\$BREW_USER" test -x "\$BREW_CWD" >/dev/null 2>&1 || BREW_CWD="\$BREW_HOME"
+        exec sudo -H -u "\$BREW_USER" env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" \
+            bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
     else
         echo "brew: root invocation requires runuser or sudo to drop privileges" >&2
         exit 1
@@ -163,7 +179,10 @@ install_brew
 install_wrapper
 
 log "Verifying Homebrew through the privilege-dropping wrapper"
-"$ROOT_WRAPPER" --version
+(
+    cd "$BREW_HOME"
+    "$ROOT_WRAPPER" --version
+)
 
 cat <<EOF_DONE
 
