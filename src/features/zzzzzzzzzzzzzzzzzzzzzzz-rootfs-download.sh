@@ -54,7 +54,7 @@ rootfs_download_official_url() { # <distro> <release> <arch>
         ubuntu)
             base="https://cdimage.ubuntu.com/ubuntu-base/releases/$release/release"
             html=$(rootfs_fetch_text "$base/" 2>/dev/null) || return 1
-            file=$(printf '%s\n' "$html" | grep -oE "ubuntu-base-[0-9.]+-base-${arch}\\.tar\\.gz" | sort -V | tail -1)
+            file=$(printf '%s\n' "$html" | grep -oE "ubuntu-base-[0-9.]+-base-${arch}\\.tar\\.gz" | sort | tail -1)
             [ -n "$file" ] || return 1
             printf '%s/%s\n' "$base" "$file"
             ;;
@@ -64,7 +64,7 @@ rootfs_download_official_url() { # <distro> <release> <arch>
             esac
             base="https://dl-cdn.alpinelinux.org/alpine/$release/releases/$native_arch"
             html=$(rootfs_fetch_text "$base/" 2>/dev/null) || return 1
-            file=$(printf '%s\n' "$html" | grep -oE "alpine-minirootfs-[0-9.]+-${native_arch}\\.tar\\.gz" | sort -V | tail -1)
+            file=$(printf '%s\n' "$html" | grep -oE "alpine-minirootfs-[0-9.]+-${native_arch}\\.tar\\.gz" | sort | tail -1)
             [ -n "$file" ] || return 1
             printf '%s/%s\n' "$base" "$file"
             ;;
@@ -80,7 +80,7 @@ rootfs_download_official_url() { # <distro> <release> <arch>
             case "$arch" in amd64) native_arch=x86_64 ;; arm64) native_arch=aarch64 ;; armhf) native_arch=armv7l ;; i386) native_arch=i686 ;; riscv64) native_arch=riscv64 ;; *) return 1 ;; esac
             base="https://repo-default.voidlinux.org/live/current"
             html=$(rootfs_fetch_text "$base/" 2>/dev/null) || return 1
-            file=$(printf '%s\n' "$html" | grep -oE "void-${native_arch}-ROOTFS-[0-9_]+\\.tar\\.xz" | sort -V | tail -1)
+            file=$(printf '%s\n' "$html" | grep -oE "void-${native_arch}-ROOTFS-[0-9_]+\\.tar\\.xz" | sort | tail -1)
             [ -n "$file" ] || return 1
             printf '%s/%s\n' "$base" "$file"
             ;;
@@ -89,7 +89,7 @@ rootfs_download_official_url() { # <distro> <release> <arch>
 }
 
 rootfs_download_to_gz() { # <url> <output.tar.gz>
-    local url="$1" output="$2" tmp archive work
+    local url="$1" output="$2" tmp archive work packroot first count
     tmp=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-rootfs-download.XXXXXX") || return 1
     archive="$tmp/source"
     work="$tmp/rootfs"
@@ -107,7 +107,15 @@ rootfs_download_to_gz() { # <url> <output.tar.gz>
         *) rm -rf "$tmp"; tui_msg "Unsupported archive" "The selected source did not publish a supported rootfs archive."; return 1 ;;
     esac || { rm -rf "$tmp"; return 1; }
 
-    rootfs_tar_create gz "$work" "$output" || { rm -rf "$tmp"; return 1; }
+    # Some bootstrap archives (notably Arch) wrap the filesystem in one
+    # root.<arch> directory. Strip that wrapper so the resulting tar.gz always
+    # contains bin/, etc/, usr/... at its root.
+    count=$(find "$work" -mindepth 1 -maxdepth 1 -print 2>/dev/null | wc -l | tr -d ' ')
+    first=$(find "$work" -mindepth 1 -maxdepth 1 -print 2>/dev/null | head -1)
+    packroot="$work"
+    if [ "$count" = 1 ] && [ -d "$first" ] && [ -d "$first/etc" ]; then packroot="$first"; fi
+
+    rootfs_tar_create gz "$packroot" "$output" || { rm -rf "$tmp"; return 1; }
     rm -rf "$tmp"
     return 0
 }
@@ -147,8 +155,6 @@ rootfs_download() {
     fi
 }
 
-# Explicit Rootfs menu with Download included. Keep this definition static;
-# do not rewrite menu functions with declare/awk/eval.
 menu_rootfs() {
     while true; do
         local c
