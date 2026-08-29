@@ -18,6 +18,37 @@ rootfs_deb_base_incomplete() { # <target>
     return 1
 }
 
+# mmdebstrap recovery on iSH-AOK must not inherit stale virtual filesystems or
+# device nodes from a previous failed attempt.  In particular, mmdebstrap's
+# setup hook creates /dev/console itself and aborts if an old node already
+# exists.  It also probes mount namespaces unless Systui explicitly tells the
+# wrapper that unshare is unavailable.
+rootfs_recover_mmdebstrap_prepare() { # <target>
+    local t="$1" p
+
+    if declare -F rootfs_wb_detach_all >/dev/null 2>&1; then
+        rootfs_wb_detach_all "$t" >/dev/null 2>&1 || true
+    fi
+
+    # Do not remove the /dev directory itself; only clear runtime/device
+    # contents so mmdebstrap can recreate exactly what its setup stage needs.
+    if [ -d "$t/dev" ]; then
+        for p in "$t/dev"/* "$t/dev"/.[!.]* "$t/dev"/..?*; do
+            [ -e "$p" ] || [ -L "$p" ] || continue
+            rootfs_rm_tree "$p" 2>/dev/null || rm -rf -- "$p" 2>/dev/null || true
+        done
+    fi
+    mkdir -p "$t/dev" "$t/proc" "$t/sys" "$t/run" "$t/tmp" || return 1
+
+    # These files are safe for mmdebstrap to replace/retain, but stale device
+    # nodes are not.  Explicitly remove the common fatal collision as a final
+    # guard for BusyBox glob edge cases.
+    rm -f -- "$t/dev/console" "$t/dev/null" "$t/dev/zero" "$t/dev/full" \
+        "$t/dev/random" "$t/dev/urandom" "$t/dev/tty" 2>/dev/null || true
+
+    return 0
+}
+
 rootfs_recover_deb_base() { # <target> <distro> <release> <arch> <mirror> <packages> <use_qemu> <backend>
     local t="$1" distro="$2" release="$3" arch="$4" mirror="$5" pkgs="$6" use_qemu="$7" backend="$8"
 
@@ -58,11 +89,31 @@ Do not run dpkg --configure -a yet; restore the base system first."
 Systui must resume/re-run the $backend bootstrap before package repair.
 Continue?" || return 1
 
-    build_debfamily "$distro" "$release" "$arch" "$mirror" "$t" "$pkgs" "$use_qemu" "$backend" || {
-        rootfs_set_build_stage "$t" bootstrap-recovery-failed
-        tui_msg "Bootstrap recovery failed" "The $backend base-system recovery failed. See $LOGFILE."
-        return 1
-    }
+    case "$backend" in
+        mmdebstrap|bdebstrap)
+            rootfs_recover_mmdebstrap_prepare "$t" || {
+                rootfs_set_build_stage "$t" bootstrap-recovery-prepare-failed
+                tui_msg "Bootstrap recovery failed" "Could not clear stale mounts/device nodes from the partial rootfs."
+                return 1
+            }
+            # Force the already-installed mmdebstrap compatibility wrapper into
+            # its no-unshare path for this recovery attempt, even if the host
+            # capability probe was stale or never ran in the current process.
+            SYSTUI_UNSHARE_SUPPORTED=0 \
+                build_debfamily "$distro" "$release" "$arch" "$mirror" "$t" "$pkgs" "$use_qemu" "$backend" || {
+                    rootfs_set_build_stage "$t" bootstrap-recovery-failed
+                    tui_msg "Bootstrap recovery failed" "The $backend base-system recovery failed. See $LOGFILE."
+                    return 1
+                }
+            ;;
+        *)
+            build_debfamily "$distro" "$release" "$arch" "$mirror" "$t" "$pkgs" "$use_qemu" "$backend" || {
+                rootfs_set_build_stage "$t" bootstrap-recovery-failed
+                tui_msg "Bootstrap recovery failed" "The $backend base-system recovery failed. See $LOGFILE."
+                return 1
+            }
+            ;;
+    esac
 
     if rootfs_deb_base_incomplete "$t"; then
         rootfs_set_build_stage "$t" bootstrap-essential-missing
@@ -125,8 +176,6 @@ rootfs_continue_generation() { # <target>
         ;;
     esac
 
-    # If the user selected second-stage explicitly on an otherwise complete
-    # rootfs, retain the original behavior.
     case " $action " in *" second "*)
         if [ -x "$t/debootstrap/debootstrap" ]; then
             if run_cmd "Complete debootstrap second stage" rootfs_run_second_stage "$t" "$arch" "$use_qemu"; then
@@ -138,7 +187,6 @@ rootfs_continue_generation() { # <target>
         fi ;;
     esac
 
-    # Never enter dpkg repair if the essential base is still incomplete.
     if rootfs_deb_base_incomplete "$t"; then
         tui_msg "Package repair deferred" "apt-get and/or libc6 are still missing. Restore the bootstrap base before running dpkg/APT repair."
         return 0
@@ -160,4 +208,4 @@ rootfs_continue_generation() { # <target>
     tui_msg "Recovery complete" "Generation recovery finished for:\n$t\n\nReview the log for any package-specific warnings: $LOGFILE"
 }
 
-export -f rootfs_deb_base_incomplete rootfs_recover_deb_base rootfs_continue_generation
+export -f rootfs_deb_base_incomplete rootfs_recover_mmdebstrap_prepare rootfs_recover_deb_base rootfs_continue_generation
