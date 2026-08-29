@@ -67,8 +67,6 @@ sysconfig_openssh_enable_start() {
             run_cmd "Start OpenSSH" sv up "$svc"
             ;;
         *)
-            # iSH and minimal roots sometimes expose an init helper even when
-            # detection is inconclusive. Use it if present before giving up.
             if command -v rc-service >/dev/null 2>&1 && command -v rc-update >/dev/null 2>&1; then
                 run_cmd "Enable OpenSSH at boot" rc-update add sshd default || return 1
                 run_cmd "Start OpenSSH" rc-service sshd start || run_cmd "Restart OpenSSH" rc-service sshd restart
@@ -111,6 +109,8 @@ sysconfig_openssh_quick_setup() {
         prohibit-password "Allow root with SSH keys only" off \
         yes "Allow root login with password" off) || return 0
 
+    command -v ssh-keygen >/dev/null 2>&1 && run_cmd "Generate missing SSH host keys" ssh-keygen -A || true
+
     config_dir=/etc/ssh/sshd_config.d
     config_file="$config_dir/10-systui-quick-setup.conf"
     mkdir -p "$config_dir"
@@ -122,9 +122,6 @@ sysconfig_openssh_quick_setup() {
         printf 'PermitRootLogin %s\n' "$rootlogin"
     } > "$tmp"
 
-    # Validate the complete effective configuration before replacing the
-    # managed drop-in. If this host's sshd lacks drop-in support, fall back to
-    # appending a managed block to the main config.
     install -m 0644 "$tmp" "$config_file" || { rm -f "$tmp"; return 1; }
     if ! sshd -t 2>"${SYSTUI_TMP:-/tmp}/sshd-quick.err"; then
         rm -f "$config_file"
@@ -133,8 +130,6 @@ sysconfig_openssh_quick_setup() {
         return 1
     fi
     rm -f "$tmp"
-
-    command -v ssh-keygen >/dev/null 2>&1 && run_cmd "Generate missing SSH host keys" ssh-keygen -A || true
 
     svc=$(sysconfig_openssh_service)
     if sysconfig_openssh_enable_start "$svc"; then
@@ -146,7 +141,6 @@ sysconfig_openssh_quick_setup() {
     return 1
 }
 
-# Final Common Tasks menu definition with one-pass OpenSSH setup added.
 menu_sysconfig_common() {
     while true; do
         local c
