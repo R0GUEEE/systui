@@ -10,11 +10,13 @@ set -Eeuo pipefail
 
 readonly BREW_USER="${SYSTUI_BREW_USER:-linuxbrew}"
 readonly BREW_HOME="${SYSTUI_BREW_HOME:-/home/linuxbrew}"
-readonly BREW_PREFIX="${SYSTUI_BREW_PREFIX:-$BREW_HOME/.linuxbrew}"
+readonly BREW_PREFIX="${SYSTUI_BREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
 readonly BREW_REPOSITORY="$BREW_PREFIX/Homebrew"
 readonly REAL_BREW="$BREW_REPOSITORY/bin/brew"
 readonly BREW_LINK="$BREW_PREFIX/bin/brew"
 readonly ROOT_WRAPPER="/usr/local/bin/brew"
+readonly ROOT_ENV_DIR="/etc/systui"
+readonly ROOT_ENV_FILE="${ROOT_ENV_DIR}/homebrew.env"
 readonly PROFILE_FILE="/etc/profile.d/homebrew.sh"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -76,6 +78,21 @@ ensure_user() {
     chown -R "$BREW_USER:$BREW_USER" "$BREW_PREFIX"
 }
 
+ensure_env_file() {
+    log "Preparing root-owned Homebrew settings"
+    install -d -m 0755 -o root -g root "$ROOT_ENV_DIR"
+    if [[ ! -e "$ROOT_ENV_FILE" ]]; then
+        cat > "$ROOT_ENV_FILE" <<'EOF_ENV'
+# systui-managed Homebrew behavior settings.
+# Only HOMEBREW_* variables belong here; Homebrew itself still runs unprivileged.
+HOMEBREW_NO_ANALYTICS=1
+HOMEBREW_NO_ENV_HINTS=1
+EOF_ENV
+    fi
+    chown root:root "$ROOT_ENV_FILE"
+    chmod 0644 "$ROOT_ENV_FILE"
+}
+
 install_brew() {
     if [[ -d "$BREW_REPOSITORY" && ! -x "$REAL_BREW" ]]; then
         log "Removing incomplete Homebrew checkout"
@@ -102,6 +119,18 @@ set -euo pipefail
 BREW_USER=$(printf %q "$BREW_USER")
 BREW_HOME=$(printf %q "$BREW_HOME")
 REAL_BREW=$(printf %q "$REAL_BREW")
+ROOT_ENV_FILE=$(printf %q "$ROOT_ENV_FILE")
+
+# Import only HOMEBREW_* settings from the root-owned systui config file.
+# Do not source arbitrary shell syntax into a privileged wrapper.
+if [ -r "\$ROOT_ENV_FILE" ]; then
+    while IFS='=' read -r key value; do
+        case "\$key" in
+            HOMEBREW_[A-Z0-9_]*) export "\$key=\$value" ;;
+        esac
+    done < "\$ROOT_ENV_FILE"
+fi
+
 if [ "\$(id -u)" -eq 0 ]; then
     if command -v runuser >/dev/null 2>&1; then
         exec runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" "\$REAL_BREW" "\$@"
@@ -129,6 +158,7 @@ EOF_PROFILE
 
 install_deps
 ensure_user
+ensure_env_file
 install_brew
 install_wrapper
 
