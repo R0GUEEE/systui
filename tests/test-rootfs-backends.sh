@@ -84,6 +84,40 @@ debootstrap_validation_is_local() {
 }
 check "release validation never executes debootstrap" debootstrap_validation_is_local
 
+release_menu_is_offline_by_default() {
+    local tmp result
+    tmp=$(mktemp -d)
+    (
+        rootfs_release_candidates() { : > "$tmp/network-called"; sleep 30; }
+        tui_radio() { printf '%s\n' trixie; }
+        result=$(LOGFILE="$tmp/log" rootfs_release_menu debian amd64)
+        [ "$result" = trixie ] && [ ! -e "$tmp/network-called" ]
+    )
+    local rc=$?
+    rm -rf "$tmp"
+    return "$rc"
+}
+check "release menu opens without repository access" release_menu_is_offline_by_default
+
+release_menu_refreshes_only_on_request() {
+    local tmp result
+    tmp=$(mktemp -d)
+    (
+        rootfs_release_candidates() { : > "$tmp/network-called"; printf '%s\n' bookworm trixie; }
+        tui_radio() {
+            if [ -e "$tmp/refreshed" ]; then printf '%s\n' trixie
+            else : > "$tmp/refreshed"; printf '%s\n' refresh
+            fi
+        }
+        result=$(LOGFILE="$tmp/log" rootfs_release_menu debian amd64)
+        [ "$result" = trixie ] && [ -e "$tmp/network-called" ]
+    )
+    local rc=$?
+    rm -rf "$tmp"
+    return "$rc"
+}
+check "release discovery runs only after refresh" release_menu_refreshes_only_on_request
+
 # Arch Linux: x86_64 uses the official repos; ARM uses Arch Linux ARM.
 check "Arch offers pacstrap on amd64" lists_backend arch amd64 pacstrap
 check "Arch offers the ARM tarball on arm64" lists_backend arch arm64 alarm-tarball

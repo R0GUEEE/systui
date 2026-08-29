@@ -1199,59 +1199,77 @@ rootfs_release_candidates() { # <distro> <arch>
 }
 
 rootfs_release_menu() { # <distro> <arch>
-    local distro="$1" arch="$2" candidates="" tags=() r def state
-    candidates=$(rootfs_release_candidates "$distro" "$arch" | tail -n 12)
+    local distro="$1" arch="$2" candidates="" discovered="" tags=() r def state
+    # Keep the interactive path offline-safe. Repository discovery used to run
+    # synchronously before this dialog appeared; on iSH a stalled downloader or
+    # an incompatible BusyBox parser made the wizard look broken immediately
+    # after architecture selection. Maintained defaults render instantly, while
+    # an explicit refresh below still provides live repository data on demand.
     case "$distro" in
-        debian) def=trixie; [ -n "$candidates" ] || candidates=$'bookworm\ntrixie\nforky\nsid' ;;
+        debian) def=trixie; candidates=$'bookworm\ntrixie\nforky\nsid' ;;
         devuan)
             if [ "$arch" = riscv64 ]; then
                 # Only ceres carries riscv64 packages.
                 def=ceres
-                [ -n "$candidates" ] || candidates=ceres
+                candidates=ceres
             else
                 def=excalibur
-                [ -n "$candidates" ] || candidates=$'daedalus\nexcalibur\nfreia\nceres'
+                candidates=$'daedalus\nexcalibur\nfreia\nceres'
             fi ;;
-        ubuntu) def=noble; [ -n "$candidates" ] || candidates=$'jammy\nnoble\noracular\nplucky\nquesting' ;;
+        ubuntu) def=noble; candidates=$'jammy\nnoble\noracular\nplucky\nquesting' ;;
         alpine)
             if [ "$arch" = riscv64 ]; then
                 # riscv64 only became an Alpine architecture in v3.21.
                 def=v3.21
-                [ -n "$candidates" ] || candidates=$'v3.21\nv3.22\nedge'
+                candidates=$'v3.21\nv3.22\nedge'
             else
                 def=v3.20
-                [ -n "$candidates" ] || candidates=$'v3.19\nv3.20\nv3.21\nedge'
+                candidates=$'v3.19\nv3.20\nv3.21\nedge'
             fi ;;
-        fedora) def=42; [ -n "$candidates" ] || candidates=$'41\n42\n43' ;;
+        fedora) def=42; candidates=$'41\n42\n43' ;;
         kali) def=kali-rolling; candidates=$'kali-rolling\nkali-last-snapshot' ;;
-        opensuse) def=15.6; [ -n "$candidates" ] || candidates=$'15.5\n15.6' ;;
+        opensuse) def=15.6; candidates=$'15.5\n15.6' ;;
         tumbleweed) def=current; candidates=current ;;
         gentoo) def=openrc; candidates=$'openrc\nsystemd' ;;
         bedrock) def=current; candidates=$'current\n0.7.31\n0.7.30' ;;
         arch) def=rolling; candidates=rolling ;;
         void) def=current; candidates=current ;;
     esac
-    local have_default=0
-    while IFS= read -r r; do
-        [ -n "$r" ] || continue
-        state=off; [ "$r" = "$def" ] && { state=on; have_default=1; }
-        tags+=("$r" "$distro $r" "$state")
-    done <<< "$candidates"
-    # Repository discovery is trimmed to the last 12 entries, so $def is not
-    # guaranteed to survive. With nothing marked "on", dialog returns an empty
-    # string and the build aborts, so fall back to preselecting the first
-    # candidate instead.
-    if [ "$have_default" = 0 ] && [ ${#tags[@]} -ge 3 ]; then
-        tags[2]=on
-    fi
-    tags+=(custom "Enter a release manually" off)
-    r=$(tui_radio "Rootfs Builder 3/13" "Release from the $distro repository (SPACE selects):" "${tags[@]}") || return 1
-    if [ "$r" = custom ]; then
-        r=$(tui_input "Custom release" "Release/branch name:" "$def") || return 1
-        rootfs_valid_release "$r" || { tui_msg "Invalid release" "Use only letters, digits, and . _ + - characters."; return 1; }
-    fi
-    [ -n "$r" ] || return 1
-    printf '%s\n' "$r"
+    while true; do
+        tags=()
+        local have_default=0
+        while IFS= read -r r; do
+            [ -n "$r" ] || continue
+            state=off; [ "$r" = "$def" ] && { state=on; have_default=1; }
+            tags+=("$r" "$distro $r" "$state")
+        done <<< "$candidates"
+        # Live discovery is trimmed to the last 12 entries, so $def is not
+        # guaranteed to survive. Always preselect a valid entry for dialog.
+        if [ "$have_default" = 0 ] && [ ${#tags[@]} -ge 3 ]; then
+            tags[2]=on
+        fi
+        tags+=(refresh "Refresh releases from the repository (network)" off \
+               custom "Enter a release manually" off)
+        r=$(tui_radio "Rootfs Builder 3/13" "Release (SPACE selects; refresh is optional):" "${tags[@]}") || return 1
+        case "$r" in
+            refresh)
+                discovered=$(rootfs_release_candidates "$distro" "$arch" 2>>"$LOGFILE" | tail -n 12)
+                if [ -n "$discovered" ]; then
+                    candidates="$discovered"
+                else
+                    tui_msg "Release refresh failed" "Could not discover releases from the repository.\n\nThe maintained offline list is still available."
+                fi
+                continue
+                ;;
+            custom)
+                r=$(tui_input "Custom release" "Release/branch name:" "$def") || return 1
+                rootfs_valid_release "$r" || { tui_msg "Invalid release" "Use only letters, digits, and . _ + - characters."; return 1; }
+                ;;
+        esac
+        [ -n "$r" ] || return 1
+        printf '%s\n' "$r"
+        return 0
+    done
 }
 
 
