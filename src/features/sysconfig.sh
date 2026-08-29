@@ -4698,11 +4698,15 @@ be restored as .zshrc." || continue
                     line=$(grep -m1 "^$t|" <<<"$OMZ_EXTERNAL_PLUGINS") || continue
                     repo=$(cut -d'|' -f2 <<<"$line")
                     [ -d "$ozsh/custom/plugins/$t" ] || \
-                        su - "$u" -c "git clone --depth 1 https://github.com/$repo ~/.oh-my-zsh/custom/plugins/$t" \
+                        su - "$u" -c "git clone --depth 1 --recurse-submodules https://github.com/$repo ~/.oh-my-zsh/custom/plugins/$t" \
                             >>"$LOGFILE" 2>&1 || warn "Clone failed: $repo"
                 done
                 omb_set_array "$rc" plugins $sel \
                     && tui_msg "Done" "plugins=($sel)\nwritten to $rc"
+                # New custom/plugins dirs are on fpath: build the compinit dump
+                # now so the next shell start does not stall rebuilding it.
+                su - "$u" -c 'command -v zsh >/dev/null 2>&1 && zsh -f -c "autoload -Uz compinit && compinit" >/dev/null 2>&1' \
+                    >>"$LOGFILE" 2>&1 || true
                 show_warnings ;;
             current)
                 {
@@ -6361,11 +6365,11 @@ menu_shell_github_plugins() {
             case "$shells" in
                 bash)
                     dest="$h/.local/share/$tag"
-                    fm_as_user "$u" "mkdir -p ~/.local/share; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 https://github.com/$repo.git '$dest'; fi"
+                    fm_as_user "$u" "mkdir -p ~/.local/share; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"
                     rc="$h/.bashrc"; plugin_add_line "$rc" "${init/#\~/$h}" "$u" ;;
                 zsh)
                     dest="$h/.local/share/zsh-plugins/$tag"
-                    fm_as_user "$u" "mkdir -p ~/.local/share/zsh-plugins; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 https://github.com/$repo.git '$dest'; fi"
+                    fm_as_user "$u" "mkdir -p ~/.local/share/zsh-plugins; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"
                     rc="$h/.zshrc"; plugin_add_line "$rc" "${init/#\~/$h}" "$u" ;;
                 fish)
                     command -v fish >/dev/null 2>&1 || pm_install fish
@@ -6383,10 +6387,13 @@ menu_shell_github_plugins() {
 # used as clone directory names and in plugins=(), so they must be unique and
 # valid directory names. Repos are owner/name pairs straight from the source
 # list. Categories: nav hist git comp vi alias prompt lang misc.
+#
+# Plugins are cloned with --recurse-submodules: repos such as olets/zsh-abbr
+# ship a .gitmodules and otherwise run `git submodule update` on every shell
+# start — a network call with no timeout that hangs zsh when it fails.
 AZP_CATALOG=$(cat <<'EOF'
 enhancd|Enhanced cd with frecency jump|b4b4r07/enhancd|nav
 zsh-z|Frecency directory jumping (native Zsh)|agkozak/zsh-z|nav
-autojump|Learns directories; jump with j|wting/autojump|nav
 zsh-abbr|Fish-style auto-expanding abbreviations|olets/zsh-abbr|nav
 interactive-cd|Fish-like cd tab completion|changyuheng/zsh-interactive-cd|nav
 favorite-directories|Jump to favorite directories|seletskiy/zsh-favorite-directories|nav
@@ -6503,7 +6510,7 @@ azp_apply() {
             for tag in "$@"; do
                 repo=$(azp_repo_for "$tag") || continue
                 dest="$h/.oh-my-zsh/custom/plugins/$tag"
-                fm_as_user "$u" "if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 https://github.com/$repo.git '$dest'; fi"
+                fm_as_user "$u" "if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"
                 case "$current" in *" $tag "*) ;; *) add="$add $tag" ;; esac
             done
             if [ -n "$add" ]; then
@@ -6514,6 +6521,10 @@ azp_apply() {
                     local tmp; tmp=$(mktemp)
                     { echo "plugins=($final)"; cat "$rc"; } > "$tmp" && mv "$tmp" "$rc" && chown "$u" "$rc" 2>/dev/null
                 fi
+                # Build the compinit dump now: the first interactive zsh start
+                # after adding fpath dirs would otherwise rebuild it (~6s on
+                # iSH's slow CPU) and look like a hang.
+                fm_as_user "$u" "command -v zsh >/dev/null 2>&1 && zsh -f -c 'autoload -Uz compinit && compinit' >/dev/null 2>&1 || true"
             fi
             tui_msg "oh-my-zsh" "Selected plugins cloned into custom/plugins and\nappended to plugins=() in $rc" ;;
         zinit)
@@ -6531,7 +6542,7 @@ azp_apply() {
             for tag in "$@"; do
                 repo=$(azp_repo_for "$tag") || continue
                 dest="$h/.local/share/zsh-plugins/$tag"
-                fm_as_user "$u" "mkdir -p ~/.local/share/zsh-plugins; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 https://github.com/$repo.git '$dest'; fi"
+                fm_as_user "$u" "mkdir -p ~/.local/share/zsh-plugins; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"
                 srcf=$(zsh_plugin_file "$dest") || { warn "No loadable .zsh file found for $tag — check its README."; continue; }
                 if [ "$first" = 1 ]; then
                     lines="source ~/.local/share/zsh-plugins/$tag/$srcf"; first=0
