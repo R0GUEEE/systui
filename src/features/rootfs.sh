@@ -1760,13 +1760,44 @@ xz-utils|xz-utils|XZ/LZMA compression (needed for Void/Gentoo tarballs)"
 
         local _choice
         _choice=$(tui_menu "Rootfs Bootstrap Tools" \
-            "Select a package to install, uninstall, or configure:" \
+            "Installed state includes Bedrock strata when present. Choose multi-install to select several tools with SPACE." \
+            multi "Install multiple bootstrap tools (SPACE to select)" \
             "${_items[@]}" "back" "← Back") || return 0
 
         [ "$_choice" = "back" ] && return 0
         [ -z "$_choice" ] && continue
 
-        # Show submenu for selected package
+        if [ "$_choice" = "multi" ]; then
+            local _selected _pkg _state
+            local -a _check_items=()
+            while IFS='|' read -r _tag _lbl _desc; do
+                [ -n "$_tag" ] || continue
+                if rootfs_bs_installed "$_tag"; then
+                    _state="installed"
+                else
+                    _state="not installed"
+                fi
+                _check_items+=("$_tag" "$_lbl — $_state" off)
+            done <<< "$_BS_CATALOGUE"
+
+            _selected=$(tui_check "Install bootstrap tools" \
+                "SPACE selects one or more tools; ENTER installs every selected missing tool:" \
+                "${_check_items[@]}") || continue
+            _selected=${_selected//\"/}
+            [ -n "${_selected//[[:space:]]/}" ] || continue
+
+            for _tag in $_selected; do
+                if rootfs_bs_installed "$_tag"; then
+                    continue
+                fi
+                _pkg=$(_bs_pkg "$_tag")
+                _bs_install "$_tag" "$_pkg" "$_BS_PKGS" || true
+            done
+            continue
+        fi
+
+        # Show submenu for a selected package for uninstall/configuration or a
+        # single-tool install.
         _menu_bs_package "$_choice" "$_BS_PKGS" "$_BS_CATALOGUE" || true
     done
 }
@@ -4604,15 +4635,9 @@ user creation). Install on the host first if you haven't:
     esac
 
     # ---- 5: preset and package profiles ----
-    preset=$(tui_radio "Rootfs Builder 6/13" "Build preset (SPACE to select):" \
-        minimal    "Minimal — base system only" off \
-        standard   "Standard — shell, editor, certificates, network tools" on \
-        workstation "CLI workstation — standard + productivity and diagnostics" off \
-        developer  "Developer — compilers, build systems, Git, Python, debugging" off \
-        server     "Server — SSH, sudo, logging, cron, time sync, firewall" off \
-        web        "Web server — server + nginx, PHP/Python tools, database clients" off \
-        security   "Security/diagnostics — network inspection and audit utilities" off \
-        custom     "Custom — select package profiles and individual packages" off) || return 0
+    # Rootfs builds default to the smallest viable base. Distro/backend-specific
+    # requirements are added later by the existing init/backend logic.
+    preset=minimal
     [ -z "$preset" ] && return 0
     case "$preset" in
         minimal) pkgs="" ;;
