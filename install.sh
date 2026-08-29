@@ -246,8 +246,12 @@ Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix
 
     # Copy the latest project files.
     cp -r "$PROJECT_DIR/src" "$LIB_DIR/"
-    [ -d "$PROJECT_DIR/share" ] && cp -r "$PROJECT_DIR/share" "$LIB_DIR/" || true
-    [ -d "$PROJECT_DIR/docs" ] && cp -r "$PROJECT_DIR/docs" "$LIB_DIR/" || true
+    if [ -d "$PROJECT_DIR/share" ]; then
+        cp -r "$PROJECT_DIR/share" "$LIB_DIR/"
+    fi
+    if [ -d "$PROJECT_DIR/docs" ]; then
+        cp -r "$PROJECT_DIR/docs" "$LIB_DIR/"
+    fi
     [ -f "$LIB_DIR/share/homebrew/install-homebrew-root.sh" ] && chmod 0755 "$LIB_DIR/share/homebrew/install-homebrew-root.sh"
     if [ -f "$PROJECT_DIR/update.sh" ]; then
         install -m 0755 "$PROJECT_DIR/update.sh" "$LIB_DIR/update.sh"

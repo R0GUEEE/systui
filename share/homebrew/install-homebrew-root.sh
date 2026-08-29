@@ -139,7 +139,7 @@ cat <<EOF_DONE
 
 Homebrew installation completed.
 
-The `brew` command may be invoked from a root shell, but systui will always
+The brew command may be invoked from a root shell, but systui will always
 execute Homebrew itself as the unprivileged '$BREW_USER' account.
 
   source $PROFILE_FILE

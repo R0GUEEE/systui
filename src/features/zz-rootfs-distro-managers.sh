@@ -259,7 +259,12 @@ rootfs_dm_installed_dirs() { # <tag> -> actual rootfs directories
 rootfs_dm_rootfs_name() { # <tag> <rootfs-path>
     case "$1" in
         proot-distro|chroot-distro)
-            [ "$(basename "$2")" = rootfs ] && basename "$(dirname "$2")" || basename "$2" ;;
+            if [ "$(basename "$2")" = rootfs ]; then
+                basename "$(dirname "$2")"
+            else
+                basename "$2"
+            fi
+            ;;
         *) basename "$2" ;;
     esac
 }
@@ -617,7 +622,10 @@ rootfs_dm_menu_distrobox() {
             installed) rootfs_dm_show_command distrobox "distrobox list" list ;;
             enter)
                 d=$(tui_input "Enter distrobox" "Container name:" "") || continue
-                [ -n "$d" ] && rootfs_dm_run distrobox "Enter $d" enter "$d" || true ;;
+                if [ -n "$d" ]; then
+                    rootfs_dm_run distrobox "Enter $d" enter "$d" || true
+                fi
+                ;;
             remove)
                 d=$(tui_input "Remove distrobox" "Container name:" "") || continue
                 [ -n "$d" ] || continue

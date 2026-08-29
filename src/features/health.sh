@@ -284,7 +284,15 @@ health_cleanup() {
             case "$PM" in
                 apt) run_cmd "Remove unused packages" apt-get autoremove -y ;;
                 apk) tui_msg "APK" "APK world dependencies are explicit; no automatic orphan removal was run." ;;
-                pacman) run_cmd "Remove orphan packages" bash -c 'o=$(pacman -Qtdq 2>/dev/null); [ -z "$o" ] || pacman -Rns --noconfirm $o' ;;
+                pacman)
+                    local orphans
+                    local -a orphan_pkgs=()
+                    orphans=$(pacman -Qtdq 2>/dev/null || true)
+                    if [ -n "$orphans" ]; then
+                        mapfile -t orphan_pkgs <<< "$orphans"
+                        run_cmd "Remove orphan packages" pacman -Rns --noconfirm "${orphan_pkgs[@]}"
+                    fi
+                    ;;
                 dnf) run_cmd "Remove unused packages" dnf autoremove -y ;;
             esac ;;
     esac

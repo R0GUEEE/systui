@@ -172,6 +172,8 @@ cp -R "$PROJECT_DIR/src" "$libcopy/"
 
 strict_probe() { # <body> -> writes the probe module into the copied tree
     printf '%s\n' "$1" > "$libcopy/src/features/zz-strict-probe.sh"
+    grep -qxF 'zz-strict-probe.sh' "$libcopy/src/features/.load-order" 2>/dev/null ||
+        printf '%s\n' 'zz-strict-probe.sh' >> "$libcopy/src/features/.load-order"
 }
 
 strict_probe 'sr_boom() { false; echo REACHED; }'
