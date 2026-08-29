@@ -1248,7 +1248,27 @@ rootfs_release_menu() { # <distro> <arch>
         # tag, including for the refresh/custom actions below.
         tags+=(refresh "Refresh releases from the repository (network)" \
                custom "Enter a release manually")
-        r=$(tui_menu "Rootfs Builder 3/13" "Release (ENTER selects; refresh is optional):" "${tags[@]}") || return 1
+        # A plain menu (or radiolist) returns the selected tag, or a non-zero
+        # status / empty string when the widget is dismissed with Cancel/Esc or
+        # when a particular dialog build fails to deliver the selection through
+        # the 3>&1 1>&2 2>&3 capture. Guard against that: an empty result must
+        # not silently abort the whole build wizard back to the Rootfs menu,
+        # which is confusing when only the widget hiccuped. Keep the widget's
+        # status in a variable (this also keeps the assignment safe under
+        # `set -e` in the run_strict child), and re-ask once before leaving.
+        local menu_rc=0
+        r=$(tui_menu "Rootfs Builder 3/13" "Release (ENTER selects; refresh is optional):" "${tags[@]}") || menu_rc=$?
+        if [ "$menu_rc" -ne 0 ] || [ -z "$r" ]; then
+            # A genuinely dismissed dialog wants to leave; but on a display
+            # where dialog returns Cancel after the user made a choice, ask
+            # before giving up so the build is not silently abandoned.
+            if tui_yesno "Rootfs Builder 3/13" "No release was selected.
+
+Exit the release chooser and return to the Rootfs menu?"; then
+                return 1
+            fi
+            continue
+        fi
         case "$r" in
             refresh)
                 discovered=$(rootfs_release_candidates "$distro" "$arch" 2>>"${LOGFILE:-/dev/null}" | tail -n 12)
