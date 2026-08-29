@@ -1,12 +1,12 @@
 # shellcheck shell=bash
 ###############################################################################
-# ROOTFS BUILDER — Ubuntu Resolute/iSH coreutils compatibility
+# ROOTFS BUILDER — Ubuntu Questing/Resolute iSH coreutils compatibility
 #
-# Ubuntu Resolute's essential coreutils meta package may select the Rust/uutils
-# provider. rust-coreutils currently aborts on iSH-AOK while probing auxv, which
-# can break maintainer scripts before the rootfs reaches post-configuration.
-# Force the GNU provider during bootstrap so dpkg never has to run those scripts
-# with the incompatible implementation installed.
+# Ubuntu Questing and Resolute can satisfy the essential coreutils meta package
+# with the Rust/uutils provider. rust-coreutils currently aborts on iSH-AOK
+# while probing auxv, which can break debootstrap maintainer scripts before the
+# rootfs reaches post-configuration. Force the GNU provider during bootstrap so
+# dpkg never has to run those scripts with the incompatible implementation.
 ###############################################################################
 
 rootfs_ish_host_builtin_detect() {
@@ -22,7 +22,7 @@ rootfs_ish_ubuntu_needs_gnu_coreutils() { # <distro> <release>
     [ "$1" = ubuntu ] || return 1
     rootfs_ish_host_builtin_detect || return 1
     case "$2" in
-        resolute|26.04|26.04*) return 0 ;;
+        questing|25.10|25.10*|resolute|26.04|26.04*) return 0 ;;
     esac
     return 1
 }
@@ -76,7 +76,7 @@ rootfs_install_deb_packages() { # <target> <packages>
     if rootfs_ish_host_builtin_detect; then
         release=$(rootfs_ish_target_release "$target" 2>/dev/null || true)
         case "$release" in
-            ubuntu\|resolute\|*|ubuntu\|\|26.04*)
+            ubuntu\|questing\|*|ubuntu\|\|25.10*|ubuntu\|resolute\|*|ubuntu\|\|26.04*)
                 rootfs_ish_activate_gnu_coreutils "$target" >/dev/null 2>&1 || true
                 ;;
         esac
