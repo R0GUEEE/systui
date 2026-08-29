@@ -60,21 +60,6 @@ rootfs_ish_activate_gnu_coreutils() { # <target>
     return 0
 }
 
-rootfs_ish_make_safe_shell() { # <target>
-    local t="$1"
-    mkdir -p "$t/usr/local/sbin"
-    cat > "$t/usr/local/sbin/systui-ish-safe-shell" <<'EOF'
-#!/bin/sh
-# Ubuntu Resolute may provide essential coreutils through uutils/rust-coreutils.
-# On iSH-AOK those binaries can panic while rustix reads the auxiliary vector.
-if [ -x /bin/bash ]; then
-    exec /bin/bash --noprofile --norc
-fi
-exec /bin/sh
-EOF
-    chmod 0755 "$t/usr/local/sbin/systui-ish-safe-shell"
-}
-
 # Preserve the workbench enter implementation, then add an iSH-only safety pass.
 if declare -F rootfs_wb_enter >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_enter >/dev/null 2>&1; then
@@ -82,18 +67,20 @@ if declare -F rootfs_wb_enter >/dev/null 2>&1 && \
 fi
 
 rootfs_wb_enter() { # <target>
-    local t="$1" old_shell="" safe_shell=0 rc=0
+    local t="$1" rc=0
+
+    # Workbench interactive sessions always use Bash. The iSH-AOK Resolute
+    # repair below fixes the problematic Rust coreutils command links before
+    # Bash is launched, so a wrapper shell is no longer exposed to the user.
+    if [ -x "$t/bin/bash" ]; then
+        rootfs_chroot_option_set "$t" SHELL /bin/bash >/dev/null 2>&1 || true
+    fi
 
     if declare -F rootfs_wb_is_ish_kernel >/dev/null 2>&1 && rootfs_wb_is_ish_kernel; then
         if rootfs_ish_target_needs_safe_shell "$t"; then
-            # First repair the command links without entering the rootfs. This
-            # is enough to recover dpkg when gnu-coreutils is already present.
+            # Repair command links entirely from the host before entering the
+            # rootfs so Bash startup cannot hit the incompatible Rust tools.
             rootfs_ish_activate_gnu_coreutils "$t" >/dev/null 2>&1 || true
-
-            old_shell=$(rootfs_chroot_option_get "$t" SHELL /bin/bash)
-            rootfs_ish_make_safe_shell "$t"
-            rootfs_chroot_option_set "$t" SHELL /usr/local/sbin/systui-ish-safe-shell >/dev/null 2>&1 || true
-            safe_shell=1
         fi
 
         if [ -x "$t/lib/systemd/systemd" ] || [ -x "$t/usr/lib/systemd/systemd" ] || \
@@ -103,11 +90,7 @@ rootfs_wb_enter() { # <target>
     fi
 
     _systui_base_rootfs_wb_enter "$t" || rc=$?
-
-    if [ "$safe_shell" = 1 ]; then
-        rootfs_chroot_option_set "$t" SHELL "$old_shell" >/dev/null 2>&1 || true
-    fi
     return "$rc"
 }
 
-export -f rootfs_ish_target_release rootfs_ish_target_needs_safe_shell rootfs_ish_activate_gnu_coreutils rootfs_ish_make_safe_shell rootfs_wb_enter
+export -f rootfs_ish_target_release rootfs_ish_target_needs_safe_shell rootfs_ish_activate_gnu_coreutils rootfs_wb_enter
