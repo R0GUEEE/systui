@@ -7,12 +7,10 @@ s = root.read_text()
 # Remove the interactive build preset stage. The builder continues using the
 # existing preset-to-package mapping, but the selected preset is always minimal.
 pat = re.compile(
-    r'    # ---- 5: preset and package profiles ----\n'
-    r'    preset=\$\(tui_radio "Rootfs Builder 6/13" "Build preset \(SPACE to select\):" \\\n'
-    r'.*?\n    \) \|\| return 0\n',
+    r'    preset=\$\(tui_radio "Rootfs Builder 6/13".*?\)\s*\|\|\s*return 0\n',
     re.S,
 )
-replacement = '''    # ---- 5: preset and package profiles ----\n    # Rootfs builds default to the smallest viable base. Distro/backend-specific\n    # requirements are added later by the existing init/backend logic.\n    preset=minimal\n'''
+replacement = '''    # Rootfs builds default to the smallest viable base. Distro/backend-specific\n    # requirements are added later by the existing init/backend logic.\n    preset=minimal\n'''
 s, n = pat.subn(replacement, s, count=1)
 if n != 1:
     raise SystemExit(f'build preset block replacement count={n}')
@@ -24,7 +22,6 @@ if old not in s:
 s = s.replace(old, new, 1)
 root.write_text(s)
 
-# Regression coverage for the user-visible workflow changes.
 test = Path('tests/test-regressions.sh')
 t = test.read_text()
 marker = '# Rootfs bootstrap tools menu checks\n'
