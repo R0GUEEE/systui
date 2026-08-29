@@ -16,7 +16,11 @@ SYSTUI_LIBDIR="${SYSTUI_LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && p
 export SYSTUI_LIBDIR
 
 # Project info
-SYSTUI_VERSION="1.0.0"
+if [ -r "$SYSTUI_LIBDIR/src/VERSION" ]; then
+    SYSTUI_VERSION=$(head -n1 "$SYSTUI_LIBDIR/src/VERSION" | tr -d '[:space:]')
+else
+    SYSTUI_VERSION="dev"
+fi
 SYSTUI_TITLE="systui — Linux System TUI"
 BACKTITLE="iSH-AOK · systui v${SYSTUI_VERSION}"
 export SYSTUI_TITLE BACKTITLE
@@ -158,10 +162,14 @@ run_strict() {
         # standalone script that runs (and exits) at source time. The provision
         # routines reach the child through `export -f` instead, which is why
         # those files export themselves.
-        for _f in "$SYSTUI_LIBDIR"/src/features/*.sh; do
-            [ -f "$_f" ] || continue
+        _manifest="$SYSTUI_LIBDIR/src/features/.load-order"
+        [ -r "$_manifest" ] || { echo "systui: missing feature load manifest" >&2; exit 1; }
+        while IFS= read -r _rel || [ -n "$_rel" ]; do
+            case "$_rel" in ''|'#'*) continue ;; esac
+            _f="$SYSTUI_LIBDIR/src/features/$_rel"
+            [ -f "$_f" ] || { echo "systui: manifest references missing feature: $_rel" >&2; exit 1; }
             . "$_f" || exit 1
-        done
+        done < "$_manifest"
         detect_pm; detect_init; detect_distro
         trap '"'"'warn "$SYSTUI_STRICT_DESC: unexpected error on line $LINENO"; exit 1'"'"' ERR
         "$@"
