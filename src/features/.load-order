@@ -35,3 +35,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-existing-repair.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-ubuntu-gnu-coreutils.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-osc-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-systemd-kernel-filter.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-runit-ubuntu-compat.sh
