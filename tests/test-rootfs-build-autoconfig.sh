@@ -11,7 +11,11 @@ check() {
     if "$@"; then printf 'ok - %s\n' "$name"; else printf 'not ok - %s\n' "$name" >&2; fail=$((fail + 1)); fi
 }
 
-check "autoconfig is loaded last" bash -c '[ "$(tail -n1 "$1")" = zzzzzzzzzzzzzzz-rootfs-build-autoconfig.sh ]' _ "$LOAD"
+check "autoconfig is loaded after the multi-install optimizer" bash -c '
+    a=$(grep -nFx zzzzzzzzzzzzzz-multi-install-optimizer.sh "$1" | cut -d: -f1)
+    b=$(grep -nFx zzzzzzzzzzzzzzz-rootfs-build-autoconfig.sh "$1" | cut -d: -f1)
+    [ -n "$a" ] && [ -n "$b" ] && [ "$b" -gt "$a" ]
+' _ "$LOAD"
 check "rootfs base defaults to /opt/rootfs" grep -Fq 'ROOTFS_BASE=/opt/rootfs' "$FEATURE"
 check "backend is selected automatically" grep -Fq 'rootfs_backend_auto_select' "$FEATURE"
 check "backend tuning is automatic" grep -Fq 'rootfs_backend_auto_optimize' "$FEATURE"
