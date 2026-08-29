@@ -33,7 +33,7 @@ rootfs_install_ish_systemd_compat() { # <target>
         fi
     fi
 
-    mkdir -p "$t/usr/local/sbin" "$t/etc/systui" "$t/run" "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/tmp"
+    mkdir -p "$t/sbin" "$t/usr/local/sbin" "$t/etc/systui" "$t/run" "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/tmp"
 
     cat > "$t/usr/local/sbin/systui-ish-init" <<EOF
 #!/bin/sh
@@ -47,8 +47,6 @@ is_ish_kernel() {
     return 1
 }
 
-# Some launchers explicitly ask init for a session shell. Never run the PID 1
-# supervisor in that case; hand the caller a normal Bash session immediately.
 case "\${1:-}" in
     shell|session-shell|--shell|--session-shell)
         shift
@@ -83,9 +81,6 @@ host_name=''
 [ -r /etc/hostname ] && IFS= read -r host_name < /etc/hostname 2>/dev/null || true
 [ -n "\$host_name" ] && hostname "\$host_name" 2>/dev/null || true
 
-# Do not let a slow or incompatible init script block PID 1 startup. iSH-AOK
-# launches the user session shell separately, so compatibility services run in
-# the background and init remains a quiet supervisor.
 for script in /etc/init.d/rcS /etc/rc.local; do
     [ -x "\$script" ] && "\$script" >/dev/console 2>&1 &
 done
@@ -93,9 +88,6 @@ for svc in dbus cron crond rsyslog ssh sshd networking network-manager; do
     [ -x "/etc/init.d/\$svc" ] && "/etc/init.d/\$svc" start >/dev/console 2>&1 &
 done
 
-# Reap children and stay alive as PID 1 without opening or owning an interactive
-# terminal. This is the key difference from the old compatibility layer, which
-# launched Bash here and prevented iSH-AOK from starting its session shell.
 trap 'exit 0' TERM INT HUP
 while :; do
     wait 2>/dev/null || true
@@ -104,29 +96,41 @@ done
 EOF
     chmod 0755 "$t/usr/local/sbin/systui-ish-init"
 
-    # Keep the original init target stable across repeated refreshes. Without
-    # this guard a second install could record systui-ish-init as original-init.
+    # Preserve the distro-provided init exactly once. New systemd rootfs builds
+    # commonly have /sbin/init as a symlink to systemd; keep that target for
+    # normal-Linux fallback, then replace /sbin/init with a real executable.
     if [ -L "$t/sbin/init" ]; then
         init_path=$(readlink "$t/sbin/init" 2>/dev/null || true)
         if [ "$init_path" != /usr/local/sbin/systui-ish-init ]; then
-            printf '%s\n' "$init_path" > "$t/etc/systui/original-init"
-            rm -f "$t/sbin/init"
+            [ -s "$t/etc/systui/original-init" ] || printf '%s\n' "$init_path" > "$t/etc/systui/original-init"
         fi
+        rm -f "$t/sbin/init"
     elif [ -e "$t/sbin/init" ]; then
-        if [ ! -e "$t/sbin/init.systui-original" ]; then
-            mv "$t/sbin/init" "$t/sbin/init.systui-original" 2>/dev/null || true
+        if ! grep -q '^REAL_SYSTEMD=' "$t/sbin/init" 2>/dev/null; then
+            if [ ! -e "$t/sbin/init.systui-original" ]; then
+                mv "$t/sbin/init" "$t/sbin/init.systui-original" 2>/dev/null || true
+            else
+                rm -f "$t/sbin/init"
+            fi
+            [ -s "$t/etc/systui/original-init" ] || printf '%s\n' /sbin/init.systui-original > "$t/etc/systui/original-init"
         else
             rm -f "$t/sbin/init"
         fi
-        [ -s "$t/etc/systui/original-init" ] || printf '%s\n' /sbin/init.systui-original > "$t/etc/systui/original-init"
     fi
-    ln -sfn /usr/local/sbin/systui-ish-init "$t/sbin/init"
+
+    # Install the compatibility launcher DIRECTLY at /sbin/init. This avoids
+    # relying on symlink resolution during iSH-AOK rootfs startup and guarantees
+    # every freshly built systemd image contains an executable init entrypoint.
+    cp "$t/usr/local/sbin/systui-ish-init" "$t/sbin/init" || return 1
+    chmod 0755 "$t/sbin/init" || return 1
 
     cat > "$t/etc/systui/ish-systemd-compat.conf" <<EOF
 ENABLED=yes
 REAL_SYSTEMD=$real_systemd
 MODE=auto
 SESSION_SHELL=/bin/bash
+INIT_PATH=/sbin/init
+INIT_TYPE=direct-executable
 DESCRIPTION=Use real systemd on normal Linux and a non-interactive PID1 compatibility supervisor on iSH-AOK.
 EOF
 
@@ -140,7 +144,7 @@ esac
 unset _systui_proc_version
 EOF
     chmod 0644 "$t/etc/profile.d/systui-ish-systemd-compat.sh"
-    log "rootfs: installed iSH-AOK systemd compatibility layer in $t"
+    log "rootfs: installed direct iSH-AOK systemd compatibility /sbin/init in $t"
 }
 
 if declare -F rootfs_postconfig >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_postconfig >/dev/null 2>&1; then
@@ -150,24 +154,39 @@ rootfs_postconfig() {
     local target="$1" init_choice="$5" rc=0
     _systui_base_rootfs_postconfig "$@" || rc=$?
     [ "$rc" -eq 0 ] || return "$rc"
+
+    # Install /sbin/init during the build itself, before integrity validation
+    # and before any archive is created. systemd builds must leave postconfig
+    # with a usable direct init executable already present in the target tree.
     if [ "$init_choice" = systemd ]; then
-        rootfs_install_ish_systemd_compat "$target" || { warn "Could not install the iSH-AOK systemd compatibility layer."; return 1; }
+        rootfs_install_ish_systemd_compat "$target" || {
+            warn "Could not install /sbin/init for the iSH-AOK systemd compatibility layer."
+            return 1
+        }
+        [ -x "$target/sbin/init" ] || {
+            warn "Systemd rootfs postconfig completed without an executable /sbin/init."
+            return 1
+        }
+        [ ! -L "$target/sbin/init" ] || {
+            warn "Systemd rootfs /sbin/init is unexpectedly still a symlink."
+            return 1
+        }
     fi
 }
 
-# Final archive guard. This runs immediately before tar sees the tree, so even
-# recovered/interrupted builds or manually repacked systemd roots cannot produce
-# an archive that is missing the iSH-AOK init compatibility layer.
+# Final archive guard for recovered/interrupted or manually modified builds.
 if declare -F rootfs_tar_create >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_tar_create >/dev/null 2>&1; then
     eval "$(declare -f rootfs_tar_create | sed '1s/^rootfs_tar_create[[:space:]]*()/_systui_base_rootfs_tar_create ()/')"
 fi
 rootfs_tar_create() {
     local fmt="$1" src="$2" out="$3"
     if [ -x "$src/lib/systemd/systemd" ] || [ -x "$src/usr/lib/systemd/systemd" ]; then
-        log "rootfs: refreshing iSH-AOK systemd compatibility layer before packing $src"
-        SYSTUI_ISH_COMPAT_SKIP_COREUTILS_MIGRATION=1 rootfs_install_ish_systemd_compat "$src" || return 1
-        [ -x "$src/usr/local/sbin/systui-ish-init" ] || return 1
-        [ "$(readlink "$src/sbin/init" 2>/dev/null || true)" = /usr/local/sbin/systui-ish-init ] || return 1
+        log "rootfs: verifying direct /sbin/init before packing $src"
+        if [ ! -x "$src/sbin/init" ] || [ -L "$src/sbin/init" ] || ! grep -q '^REAL_SYSTEMD=' "$src/sbin/init" 2>/dev/null; then
+            SYSTUI_ISH_COMPAT_SKIP_COREUTILS_MIGRATION=1 rootfs_install_ish_systemd_compat "$src" || return 1
+        fi
+        [ -x "$src/sbin/init" ] || return 1
+        [ ! -L "$src/sbin/init" ] || return 1
     fi
     _systui_base_rootfs_tar_create "$@"
 }
