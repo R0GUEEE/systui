@@ -5,7 +5,7 @@
 # Loaded last so every package-install entrypoint, including Bedrock's wrapper,
 # gets the same behavior:
 #   1. install all requested packages in one native PM command
-#   2. refresh package indexes on failure
+#   2. refresh/update package metadata on failure
 #   3. retry the same package batch once
 #   4. analyze distro/package availability and offer repository recovery
 #   5. retry all still-missing packages together after repository changes
@@ -19,8 +19,7 @@ systui_pkg_is_installed() { # <package>
         apt) dpkg-query -W -f='${Status}' -- "$pkg" 2>/dev/null | grep -q 'install ok installed' ;;
         apk) apk info -e "$pkg" >/dev/null 2>&1 ;;
         pacman) pacman -Q -- "$pkg" >/dev/null 2>&1 ;;
-        dnf|yum) rpm -q -- "$pkg" >/dev/null 2>&1 ;;
-        zypper) rpm -q -- "$pkg" >/dev/null 2>&1 ;;
+        dnf|yum|zypper) rpm -q -- "$pkg" >/dev/null 2>&1 ;;
         xbps) xbps-query -p pkgver "$pkg" >/dev/null 2>&1 ;;
         emerge) qlist -IC "$pkg" >/dev/null 2>&1 || emerge --info "$pkg" >/dev/null 2>&1 ;;
         *) command -v "$pkg" >/dev/null 2>&1 ;;
@@ -47,9 +46,9 @@ systui_pm_refresh_indexes() {
         apt) run_cmd "Refresh APT package indexes" apt-get update ;;
         apk) run_cmd "Refresh APK package indexes" apk update ;;
         pacman)
-            # -Syy only refreshes databases and does not perform the unsafe
-            # partial package upgrade that `pacman -Sy <pkg>` would cause.
-            run_cmd "Refresh Pacman package databases" pacman -Syy --noconfirm ;;
+            # Arch must never refresh package databases without upgrading the
+            # system. -Syu is the safe equivalent of update+retry.
+            run_cmd "Refresh/upgrade Pacman packages" pacman -Syu --noconfirm ;;
         dnf) run_cmd "Refresh DNF metadata" dnf makecache --refresh -y ;;
         yum) run_cmd "Refresh YUM metadata" yum makecache -y ;;
         zypper) run_cmd "Refresh Zypper repositories" zypper --non-interactive refresh --force ;;
@@ -97,9 +96,10 @@ systui_pkg_availability_report() { # <package>
 }
 
 systui_repo_add_apt() { # <package>
-    local pkg="$1" id codename choice
+    local pkg="$1" id codename choice repo component
     id=$(systui_os_id)
     codename=$(systui_os_codename)
+    mkdir -p /etc/apt/sources.list.d
     case "$id" in
         ubuntu)
             choice=$(tui_menu "Repository recovery" \
@@ -110,14 +110,21 @@ systui_repo_add_apt() { # <package>
                 skip "Skip") || return 1
             case "$choice" in
                 universe|multiverse)
-                    command -v add-apt-repository >/dev/null 2>&1 || pm_install software-properties-common || return 1
+                    if ! command -v add-apt-repository >/dev/null 2>&1; then
+                        systui_pm_install_batch software-properties-common || return 1
+                    fi
                     run_cmd "Enable Ubuntu $choice" add-apt-repository -y "$choice" ;;
                 custom)
-                    local repo
                     repo=$(tui_input "Custom APT repository" "Enter a deb line or PPA (ppa:owner/name):" "") || return 1
                     [ -n "$repo" ] || return 1
-                    command -v add-apt-repository >/dev/null 2>&1 || pm_install software-properties-common || return 1
-                    run_cmd "Add APT repository" add-apt-repository -y "$repo" ;;
+                    if command -v add-apt-repository >/dev/null 2>&1; then
+                        run_cmd "Add APT repository" add-apt-repository -y "$repo"
+                    else
+                        case "$repo" in
+                            deb\ *) printf '%s\n' "$repo" >> /etc/apt/sources.list.d/systui-extra.list ;;
+                            *) return 1 ;;
+                        esac
+                    fi ;;
                 *) return 1 ;;
             esac
             ;;
@@ -128,7 +135,6 @@ systui_repo_add_apt() { # <package>
                 nonfree "Add official non-free + non-free-firmware components" \
                 custom "Add a custom APT repository" \
                 skip "Skip") || return 1
-            local component repo
             case "$choice" in
                 contrib) component='contrib' ;;
                 nonfree) component='contrib non-free non-free-firmware' ;;
@@ -152,7 +158,6 @@ systui_repo_add_apt() { # <package>
             case "$choice" in
                 rolling) printf '%s\n' 'deb http://http.kali.org/kali kali-rolling main contrib non-free non-free-firmware' > /etc/apt/sources.list.d/systui-kali.list ;;
                 custom)
-                    local repo
                     repo=$(tui_input "Custom APT repository" "Enter a complete deb repository line:" "") || return 1
                     [ -n "$repo" ] || return 1
                     printf '%s\n' "$repo" >> /etc/apt/sources.list.d/systui-extra.list ;;
@@ -160,7 +165,6 @@ systui_repo_add_apt() { # <package>
             esac
             ;;
         *)
-            local repo
             repo=$(tui_input "Repository recovery" \
                 "'$pkg' is unavailable. Enter a complete APT deb repository line (blank skips):" "") || return 1
             [ -n "$repo" ] || return 1
@@ -170,7 +174,7 @@ systui_repo_add_apt() { # <package>
 }
 
 systui_repo_add_apk() { # <package>
-    local pkg="$1" choice base release
+    local pkg="$1" choice base release repo
     base=$(awk 'NF && $1 !~ /^#/ {print $1; exit}' /etc/apk/repositories 2>/dev/null)
     release=$(printf '%s' "$base" | sed -nE 's#(.*/(v[0-9]+\.[0-9]+|edge))/.*#\2#p')
     [ -n "$release" ] || release=edge
@@ -184,7 +188,6 @@ systui_repo_add_apk() { # <package>
     case "$choice" in
         community|testing) [ -n "$base" ] || return 1; printf '%s/%s\n' "$base" "$choice" >> /etc/apk/repositories ;;
         custom)
-            local repo
             repo=$(tui_input "Custom APK repository" "Repository URL:" "") || return 1
             [ -n "$repo" ] || return 1
             printf '%s\n' "$repo" >> /etc/apk/repositories ;;
@@ -211,9 +214,10 @@ systui_repo_add_rpm() { # <package>
                         "https://download1.rpmfusion.org/free/fedora/rpmfusion-free-release-$(rpm -E %fedora).noarch.rpm" \
                         "https://download1.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$(rpm -E %fedora).noarch.rpm" ;;
                 custom)
-                    repo=$(tui_input "Custom DNF repository" "Repository/base URL:" "") || return 1
+                    repo=$(tui_input "Custom DNF repository" "Repository file URL:" "") || return 1
                     [ -n "$repo" ] || return 1
-                    command -v dnf >/dev/null 2>&1 && dnf config-manager addrepo --from-repofile="$repo" || return 1 ;;
+                    command -v dnf >/dev/null 2>&1 || return 1
+                    dnf config-manager addrepo --from-repofile="$repo" ;;
                 *) return 1 ;;
             esac
             ;;
@@ -230,9 +234,9 @@ systui_repo_add_rpm() { # <package>
 }
 
 systui_offer_repository_for_package() { # <package>
-    local pkg="$1" report answer
+    local pkg="$1" report tmp repo
     report=$(systui_pkg_availability_report "$pkg")
-    local tmp="${SYSTUI_TMP:-/tmp}/pkg-availability-$$.txt"
+    tmp="${SYSTUI_TMP:-/tmp}/pkg-availability-$$.txt"
     {
         printf 'Package: %s\nHost package manager: %s\nDistribution: %s\n\nKnown Linux availability:\n%s\n' \
             "$pkg" "${PM:-unknown}" "$(systui_os_id)" "$report"
@@ -247,12 +251,10 @@ systui_offer_repository_for_package() { # <package>
         apk) systui_repo_add_apk "$pkg" ;;
         dnf|yum) systui_repo_add_rpm "$pkg" ;;
         zypper)
-            local repo
             repo=$(tui_input "Add Zypper repository" "Repository URL for '$pkg' (blank skips):" "") || return 1
             [ -n "$repo" ] || return 1
             run_cmd "Add Zypper repository" zypper --non-interactive ar -f "$repo" "systui-extra-$(date +%s)" ;;
         xbps)
-            local repo
             repo=$(tui_input "Add XBPS repository" "Repository URL for '$pkg' (blank skips):" "") || return 1
             [ -n "$repo" ] || return 1
             mkdir -p /etc/xbps.d
@@ -283,7 +285,7 @@ pm_install() {
         return 0
     fi
 
-    # Refresh once, then retry the full unresolved set in one command.
+    # Refresh/update once, then retry the full unresolved set in one command.
     systui_pm_refresh_indexes || true
     mapfile -t missing < <(systui_missing_packages "${requested[@]}")
     [ "${#missing[@]}" -eq 0 ] && return 0
@@ -307,8 +309,7 @@ pm_install() {
     mapfile -t unresolved < <(systui_missing_packages "${requested[@]}")
     [ "${#unresolved[@]}" -eq 0 ] && return 0
 
-    # Bedrock is a final managed fallback. It is intentionally tried only after
-    # the host's own repositories and repository recovery have been exhausted.
+    # Bedrock remains the final managed fallback after host repository recovery.
     if declare -F bedrock_sysconfig_install_fallback >/dev/null 2>&1; then
         local -a still=()
         for pkg in "${unresolved[@]}"; do
