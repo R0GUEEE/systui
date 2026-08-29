@@ -40,10 +40,57 @@ rootfs_wb_inspect() { # <target>
     tui_text "Inspect: $(basename "$t")" "$report"
 }
 
+rootfs_wb_install_ish_systemd_compat() { # <target>
+    local t="$1" real_systemd=""
+
+    [ -d "$t" ] || {
+        tui_msg "iSH systemd compatibility" "Rootfs directory does not exist:\n$t"
+        return 1
+    }
+
+    for real_systemd in /lib/systemd/systemd /usr/lib/systemd/systemd; do
+        [ -x "$t$real_systemd" ] && break
+    done
+    if [ ! -x "$t$real_systemd" ]; then
+        tui_msg "iSH systemd compatibility" \
+"No systemd executable was found in this rootfs.
+
+Expected one of:
+/lib/systemd/systemd
+/usr/lib/systemd/systemd
+
+Install systemd in the rootfs first, then run this utility again."
+        return 1
+    fi
+
+    if ! declare -F rootfs_install_ish_systemd_compat >/dev/null 2>&1; then
+        tui_msg "iSH systemd compatibility" "The Systui iSH-AOK systemd compatibility installer is not loaded."
+        return 1
+    fi
+
+    # This Workbench utility is intentionally host-side. Do not run apt/dpkg
+    # migrations while installing the layer: partially configured Ubuntu
+    # Resolute roots may still contain Rust/uutils coreutils that abort on iSH.
+    if SYSTUI_ISH_COMPAT_SKIP_COREUTILS_MIGRATION=1 \
+        rootfs_install_ish_systemd_compat "$t"; then
+        tui_msg "iSH systemd compatibility installed" \
+"Installed/refreshed the iSH-AOK systemd compatibility layer in:
+$t
+
+/sbin/init now routes through the Systui compatibility launcher on iSH-AOK.
+On a normal Linux kernel the launcher hands control to the real systemd binary:
+$real_systemd
+
+This is a compatibility PID 1 for iSH-AOK; kernel features that iSH does not implement still cannot be emulated."
+        return 0
+    fi
+
+    tui_msg "iSH systemd compatibility" "Could not install the compatibility layer into:\n$t"
+    return 1
+}
+
 rootfs_wb_delete() { # <target>
     local t="$1"
-    # The old Manage workflow intentionally deletes without an extra confirmation.
-    # Never remove a tree while host filesystems are still mounted beneath it.
     rootfs_wb_detach_all "$t" >/dev/null 2>&1 || true
     if [ "$(rootfs_wb_mount_count "$t" 2>/dev/null || echo 0)" != 0 ]; then
         tui_msg "Delete rootfs" "Could not detach every mount under:\n$t\n\nThe rootfs was not deleted."
@@ -57,8 +104,6 @@ rootfs_wb_delete() { # <target>
     return 1
 }
 
-# Override the per-rootfs workbench menu so management is available in the
-# same place as mounting, package management, configuration, and packing.
 rootfs_wb_menu_for() { # <target>
     local t="$1" c engine mounts
     [ -x "$t/bin/sh" ] || tui_msg "Warning" \
@@ -74,6 +119,7 @@ You can still inspect, mount, pack, or delete it, but entering it will fail."
             run      "Run a single command" \
             continue "Continue/recover interrupted rootfs generation" \
             inspect  "Inspect rootfs information and disk usage" \
+            ishinit  "Install iSH-AOK systemd compatibility layer" \
             engine   "Execution engine (chroot, proot, nspawn, unshare)" \
             mount    "Mount virtual filesystems and binds (persistent)" \
             detach   "Detach every mount under this rootfs" \
@@ -90,6 +136,7 @@ You can still inspect, mount, pack, or delete it, but entering it will fail."
             run)      rootfs_wb_run_once "$t" ;;
             continue) rootfs_continue_generation "$t" ;;
             inspect)  rootfs_wb_inspect "$t" ;;
+            ishinit)  rootfs_wb_install_ish_systemd_compat "$t" || true ;;
             engine)   rootfs_wb_engine_menu "$t" ;;
             mount)
                 if [ "$mounts" -gt 0 ]; then
@@ -120,4 +167,4 @@ You can still inspect, mount, pack, or delete it, but entering it will fail."
     done
 }
 
-export -f rootfs_wb_inspect rootfs_wb_delete rootfs_wb_menu_for
+export -f rootfs_wb_inspect rootfs_wb_install_ish_systemd_compat rootfs_wb_delete rootfs_wb_menu_for
