@@ -274,6 +274,7 @@ script_provision_quick_setup() {
         script_provision_install_action
     fi
     [ -x "$(script_provision_tool_path)" ] || return 0
+    script_provision_configure
     script_provision_run
 }
 
@@ -283,7 +284,7 @@ menu_ultimate_provision() {
     while true; do
         choice=$(tui_menu "Ultimate Provision" \
             "Tool: $(script_provision_tool_status) | System: $(script_provision_system_status)" \
-            quick "Quick setup (install/update, review, and run)" \
+            quick "Quick setup (install/update, configure, and run)" \
             install "Install or update Ultimate Provision" \
             configure "Configure quick-setup settings" \
             status "Show status and current settings" \
