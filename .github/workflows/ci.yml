@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   shell-tests:
@@ -13,21 +13,6 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - name: Apply bootstrap detection patch
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tools/apply-bootstrap-detection-fix.py
-          bash -n src/features/rootfs.sh
-          bash tests/test-regressions.sh
-          if ! git diff --quiet -- src/features/rootfs.sh tests/test-regressions.sh; then
-            git config user.name github-actions[bot]
-            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
-            git add src/features/rootfs.sh tests/test-regressions.sh
-            git commit -m 'fix(rootfs): detect installed bootstrap tools correctly'
-            git push origin HEAD:main
-          fi
       - name: Verify ShellCheck is available
         run: command -v shellcheck >/dev/null
       - name: Bash syntax
