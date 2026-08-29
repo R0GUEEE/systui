@@ -28,3 +28,4 @@ zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzz-common-openssh.sh
