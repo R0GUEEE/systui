@@ -33,7 +33,14 @@ rootfs_install_ish_systemd_compat() { # <target>
         fi
     fi
 
-    mkdir -p "$t/sbin" "$t/usr/local/sbin" "$t/etc/systui" "$t/run" "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/tmp"
+    mkdir -p "$t/sbin" "$t/usr/local/sbin" "$t/etc/systui" "$t/etc/sysctl.d" "$t/run" "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/tmp"
+
+    # systemd ships a vendor sysctl that raises kernel.pid_max. A chroot/rootfs
+    # on iSH-AOK shares the host kernel and is not allowed to change that host
+    # sysctl, so systemd-sysctl prints "Operation not permitted" on startup.
+    # Mask the vendor drop-in through /etc, which is the supported override
+    # mechanism and survives systemd package upgrades without modifying /usr.
+    ln -sfn /dev/null "$t/etc/sysctl.d/50-pid-max.conf" || return 1
 
     cat > "$t/usr/local/sbin/systui-ish-init" <<EOF
 #!/bin/sh
@@ -131,6 +138,7 @@ MODE=auto
 SESSION_SHELL=/bin/bash
 INIT_PATH=/sbin/init
 INIT_TYPE=direct-executable
+PID_MAX_SYSCTL_MASK=/etc/sysctl.d/50-pid-max.conf
 DESCRIPTION=Use real systemd on normal Linux and a non-interactive PID1 compatibility supervisor on iSH-AOK.
 EOF
 
@@ -145,6 +153,7 @@ unset _systui_proc_version
 EOF
     chmod 0644 "$t/etc/profile.d/systui-ish-systemd-compat.sh"
     log "rootfs: installed direct iSH-AOK systemd compatibility /sbin/init in $t"
+    log "rootfs: masked unsupported systemd kernel.pid_max sysctl in $t"
 }
 
 if declare -F rootfs_postconfig >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_postconfig >/dev/null 2>&1; then
