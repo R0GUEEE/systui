@@ -38,8 +38,17 @@ grep -q 'skipped: \$p (unavailable or timed out)' \
 grep -q 'provision "Ultimate Provision (quick system setup)"' "$PROJECT_DIR/install.sh"
 grep -q 'provision)' "$PROJECT_DIR/install.sh"
 grep -q 'menu_ultimate_provision' "$PROJECT_DIR/install.sh"
-grep -q 'quick "Quick setup (install/update, review, and run)"' \
+grep -q 'quick "Quick setup (install/update, configure, and run)"' \
     "$PROJECT_DIR/src/features/ultimate-provision.sh"
+
+# Quick setup must configure/save settings before it launches provisioning.
+quick_block=$(sed -n '/^script_provision_quick_setup() {/,/^}/p' \
+    "$PROJECT_DIR/src/features/ultimate-provision.sh")
+printf '%s\n' "$quick_block" | grep -q 'script_provision_configure'
+printf '%s\n' "$quick_block" | grep -q 'script_provision_run'
+configure_line=$(printf '%s\n' "$quick_block" | grep -n 'script_provision_configure' | head -n1 | cut -d: -f1)
+run_line=$(printf '%s\n' "$quick_block" | grep -n 'script_provision_run' | head -n1 | cut -d: -f1)
+[ "$configure_line" -lt "$run_line" ]
 
 SCRIPT_PROV_TZ=UTC
 SCRIPT_PROV_USER=tester
