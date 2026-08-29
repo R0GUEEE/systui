@@ -77,21 +77,30 @@ tui_progress() {
 
 run_cmd() {
     # run_cmd <description> <cmd...>
-    # Executes command with visual output, logs it, reports success/failure
+    # Executes command with visual output, logs it, reports success/failure.
+    # Preserve the caller's errexit state: the interactive TUI deliberately
+    # runs without `set -e`, while run_strict children deliberately enable it.
     local desc="$1"; shift
+    local rc=0 had_errexit=0
+    case $- in *e*) had_errexit=1 ;; esac
+
     log "RUN: $desc :: $*"
     clear
     echo ">>> $desc"
     echo ">>> $*"
     echo "================================================================="
-    # Preserve the command's status rather than tee's. This function may be
-    # called while the project-wide ERR trap is active, so keep the pipeline in
-    # an explicit conditional and read PIPESTATUS immediately.
-    local rc=0
+
+    # Keep the pipeline out of errexit handling and capture the command's
+    # status rather than tee's. Restore exactly the shell state we inherited.
     set +e
     "$@" 2>&1 | tee -a "$LOGFILE"
     rc=${PIPESTATUS[0]}
-    set -e
+    if [ "$had_errexit" -eq 1 ]; then
+        set -e
+    else
+        set +e
+    fi
+
     if [ "$rc" -eq 0 ]; then
         echo "================================================================="
         echo "Done: $desc"

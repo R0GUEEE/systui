@@ -351,7 +351,7 @@ check "brew sysconfig uses shared installer path" contains \
     "$PROJECT_DIR/src/features/sysconfig.sh" 'share/homebrew/install-homebrew-root.sh'
 check "brew root install checks root UID"      contains \
     "$PROJECT_DIR/src/features/sysconfig.sh" "Root privileges are required"
-check "brew installer defines LD_PRELOAD shim" contains \
+check "brew installer does not use LD_PRELOAD UID spoofing" not_contains \
     "$PROJECT_DIR/share/homebrew/install-homebrew-root.sh" "libhomebrew_fakeuid.so"
 check "brew installer defines linuxbrew prefix" contains \
     "$PROJECT_DIR/share/homebrew/install-homebrew-root.sh" "/home/linuxbrew/.linuxbrew"

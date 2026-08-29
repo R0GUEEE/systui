@@ -1,0 +1,42 @@
+name: systui CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shell-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Verify ShellCheck is available
+        run: command -v shellcheck >/dev/null
+      - name: Bash syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          while IFS= read -r -d '' f; do
+            bash -n "$f"
+          done < <(find . -type f -name '*.sh' -print0)
+      - name: ShellCheck core and changed-risk paths
+        shell: bash
+        run: |
+          set -euo pipefail
+          shellcheck -S warning -x \
+            install.sh update.sh \
+            src/core/*.sh \
+            src/features/health.sh \
+            src/features/zz-rootfs-distro-managers.sh \
+            share/homebrew/install-homebrew-root.sh
+      - name: Regression tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for t in tests/test-*.sh; do
+            echo "===== $t ====="
+            bash "$t"
+          done

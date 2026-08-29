@@ -91,9 +91,12 @@ rootfs_dm_install_upstream() { # <tag>
             rootfs_dm_pip_install chroot-distro
             ;;
         distrobox)
-            command -v curl >/dev/null 2>&1 || pm_install curl
-            run_cmd "Run the upstream distrobox installer" sh -c \
-                "curl -fsSL https://raw.githubusercontent.com/89luca89/distrobox/main/install | sh -s -- --prefix '$prefix'"
+            command -v curl >/dev/null 2>&1 || pm_install curl || return 1
+            local installer="$SYSTUI_TMP/distrobox-install.sh"
+            run_cmd "Download the upstream distrobox installer" curl -fsSL \
+                https://raw.githubusercontent.com/89luca89/distrobox/main/install -o "$installer" || return 1
+            chmod 0700 "$installer"
+            run_cmd "Run the upstream distrobox installer" sh "$installer" --prefix "$prefix"
             ;;
         udocker)
             rootfs_dm_pip_install udocker || return 1
@@ -256,7 +259,12 @@ rootfs_dm_installed_dirs() { # <tag> -> actual rootfs directories
 rootfs_dm_rootfs_name() { # <tag> <rootfs-path>
     case "$1" in
         proot-distro|chroot-distro)
-            [ "$(basename "$2")" = rootfs ] && basename "$(dirname "$2")" || basename "$2" ;;
+            if [ "$(basename "$2")" = rootfs ]; then
+                basename "$(dirname "$2")"
+            else
+                basename "$2"
+            fi
+            ;;
         *) basename "$2" ;;
     esac
 }
@@ -451,17 +459,21 @@ rootfs_dm_browse_install() { # <tag> -- combined browse/list + install workflow
         *) return 1 ;;
     esac
 
-    if selected=$(rootfs_dm_select_catalog_entries "$tag" "$query"); then
-        :
-    else
-        # Search/catalogue parsing can fail because a manager changed output,
-        # Docker Hub is unavailable, or the query had no hits. Keep a manual
-        # path instead of guessing an image name.
-        manual=$(tui_input "Install with $tag" \
-            "No selectable catalogue entries were returned. Enter an image/reference manually (blank cancels):" "") || return 0
-        [ -n "$manual" ] || return 0
-        selected="$manual"
-    fi
+    local select_rc=0
+    selected=$(rootfs_dm_select_catalog_entries "$tag" "$query") || select_rc=$?
+    case "$select_rc" in
+        0) ;;
+        2) return 0 ;; # explicit Cancel/no selection
+        *)
+            # Search/catalogue parsing can fail because a manager changed output,
+            # Docker Hub is unavailable, or the query had no hits. Keep a manual
+            # path instead of guessing an image name.
+            manual=$(tui_input "Install with $tag" \
+                "No selectable catalogue entries were returned. Enter an image/reference manually (blank cancels):" "") || return 0
+            [ -n "$manual" ] || return 0
+            selected="$manual"
+            ;;
+    esac
 
     while IFS= read -r image; do
         [ -n "$image" ] || continue
@@ -610,7 +622,10 @@ rootfs_dm_menu_distrobox() {
             installed) rootfs_dm_show_command distrobox "distrobox list" list ;;
             enter)
                 d=$(tui_input "Enter distrobox" "Container name:" "") || continue
-                [ -n "$d" ] && rootfs_dm_run distrobox "Enter $d" enter "$d" || true ;;
+                if [ -n "$d" ]; then
+                    rootfs_dm_run distrobox "Enter $d" enter "$d" || true
+                fi
+                ;;
             remove)
                 d=$(tui_input "Remove distrobox" "Container name:" "") || continue
                 [ -n "$d" ] || continue

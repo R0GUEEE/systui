@@ -7,6 +7,8 @@
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYSTUI_VERSION=$(head -n1 "$PROJECT_DIR/src/VERSION" 2>/dev/null | tr -d '[:space:]')
+[ -n "$SYSTUI_VERSION" ] || SYSTUI_VERSION=dev
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr/local}"
 BIN_DIR="$INSTALL_PREFIX/bin"
 LIB_DIR="$INSTALL_PREFIX/lib/systui"
@@ -244,8 +246,12 @@ Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix
 
     # Copy the latest project files.
     cp -r "$PROJECT_DIR/src" "$LIB_DIR/"
-    [ -d "$PROJECT_DIR/share" ] && cp -r "$PROJECT_DIR/share" "$LIB_DIR/" || true
-    [ -d "$PROJECT_DIR/docs" ] && cp -r "$PROJECT_DIR/docs" "$LIB_DIR/" || true
+    if [ -d "$PROJECT_DIR/share" ]; then
+        cp -r "$PROJECT_DIR/share" "$LIB_DIR/"
+    fi
+    if [ -d "$PROJECT_DIR/docs" ]; then
+        cp -r "$PROJECT_DIR/docs" "$LIB_DIR/"
+    fi
     [ -f "$LIB_DIR/share/homebrew/install-homebrew-root.sh" ] && chmod 0755 "$LIB_DIR/share/homebrew/install-homebrew-root.sh"
     if [ -f "$PROJECT_DIR/update.sh" ]; then
         install -m 0755 "$PROJECT_DIR/update.sh" "$LIB_DIR/update.sh"
@@ -289,10 +295,14 @@ LIBDIR="__SYSTUI_LIBDIR__"
 # Source feature modules (if they exist). The explicit `continue` keeps an
 # unmatched glob or a module whose last statement returns non-zero from
 # becoming the loop's exit status.
-for feature in "$LIBDIR/src/features"/*.sh; do
-    [ -f "$feature" ] || continue
+manifest="$LIBDIR/src/features/.load-order"
+[ -r "$manifest" ] || { echo "systui: missing feature load manifest: $manifest" >&2; exit 1; }
+while IFS= read -r rel || [ -n "$rel" ]; do
+    case "$rel" in ''|'#'*) continue ;; esac
+    feature="$LIBDIR/src/features/$rel"
+    [ -f "$feature" ] || { echo "systui: feature manifest references missing file: $rel" >&2; exit 1; }
     . "$feature" || { echo "systui: failed to load $feature" >&2; exit 1; }
-done
+done < "$manifest"
 
 # Initialize system detection
 detect_pm
@@ -359,7 +369,7 @@ create_manpage() {
     mkdir -p "$INSTALL_PREFIX/share/man/man1"
     
     cat > "$INSTALL_PREFIX/share/man/man1/systui.1" << 'MANPAGE'
-.TH SYSTUI 1 "2026-07-29" "systui 1.0.0" "User Commands"
+.TH SYSTUI 1 "2026-08-29" "systui __SYSTUI_VERSION__" "User Commands"
 .SH NAME
 systui \- Linux System Administration Terminal UI
 .SH SYNOPSIS
@@ -390,6 +400,7 @@ dialog(1), bash(1)
 .SH AUTHOR
 systui Development Team
 MANPAGE
+    sed -i "s/__SYSTUI_VERSION__/$SYSTUI_VERSION/g" "$INSTALL_PREFIX/share/man/man1/systui.1"
     
     success "Man page created at $INSTALL_PREFIX/share/man/man1/systui.1"
 }
@@ -417,7 +428,7 @@ cleanup() {
 main() {
     echo ""
     echo "========== systui Installation =========="
-    echo "Version: 1.0.0"
+    echo "Version: $SYSTUI_VERSION"
     echo "Install prefix: $INSTALL_PREFIX"
     echo "Library directory: $LIB_DIR"
     echo ""
