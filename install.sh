@@ -160,6 +160,8 @@ install_dependencies() {
     pm=$(detect_pm)
     [ -z "$pm" ] && error "Could not detect package manager. Please install manually."
 
+    # Package names are shared by the supported binary distributions. Gentoo
+    # uses category-qualified atoms.
     case "$pm" in
         apt|apk|pacman|dnf|yum|zypper|xbps)
             pkg_bash="bash"; pkg_dialog="dialog"; pkg_coreutils="coreutils"
@@ -177,6 +179,8 @@ install_dependencies() {
 
     info "Detected package manager: $pm"
 
+    # Test capabilities, not package names. This avoids installing gawk when a
+    # working awk is already present, or curl when wget already handles HTTPS.
     command -v bash >/dev/null 2>&1 || required+=("$pkg_bash")
     command -v dialog >/dev/null 2>&1 || required+=("$pkg_dialog")
     command -v grep >/dev/null 2>&1 || required+=("$pkg_grep")
@@ -226,6 +230,8 @@ verify_dependencies() {
 install_project() {
     info "Installing systui to $LIB_DIR..."
 
+    # Refuse to run when the checkout *is* the install target: the managed
+    # content is deleted before it is copied, which would destroy the source.
     if [ "$PROJECT_DIR" = "$LIB_DIR" ]; then
         error "Refusing to install: the source directory and \$LIB_DIR are the same path ($LIB_DIR).
 Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix."
@@ -234,8 +240,11 @@ Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix
     mkdir -p "$LIB_DIR"
     mkdir -p "$BIN_DIR"
     
+    # Remove managed content first so files deleted in the new release cannot
+    # linger from an older installation. User configuration lives elsewhere.
     rm -rf -- "$LIB_DIR/src" "$LIB_DIR/share" "$LIB_DIR/docs"
 
+    # Copy the latest project files.
     cp -r "$PROJECT_DIR/src" "$LIB_DIR/"
     if [ -d "$PROJECT_DIR/share" ]; then
         cp -r "$PROJECT_DIR/share" "$LIB_DIR/"
@@ -248,6 +257,7 @@ Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix
         install -m 0755 "$PROJECT_DIR/update.sh" "$LIB_DIR/update.sh"
         ln -sfn "$LIB_DIR/update.sh" "$BIN_DIR/systui-update"
     fi
+    # Record the source checkout so systui-update works from the installed copy.
     local state_dir="${SYSTUI_STATE_DIR:-/etc/systui}"
     local source_url="" source_branch=""
     mkdir -p "$state_dir"
@@ -267,6 +277,8 @@ create_executable() {
     local wrapper_tmp="$BIN_DIR/.systui.$$"
     info "Creating the latest executable wrapper..."
 
+    # Build beside the destination, then replace /usr/local/bin/systui in one
+    # operation. This intentionally supersedes any older managed executable.
     rm -f -- "$wrapper_tmp"
     cat > "$wrapper_tmp" << 'WRAPPER'
 #!/bin/bash
@@ -275,10 +287,14 @@ create_executable() {
 
 LIBDIR="__SYSTUI_LIBDIR__"
 
+# Source core modules
 . "$LIBDIR/src/core/config.sh" || exit 1
 . "$LIBDIR/src/core/tui-widgets.sh" || exit 1
 . "$LIBDIR/src/core/common.sh" || exit 1
 
+# Source feature modules (if they exist). The explicit `continue` keeps an
+# unmatched glob or a module whose last statement returns non-zero from
+# becoming the loop's exit status.
 manifest="$LIBDIR/src/features/.load-order"
 [ -r "$manifest" ] || { echo "systui: missing feature load manifest: $manifest" >&2; exit 1; }
 while IFS= read -r rel || [ -n "$rel" ]; do
@@ -288,12 +304,18 @@ while IFS= read -r rel || [ -n "$rel" ]; do
     . "$feature" || { echo "systui: failed to load $feature" >&2; exit 1; }
 done < "$manifest"
 
+# Initialize system detection
 detect_pm
 detect_init
 detect_distro
 
+# systui needs root for rootfs builds and system configuration. require_root
+# calls die(), which exits -- so it must not be wrapped in a `||` fallback and
+# its message must not be redirected to /dev/null, or a non-root invocation
+# terminates silently with no output at all.
 require_root
 
+# Main menu
 main_menu() {
     while true; do
         local choice
@@ -324,8 +346,11 @@ main_menu() {
     done
 }
 
+# Run main menu
 main_menu
 WRAPPER
+    # Escape sed replacement metacharacters so a prefix containing | & or \
+    # cannot corrupt (or inject into) the generated wrapper.
     local lib_dir_escaped
     lib_dir_escaped=$(printf '%s' "$LIB_DIR" | sed -e 's/[\\&|]/\\&/g')
     sed -i "s|__SYSTUI_LIBDIR__|$lib_dir_escaped|g" "$wrapper_tmp"
@@ -379,6 +404,7 @@ MANPAGE
 cleanup() {
     info "Final checks..."
     
+    # Verify installation
     if [ ! -x "$BIN_DIR/systui" ]; then
         error "Failed to create systui executable"
     fi
