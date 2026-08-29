@@ -202,12 +202,14 @@ main_menu() {
             provision "Ultimate Provision (quick system setup)" \
             rootfs "Rootfs Builder (create minimal systems)" \
             config "System Configuration" \
+            performance "Advanced performance tuning" \
             awesome "Awesome Linux (software catalogue)" \
             quit "Quit") || return 0
         case "$choice" in
             provision) menu_ultimate_provision ;;
             rootfs) menu_rootfs ;;
             config) menu_sysconfig ;;
+            performance) menu_performance ;;
             awesome) menu_awesome_linux ;;
             quit) return ;;
         esac
@@ -283,7 +285,8 @@ main() {
     info "Step 5: Creating documentation..."; create_manpage
     cleanup
     echo ""
-    echo "========== Installation Complete =========="n    echo ""
+    echo "========== Installation Complete =========="
+    echo ""
     echo "To use systui, run:"
     echo "  sudo $BIN_DIR/systui"
     echo ""
