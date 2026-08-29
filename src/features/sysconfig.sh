@@ -12036,7 +12036,6 @@ menu_sysconfig() {
             users       "Users (passwords, sudoers, aging, SSH keys...)" \
             storage     "Storage (mounts, labels, format, SMART...)" \
             performance "Advanced performance tuning" \
-            scanner     "Scanner (system reports, package & file queries)" \
             back        "Back to main menu") || return 0
         case "$c" in
             common)      menu_sysconfig_common ;;
@@ -12049,7 +12048,6 @@ menu_sysconfig() {
             users)       menu_users ;;
             storage)     menu_storage ;;
             performance) menu_performance ;;
-            scanner)     menu_scanner ;;
             back)        return 0 ;;
         esac
     done
