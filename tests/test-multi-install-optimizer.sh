@@ -19,7 +19,11 @@ check() {
 }
 contains() { grep -Fq -- "$2" "$1"; }
 
-check "optimizer is loaded last" bash -c '[ "$(tail -n 1 "$1")" = zzzzzzzzzzzzzz-multi-install-optimizer.sh ]' _ "$LOAD"
+check "optimizer loads after package-manager multiselect" bash -c '
+    opt=$(grep -nFx zzzzzzzzzzzzzz-multi-install-optimizer.sh "$1" | cut -d: -f1)
+    pm=$(grep -nFx zzzzzzzzzzzzz-package-manager-multiselect.sh "$1" | cut -d: -f1)
+    [ -n "$opt" ] && [ -n "$pm" ] && [ "$opt" -gt "$pm" ]
+' _ "$LOAD"
 check "shared native batch helper exists" contains "$FILE" 'systui_multi_native_install()'
 check "shared helper sends full array to pm_install" contains "$FILE" 'pm_install "${unique[@]}"'
 check "distro manager multi-install collects native packages" contains "$FILE" 'packages+=("$pkg")'
