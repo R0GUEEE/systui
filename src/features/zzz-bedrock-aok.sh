@@ -38,33 +38,33 @@ bedrock_aok_write_helpers() {
     brlpath=$(readlink -f "$brlpath" 2>/dev/null || printf '%s\n' "$brlpath")
     bin=$(dirname "$brlpath")
     [ -d "$bin" ] || return 1
-    if [ ! -x "$bin/brl-mem" ]; then
-        cat > "$bin/brl-mem" <<'HELP'
+    if [ ! -e "$bin/brl-mem" ]; then
+        cat > "$bin/brl-mem" <<'HELP' || return 1
 #!/bin/sh
 free -m 2>/dev/null | awk -F'[ :]+' '/^Mem:/{printf "%dMiB / %dMiB", $3, $2}'
 HELP
-        chmod 0755 "$bin/brl-mem" 2>/dev/null || true
+        chmod 0755 "$bin/brl-mem" || return 1
     fi
-    if [ ! -x "$bin/brl-swap" ]; then
-        cat > "$bin/brl-swap" <<'HELP'
+    if [ ! -e "$bin/brl-swap" ]; then
+        cat > "$bin/brl-swap" <<'HELP' || return 1
 #!/bin/sh
 free -m 2>/dev/null | awk -F'[ :]+' '/^Swap:/{printf "%dMiB / %dMiB", $3, $2}'
 HELP
-        chmod 0755 "$bin/brl-swap" 2>/dev/null || true
+        chmod 0755 "$bin/brl-swap" || return 1
     fi
-    if [ ! -x "$bin/brl-disk" ]; then
-        cat > "$bin/brl-disk" <<'HELP'
+    if [ ! -e "$bin/brl-disk" ]; then
+        cat > "$bin/brl-disk" <<'HELP' || return 1
 #!/bin/sh
 df -hP / 2>/dev/null | awk 'NR==2{printf "%s / %s (%s)", $3, $2, $5}'
 HELP
-        chmod 0755 "$bin/brl-disk" 2>/dev/null || true
+        chmod 0755 "$bin/brl-disk" || return 1
     fi
-    if [ ! -x "$bin/brl-strata" ]; then
-        cat > "$bin/brl-strata" <<'HELP'
+    if [ ! -e "$bin/brl-strata" ]; then
+        cat > "$bin/brl-strata" <<'HELP' || return 1
 #!/bin/sh
 ls -1 /bedrock/run/enabled_strata 2>/dev/null | sed 's/^/  /' || echo none
 HELP
-        chmod 0755 "$bin/brl-strata" 2>/dev/null || true
+        chmod 0755 "$bin/brl-strata" || return 1
     fi
 }
 
@@ -81,24 +81,35 @@ bedrock_aok_patch_script() { # <script>
     src=$(mktemp "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-helpers.XXXXXX") || return 1
     cat > "$src" <<'HELP'
 _write_helpers() {
-    mkdir -p "${BR}/bin" 2>/dev/null || true
-    cat > "${BR}/bin/brl-mem" <<'SH'
+    mkdir -p "${BR}/bin" || return 1
+    if [ ! -e "${BR}/bin/brl-mem" ]; then
+        cat > "${BR}/bin/brl-mem" <<'SH' || return 1
 #!/bin/sh
 free -m 2>/dev/null | awk -F'[ :]+' '/^Mem:/{printf "%dMiB / %dMiB", $3, $2}'
 SH
-    cat > "${BR}/bin/brl-swap" <<'SH'
+        chmod 0755 "${BR}/bin/brl-mem" || return 1
+    fi
+    if [ ! -e "${BR}/bin/brl-swap" ]; then
+        cat > "${BR}/bin/brl-swap" <<'SH' || return 1
 #!/bin/sh
 free -m 2>/dev/null | awk -F'[ :]+' '/^Swap:/{printf "%dMiB / %dMiB", $3, $2}'
 SH
-    cat > "${BR}/bin/brl-disk" <<'SH'
+        chmod 0755 "${BR}/bin/brl-swap" || return 1
+    fi
+    if [ ! -e "${BR}/bin/brl-disk" ]; then
+        cat > "${BR}/bin/brl-disk" <<'SH' || return 1
 #!/bin/sh
 df -hP / 2>/dev/null | awk 'NR==2{printf "%s / %s (%s)", $3, $2, $5}'
 SH
-    cat > "${BR}/bin/brl-strata" <<'SH'
+        chmod 0755 "${BR}/bin/brl-disk" || return 1
+    fi
+    if [ ! -e "${BR}/bin/brl-strata" ]; then
+        cat > "${BR}/bin/brl-strata" <<'SH' || return 1
 #!/bin/sh
 ls -1 /bedrock/run/enabled_strata 2>/dev/null | sed 's/^/  /' || echo none
 SH
-    chmod 0755 "${BR}/bin/brl-mem" "${BR}/bin/brl-swap" "${BR}/bin/brl-disk" "${BR}/bin/brl-strata" 2>/dev/null || true
+        chmod 0755 "${BR}/bin/brl-strata" || return 1
+    fi
 }
 HELP
     tmp=$(mktemp "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-patched.XXXXXX") || { rm -f "$src"; return 1; }
@@ -302,7 +313,7 @@ bedrock_aok_available_strata() { # prints tag|description
 }
 
 bedrock_aok_fetch_menu() {
-    local brl rows sel line tag label
+    local brl rows sel tag label
     local -a opts=()
     bedrock_aok_require || return 0
     brl=$(bedrock_aok_brl) || return 1

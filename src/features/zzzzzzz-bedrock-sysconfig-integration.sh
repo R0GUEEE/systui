@@ -93,7 +93,7 @@ bedrock_sysconfig_package_sources() { # <package>
 }
 
 bedrock_sysconfig_install_fallback() { # <package>
-    local pkg="$1" brl sources st pm picked
+    local pkg="$1" brl sources st pm
     local -a opts=()
     bedrock_sysconfig_active || return 1
     brl=$(bedrock_aok_brl) || return 1

@@ -3566,7 +3566,8 @@ _brew_root_reinstall_wrapper() {
     local repo="$prefix/Homebrew"
     local real_brew="$repo/bin/brew"
     local wrapper; wrapper=$(_brew_root_wrapper)
-    local shim="$(_brew_root_shim_dir)/libhomebrew_fakeuid.so"
+    local shim
+    shim="$(_brew_root_shim_dir)/libhomebrew_fakeuid.so"
     local envf=/etc/systui/homebrew.env
     cat > "$wrapper" <<WRAP
 #!/usr/bin/env bash
@@ -5320,7 +5321,7 @@ menu_tpm() { # <user> <home>
                 tui_msg "Plugin added" "'$name' added to the plugin block.\nInside tmux press prefix + I to install it." ;;
             update)
                 [ -x "$tpm/bin/update_plugins" ] || { tui_msg "Missing" "TPM is not installed (or update_plugins is missing)."; continue; }
-                run_cmd "Updating all tmux plugins" su - "$u" -c "~/.tmux/plugins/tpm/bin/update_plugins all" ;;
+                run_cmd "Updating all tmux plugins" su - "$u" -c '$HOME/.tmux/plugins/tpm/bin/update_plugins all' ;;
             current)
                 grep -n "@plugin\|tpm" "$conf" 2>/dev/null > ${SYSTUI_TMP}/sh2 || echo "(none)" > ${SYSTUI_TMP}/sh2
                 tui_text ".tmux.conf plugin lines — $u" ${SYSTUI_TMP}/sh2 ;;
@@ -5484,7 +5485,8 @@ menu_tmux() { # <user> <home>
             view)    [ -f "$conf" ] && tui_text "$conf" "$conf" || tui_msg "tmux" "$conf does not exist yet." ;;
             backup)
                 [ -f "$conf" ] || { tui_msg "tmux" "Nothing to back up — $conf does not exist."; continue; }
-                local bak="$conf.systui-$(date +%Y%m%d-%H%M%S).bak"
+                local bak
+                bak="$conf.systui-$(date +%Y%m%d-%H%M%S).bak"
                 cp -p "$conf" "$bak" && chown "$u" "$bak" 2>/dev/null
                 tui_msg "Backup" "Saved to:\n$bak" ;;
             reload)
@@ -6329,7 +6331,7 @@ menu_fzf_install() {
             local u; u=$(tui_input "User" "Install fzf git clone for which user?" "${SUDO_USER:-root}") || return 0
             run_cmd "Clone fzf for $u" su - "$u" -c \
                 'git clone --depth 1 https://github.com/junegunn/fzf.git ~/.fzf 2>/dev/null || (cd ~/.fzf && git pull)'
-            run_cmd "Run fzf install for $u" su - "$u" -c '~/.fzf/install --all' ;;
+            run_cmd "Run fzf install for $u" su - "$u" -c '$HOME/.fzf/install --all' ;;
         github) fzf_github_install ;;
         brew)   run_cmd "Install fzf via Homebrew" brew install fzf ;;
         cargo)  run_cmd "Install fzf via Cargo" cargo install fzf ;;
@@ -6841,7 +6843,7 @@ azp_apply() {
                     omb_set_array "$rc" plugins $final
                 else
                     local tmp; tmp=$(mktemp)
-                    { echo "plugins=($final)"; cat "$rc"; } > "$tmp" && mv "$tmp" "$rc" && chown "$u" "$rc" 2>/dev/null
+                    { echo "plugins=($final)"; cat "$rc"; } > "$tmp" && mv "$tmp" "$rc" && { chown "$u" "$rc" 2>/dev/null || true; }
                 fi
                 # Build the compinit dump now: the first interactive zsh start
                 # after adding fpath dirs would otherwise rebuild it (~6s on
@@ -6851,13 +6853,12 @@ azp_apply() {
             tui_msg "oh-my-zsh" "Selected plugins cloned into custom/plugins and\nappended to plugins=() in $rc" ;;
         zinit)
             {
-                local l
                 for tag in "$@"; do
                     repo=$(azp_repo_for "$tag") || continue
                     grep -q "zinit light $repo" "$rc" 2>/dev/null || echo "zinit light $repo"
                 done
             } | write_marked_block "$rc" "azp zinit"
-            chown "$u" "$rc" 2>/dev/null
+            chown "$u" "$rc" 2>/dev/null || true
             tui_msg "zinit" "zinit light lines written to $rc\nPlugins download on next zsh start." ;;
         plain)
             local lines="" first=1
@@ -6873,7 +6874,7 @@ azp_apply() {
 source ~/.local/share/zsh-plugins/$tag/$srcf"
                 fi
             done
-            [ -n "$lines" ] && printf '%s\n' "$lines" | write_marked_block "$rc" "azp plugins" && chown "$u" "$rc" 2>/dev/null
+            [ -n "$lines" ] && printf '%s\n' "$lines" | write_marked_block "$rc" "azp plugins" && { chown "$u" "$rc" 2>/dev/null || true; }
             tui_msg "Plain zsh" "Plugins cloned to ~/.local/share/zsh-plugins and\nsourced from $rc (systui azp plugins block)." ;;
     esac
 }

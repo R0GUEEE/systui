@@ -31,7 +31,7 @@ bedrock_aok_pick_stratum() { # <title> <prompt>
 # only consumed column 1, which made most available distributions disappear.
 # Strip ANSI escapes/headings and emit every catalog token.
 bedrock_aok_available_strata() { # prints tag|description
-    local brl out token
+    local brl out
     brl=$(bedrock_aok_brl) || return 1
     out="${SYSTUI_TMP:?}/bedrock-aok-fetch-list"
     "$brl" fetch --list >"$out" 2>&1 || return 1

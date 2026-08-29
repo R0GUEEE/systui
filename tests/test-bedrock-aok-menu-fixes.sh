@@ -60,7 +60,7 @@ all_fetch_columns() {
 check "fetch parser reads all four output columns" all_fetch_columns
 
 # Self-update must inject the trusted upstream URL required by Bedrock-AOK.
-self_update_url_is_set() {
+self_update_url_is_set() (
     local out="$SYSTUI_TMP/self-update-env"
     : >"$out"
     # Capture the exact argv that run_cmd dispatches. The self-update action
@@ -78,7 +78,7 @@ self_update_url_is_set() {
     bedrock_aok_brl() { printf '%s\n' /bedrock/bin/brl; }
     bedrock_aok_self_update >/dev/null 2>&1 || true
     grep -q '^BRL_SELF_URL=https://raw.githubusercontent.com/vjnzbcsbgf-maker/Bedrock-AOK/main/brl$' "$out"
-}
+)
 check "self-update supplies BRL_SELF_URL" self_update_url_is_set
 
 # Installed-stratum discovery should only return immediate directories.
@@ -170,26 +170,48 @@ EOF
 }
 check "patch leaves scripts that define _write_helpers untouched" patch_skips_defined
 
-# The injected definition must create all four fastfetch helper scripts, and
-# only when missing (never clobbering an existing helper).
-if [ ! -e /bedrock ]; then
-    helpers_created() {
-        mkdir -p /bedrock/bin
-        printf '#!/bin/sh\n' > /bedrock/bin/brl && chmod +x /bedrock/bin/brl
-        bedrock_aok_write_helpers
-        [ -x /bedrock/bin/brl-mem ] && [ -x /bedrock/bin/brl-swap ] &&
-            [ -x /bedrock/bin/brl-disk ] && [ -x /bedrock/bin/brl-strata ]
+# The helper writer must work beside the discovered brl executable, without
+# requiring root or mutating the host's /bedrock tree.
+helper_bin=$(dirname "$fake_brl")
+helpers_created() {
+    bedrock_aok_write_helpers
+    [ -x "$helper_bin/brl-mem" ] && [ -x "$helper_bin/brl-swap" ] &&
+        [ -x "$helper_bin/brl-disk" ] && [ -x "$helper_bin/brl-strata" ]
+}
+check "write_helpers creates the four helper scripts" helpers_created
+
+helpers_are_idempotent() {
+    local before after
+    before=$(md5sum "$helper_bin/brl-mem" | cut -d' ' -f1)
+    bedrock_aok_write_helpers
+    after=$(md5sum "$helper_bin/brl-mem" | cut -d' ' -f1)
+    [ "$before" = "$after" ]
+}
+check "write_helpers does not clobber existing helpers" helpers_are_idempotent
+
+injected_helpers_preserve_existing_files() {
+    local tmp before after rc
+    tmp=$(mktemp -d)
+    mkdir -p "$tmp/root/bin"
+    printf 'user supplied\n' > "$tmp/root/bin/brl-mem"
+    before=$(md5sum "$tmp/root/bin/brl-mem" | cut -d' ' -f1)
+    cat > "$tmp/fake-script.sh" <<'EOF'
+#!/bin/sh
+_install_ff() { _write_helpers; }
+EOF
+    bedrock_aok_patch_script "$tmp/fake-script.sh" || { rm -rf "$tmp"; return 1; }
+    BR="$tmp/root" sh -c '. "$1"; _write_helpers' _ "$tmp/fake-script.sh" || {
+        rm -rf "$tmp"
+        return 1
     }
-    check "write_helpers creates the four helper scripts" helpers_created
-    helpers_are_idempotent() {
-        before=$(md5sum /bedrock/bin/brl-mem | cut -d' ' -f1)
-        bedrock_aok_write_helpers
-        after=$(md5sum /bedrock/bin/brl-mem | cut -d' ' -f1)
-        [ "$before" = "$after" ]
-    }
-    check "write_helpers does not clobber existing helpers" helpers_are_idempotent
-    rm -rf /bedrock
-fi
+    after=$(md5sum "$tmp/root/bin/brl-mem" | cut -d' ' -f1)
+    [ "$before" = "$after" ] && [ -x "$tmp/root/bin/brl-swap" ] &&
+        [ -x "$tmp/root/bin/brl-disk" ] && [ -x "$tmp/root/bin/brl-strata" ]
+    rc=$?
+    rm -rf "$tmp"
+    return "$rc"
+}
+check "injected helpers preserve existing files" injected_helpers_preserve_existing_files
 
 printf '%d checks, %d failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

@@ -5562,7 +5562,7 @@ rootfs_seed_alpine_keys() { # <target> <mirror> <release> <apk-arch>
     if [ "$seeded" = 0 ]; then
         work=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-apkkeys.XXXXXX") || return 1
         # Find the alpine-keys APK name via the repo index, then fetch+extract.
-        local idx tools k apk
+        local idx k
         idx=$(rootfs_fetch_text "$mirror/$release/main/$apkarch/" 2>>"$LOGFILE" | grep -o 'alpine-keys-[0-9][^"]*\.apk' | head -n1)
         if [ -n "$idx" ]; then
             rootfs_fetch_file "$mirror/$release/main/$apkarch/$idx" "$work/alpine-keys.apk" 2>>"$LOGFILE" \
@@ -5895,7 +5895,7 @@ rootfs_bedrock_release_version() { # <release>
 # genuinely unavailable we must fail the build up front with useful guidance
 # rather than let the installer die mid-hijack.
 rootfs_bedrock_preflight_fuse() { # -> 0 when FUSE available, 1 + explanation otherwise
-    local fuse_reg=0 dev_fuse=0 need_chk=""
+    local fuse_reg=0 dev_fuse=0
 
     # WSL does not support the features Bedrock needs.
     if [ -r /proc/sys/kernel/osrelease ] && grep -qi 'microsoft' /proc/sys/kernel/osrelease; then
@@ -5950,7 +5950,7 @@ Bedrock rootfs on a real Linux host or VM instead."
 build_bedrock() { # release arch mirror target pkgs use_qemu backend
     local release="$1" arch="$2" mirror="$3" target="$4" pkgs="$5" use_qemu="$6" backend="$7"
     local base_suite="trixie"
-    local asset_arch ver installer_url installer workdir name
+    local asset_arch ver installer_url workdir name
 
     # ---- 0. Resolve arch + version before building anything ----
     asset_arch=$(rootfs_bedrock_asset_arch "$arch")
@@ -6093,7 +6093,7 @@ rootfs_bedrock_fetch_strata() { # <target> <selected> <extra> <arch> <use_qemu> 
 
 # True when <target> looks like a Bedrock system (has the /bedrock layout).
 rootfs_is_bedrock() { # <target>
-    [ -d "$1/bedrock" ] && [ -x "$1/bedrock/bin/brl" -o -x "$1/bedrock/libexec/busybox" ]
+    [ -d "$1/bedrock" ] && { [ -x "$1/bedrock/bin/brl" ] || [ -x "$1/bedrock/libexec/busybox" ]; }
 }
 
 # Run a `brl` (Bedrock CLI) command inside the target chroot, copying its output

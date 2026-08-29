@@ -55,6 +55,10 @@ su() {
     [ -n "$cmd" ] && bash -c "$cmd"
 }
 
+# Ownership changes are outside this suite's scope. The production menu runs
+# as root, while this hermetic test intentionally runs without privileges.
+chown() { :; }
+
 # shellcheck source=../src/features/sysconfig.sh
 source "$PROJECT_DIR/src/features/sysconfig.sh"
 
