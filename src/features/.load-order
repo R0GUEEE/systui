@@ -22,8 +22,8 @@ zzzzzzzzzzzzzzzzz-rootfs-delete-no-confirm.sh
 zzzzzzzzzzzzzzzzzz-rootfs-unshare-probe.sh
 zzzzzzzzzzzzzzzzzzzz-apt-sources-unified-editor.sh
 zzzzzzzzzzzzzzzzzzzzz-mmdebstrap-no-unshare.sh
-zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
 zzzzzzzzzzzzzzzzzzzzzz-rootfs-no-namespace-backends.sh
+zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
 zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
@@ -32,3 +32,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzz-common-openssh.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-engines.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-existing-repair.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-ubuntu-gnu-coreutils.sh
