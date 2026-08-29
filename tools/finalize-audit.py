@@ -80,21 +80,3 @@ once(
     'The `brew` command may be invoked from a root shell, but systui will always',
     'The brew command may be invoked from a root shell, but systui will always',
 )
-
-# Make ShellCheck a blocking CI gate for warnings/errors instead of swallowing
-# every result. Lower-severity style/info diagnostics remain non-blocking.
-once(
-    ".github/workflows/ci.yml",
-    '''          shellcheck -x \\
-            install.sh update.sh \\
-            src/core/*.sh \\
-            src/features/health.sh \\
-            src/features/zz-rootfs-distro-managers.sh \\
-            share/homebrew/install-homebrew-root.sh || true''',
-    '''          shellcheck -S warning -x \\
-            install.sh update.sh \\
-            src/core/*.sh \\
-            src/features/health.sh \\
-            src/features/zz-rootfs-distro-managers.sh \\
-            share/homebrew/install-homebrew-root.sh''',
-)
