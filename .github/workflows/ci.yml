@@ -13,8 +13,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
-      - name: Install test tools
-        run: sudo apt-get update && sudo apt-get install -y shellcheck dialog
+      - name: Verify ShellCheck is available
+        run: command -v shellcheck >/dev/null
       - name: Bash syntax
         shell: bash
         run: |
