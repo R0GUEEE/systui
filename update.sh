@@ -7,7 +7,7 @@
 set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-INSTALL_PREFIX="${INSTALL_PREFIX:-/usr/local}"
+INSTALL_PREFIX="${INSTALL_PREFIX:-/usr}"
 STATE_DIR="${SYSTUI_STATE_DIR:-/etc/systui}"
 REMOTE_FILE="$STATE_DIR/source-url"
 BRANCH_FILE="$STATE_DIR/source-branch"
@@ -28,7 +28,7 @@ Environment overrides:
   SYSTUI_REPO_URL      Git repository URL.
   SYSTUI_BRANCH        Branch to update (default: recorded branch or main).
   SYSTUI_UPDATE_CACHE  Root-owned clean checkout (default: /var/lib/systui/source).
-  INSTALL_PREFIX       Installation prefix (default: /usr/local).
+  INSTALL_PREFIX       Installation prefix (default: /usr).
 USAGE
 }
 
@@ -61,59 +61,37 @@ mkdir -p "$STATE_DIR" "$(dirname "$CACHE_DIR")"
 chmod 0755 "$STATE_DIR" "$(dirname "$CACHE_DIR")" 2>/dev/null || true
 
 REPO_URL="${SYSTUI_REPO_URL:-}"
-if [ -z "$REPO_URL" ] && [ -r "$REMOTE_FILE" ]; then
-    REPO_URL=$(cat "$REMOTE_FILE")
-fi
-# Development checkout fallback. We only read its origin; installation never
-# executes files from this potentially user-owned tree.
+if [ -z "$REPO_URL" ] && [ -r "$REMOTE_FILE" ]; then REPO_URL=$(cat "$REMOTE_FILE"); fi
 if [ -z "$REPO_URL" ] && git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     REPO_URL=$(git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" remote get-url origin 2>/dev/null || true)
 fi
 [ -n "$REPO_URL" ] || die "No repository URL is recorded. Set SYSTUI_REPO_URL or reinstall from a Git checkout."
 
 BRANCH="${SYSTUI_BRANCH:-}"
-if [ -z "$BRANCH" ] && [ -r "$BRANCH_FILE" ]; then
-    BRANCH=$(cat "$BRANCH_FILE")
-fi
+if [ -z "$BRANCH" ] && [ -r "$BRANCH_FILE" ]; then BRANCH=$(cat "$BRANCH_FILE"); fi
 [ -n "$BRANCH" ] || BRANCH=main
 case "$BRANCH" in
     -*|*..*|*~*|*^*|*:*|*\?*|*\**|*\[*|*\\*|*' '*) die "Unsafe branch name: $BRANCH" ;;
 esac
 
-# The cache is the trust boundary: it is owned by root, contains only Git
-# tracked files, and is reset/cleaned before every install.
-if [ "$FORCE" -eq 1 ] && [ -e "$CACHE_DIR" ]; then
-    info "Recreating update cache: $CACHE_DIR"
-    rm -rf -- "$CACHE_DIR"
-fi
-
-if [ -e "$CACHE_DIR" ] && [ ! -d "$CACHE_DIR/.git" ]; then
-    die "$CACHE_DIR exists but is not a Git checkout. Use --force or set SYSTUI_UPDATE_CACHE."
-fi
-
-if [ ! -d "$CACHE_DIR/.git" ]; then
-    info "Creating root-owned update cache..."
-    git clone --no-checkout -- "$REPO_URL" "$CACHE_DIR"
-fi
+if [ "$FORCE" -eq 1 ] && [ -e "$CACHE_DIR" ]; then info "Recreating update cache: $CACHE_DIR"; rm -rf -- "$CACHE_DIR"; fi
+if [ -e "$CACHE_DIR" ] && [ ! -d "$CACHE_DIR/.git" ]; then die "$CACHE_DIR exists but is not a Git checkout. Use --force or set SYSTUI_UPDATE_CACHE."; fi
+if [ ! -d "$CACHE_DIR/.git" ]; then info "Creating root-owned update cache..."; git clone --no-checkout -- "$REPO_URL" "$CACHE_DIR"; fi
 chown -R root:root "$CACHE_DIR"
 chmod go-w "$CACHE_DIR"
 
 git_cache() { git -C "$CACHE_DIR" "$@"; }
-
 info "Remote: $REPO_URL"
 info "Branch: $BRANCH"
 info "Cache:  $CACHE_DIR"
-
 git_cache remote set-url origin "$REPO_URL"
 git_cache fetch --prune --tags origin "$BRANCH"
 git_cache checkout -B "$BRANCH" "origin/$BRANCH"
 git_cache reset --hard "origin/$BRANCH"
 git_cache clean -fdx
 
-# Verify the install entry point is tracked by the exact commit we fetched.
 git_cache ls-files --error-unmatch install.sh >/dev/null 2>&1 || die "Fetched revision does not track install.sh."
 [ -f "$CACHE_DIR/install.sh" ] || die "Fetched revision does not contain install.sh."
-
 TARGET_SHA=$(git_cache rev-parse --verify HEAD)
 info "Installing commit: $TARGET_SHA"
 chmod 0755 "$CACHE_DIR/install.sh"
@@ -129,5 +107,4 @@ printf '%s\n' "$REPO_URL" > "$REMOTE_FILE"
 printf '%s\n' "$BRANCH" > "$BRANCH_FILE"
 printf '%s\n' "$TARGET_SHA" > "$STATE_DIR/installed-commit"
 chmod 0644 "$STATE_DIR/source-dir" "$REMOTE_FILE" "$BRANCH_FILE" "$STATE_DIR/installed-commit"
-
 ok "systui updated and reinstalled successfully ($TARGET_SHA)."
