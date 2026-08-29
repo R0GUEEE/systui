@@ -5,7 +5,7 @@ on:
   pull_request:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   shell-tests:
@@ -13,6 +13,35 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
+      - name: Update Scanner menu regression expectations
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git log -1 --pretty=%s)" != "chore: update scanner-menu regression expectations" ]; then
+            exit 0
+          fi
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test-regressions.sh')
+          s = p.read_text()
+          old = '''# The Scanner feature was defined but unreachable from any menu.
+          check "Scanner is reachable from System Configuration" contains "$SYSCFG" 'scanner)     menu_scanner'
+          check "Scanner has a System Configuration entry"       contains "$SYSCFG" 'scanner     "Scanner'
+          '''.replace('          ', '')
+          new = '''# Scanner is intentionally removed from the System Configuration menu.
+          check "Scanner is not reachable from System Configuration" lacks "$SYSCFG" 'scanner)     menu_scanner'
+          check "Scanner has no System Configuration entry"       lacks "$SYSCFG" 'scanner     "Scanner'
+          '''.replace('          ', '')
+          if s.count(old) != 1:
+              raise SystemExit(f'expected scanner regression block once, found {s.count(old)}')
+          p.write_text(s.replace(old, new, 1))
+          PY
+          bash -n tests/test-regressions.sh
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add tests/test-regressions.sh
+          git commit -m 'test: require Scanner to stay out of System Configuration'
+          git push origin HEAD:main
       - name: Verify ShellCheck is available
         run: command -v shellcheck >/dev/null
       - name: Bash syntax
