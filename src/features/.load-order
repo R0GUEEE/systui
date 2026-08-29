@@ -40,3 +40,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-readiness-repair.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-init-reinstall.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-init-manager.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-bootstrap-recovery.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ultimate-provision-startup-fix.sh
