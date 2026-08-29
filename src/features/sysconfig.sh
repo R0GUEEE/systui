@@ -4556,13 +4556,16 @@ kubectl|kubectl completion & aliases
 npm|npm completion
 tmux|tmux aliases & autostart"
 
-OMZ_EXTERNAL_PLUGINS="zsh-autosuggestions|zsh-users/zsh-autosuggestions|Fish-style inline suggestions
-zsh-syntax-highlighting|zsh-users/zsh-syntax-highlighting|Command colorization
+# Order matters: oh-my-zsh sources plugins=() in the listed order, and the
+# checklists below write selections back in catalogue order. Constraints:
+#   * zsh-autocomplete wants to load first;
+#   * fzf-tab must load before zsh-autosuggestions (and before highlighting);
+#   * fast-syntax-highlighting / zsh-syntax-highlighting must load LAST.
+OMZ_EXTERNAL_PLUGINS="zsh-autocomplete|marlonrichert/zsh-autocomplete|Real-time completion menus
 zsh-completions|zsh-users/zsh-completions|Extra completion definitions
-zsh-history-substring-search|zsh-users/zsh-history-substring-search|Type text, arrows search history
 fzf-tab|Aloxaf/fzf-tab|fzf-powered tab completion
-fast-syntax-highlighting|zdharma-continuum/fast-syntax-highlighting|Faster highlighting engine
-zsh-autocomplete|marlonrichert/zsh-autocomplete|Real-time completion menus
+zsh-autosuggestions|zsh-users/zsh-autosuggestions|Fish-style inline suggestions
+zsh-history-substring-search|zsh-users/zsh-history-substring-search|Type text, arrows search history
 enhancd|b4b4r07/enhancd|Enhanced cd with frecency jump
 zsh-abbr|olets/zsh-abbr|Fish-style auto-expanding abbreviations
 alias-tips|djui/alias-tips|Remind you of aliases you defined
@@ -4570,7 +4573,9 @@ history-search-multi-word|zdharma-continuum/history-search-multi-word|Syntax-hig
 git-extra-commands|unixorn/git-extra-commands|Extra git helper commands
 zsh-auto-notify|MichaelAquilina/zsh-auto-notify|Notify when long commands finish
 command-execution-timer|olets/command-execution-timer|Show how long commands took
-zsh-autoswitch-virtualenv|MichaelAquilina/zsh-autoswitch-virtualenv|Auto-switch Python virtualenvs"
+zsh-autoswitch-virtualenv|MichaelAquilina/zsh-autoswitch-virtualenv|Auto-switch Python virtualenvs
+fast-syntax-highlighting|zdharma-continuum/fast-syntax-highlighting|Faster highlighting engine
+zsh-syntax-highlighting|zsh-users/zsh-syntax-highlighting|Command colorization"
 
 ZINIT_POPULAR="zsh-users/zsh-autosuggestions|Fish-style inline suggestions
 zsh-users/zsh-syntax-highlighting|Command colorization
@@ -4669,8 +4674,13 @@ be restored as .zshrc." || continue
                 tui_msg "Done" "ZSH_THEME=\"$t\" set in $rc" ;;
             p10k)
                 [ -d "$ozsh" ] || { tui_msg "Missing" "Install oh-my-zsh first."; continue; }
+                # Expand the destination here: inside `su - "$u" -c` the login
+                # shell never reads .zshrc, so $ZSH_CUSTOM is unset there — the
+                # old \${ZSH_CUSTOM:-...} literally created a directory named
+                # "${ZSH_CUSTOM:-~/.oh-my-zsh/custom}" and the theme never
+                # loaded. $home_dir/.oh-my-zsh/custom is OMZ's default.
                 run_cmd "Installing Powerlevel10k" su - "$u" -c \
-                    "git clone --depth 1 https://github.com/romkatv/powerlevel10k \\\${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/themes/powerlevel10k 2>/dev/null || true"
+                    "git clone --depth 1 https://github.com/romkatv/powerlevel10k ${ZSH_CUSTOM:-$home_dir/.oh-my-zsh/custom}/themes/powerlevel10k 2>/dev/null || true"
                 sed -i -E 's|^ZSH_THEME=.*|ZSH_THEME="powerlevel10k/powerlevel10k"|' "$rc"
                 tui_msg "Done" "Powerlevel10k installed & set.\nFirst zsh start runs its configuration wizard." ;;
             plugins)
@@ -4693,16 +4703,47 @@ be restored as .zshrc." || continue
                     "Enabled plugins pre-checked. SPACE toggles, ENTER applies.\n* = external, auto-cloned from GitHub when enabled:" "${args[@]}") || continue
                 sel=${sel//\"/}
                 # Clone any selected external plugin that isn't present yet.
-                local t line
+                # oh-my-zsh sources custom/plugins/<tag>/<tag>.plugin.zsh, but
+                # a few repos ship a differently-named loader (e.g. zsh-auto-
+                # notify -> auto-notify.plugin.zsh, zsh-autoswitch-virtualenv
+                # -> autoswitch_virtualenv.plugin.zsh); shim those so the
+                # plugin actually loads instead of silently doing nothing.
+                local t line dest srcf kept final hl rest
                 for t in $sel; do
                     line=$(grep -m1 "^$t|" <<<"$OMZ_EXTERNAL_PLUGINS") || continue
                     repo=$(cut -d'|' -f2 <<<"$line")
                     [ -d "$ozsh/custom/plugins/$t" ] || \
                         su - "$u" -c "git clone --depth 1 --recurse-submodules https://github.com/$repo ~/.oh-my-zsh/custom/plugins/$t" \
                             >>"$LOGFILE" 2>&1 || warn "Clone failed: $repo"
+                    dest="$ozsh/custom/plugins/$t"
+                    srcf=$(zsh_plugin_file "$dest" 2>/dev/null || true)
+                    if [ -n "$srcf" ] && [ "$srcf" != "$t.plugin.zsh" ]; then
+                        printf 'source "${0:A:h}/%s"\n' "$srcf" > "$dest/$t.plugin.zsh"
+                        chown "$u" "$dest/$t.plugin.zsh" 2>/dev/null || true
+                    elif [ -z "$srcf" ]; then
+                        warn "No loadable .zsh file found for $t — check its README."
+                    fi
                 done
-                omb_set_array "$rc" plugins $sel \
-                    && tui_msg "Done" "plugins=($sel)\nwritten to $rc"
+                # Keep currently-enabled plugins that are not in the catalogues
+                # (custom/user plugins) — rewriting only the selection would
+                # silently drop them from plugins=().
+                kept=""
+                for t in $current; do
+                    { echo "$OMZ_BUILTIN_PLUGINS"; echo "$OMZ_EXTERNAL_PLUGINS"; } | grep -q "^$t|" || kept="$kept $t"
+                done
+                final="$kept $sel"
+                # Syntax highlighting must be sourced LAST (after fzf-tab and
+                # autosuggestions) to highlight correctly.
+                hl=""; rest=""
+                for t in $final; do
+                    case "$t" in
+                        zsh-syntax-highlighting|fast-syntax-highlighting) hl="$hl $t" ;;
+                        *) rest="$rest $t" ;;
+                    esac
+                done
+                final="$rest$hl"
+                omb_set_array "$rc" plugins $final \
+                    && tui_msg "Done" "plugins=($final)\nwritten to $rc"
                 # New custom/plugins dirs are on fpath: build the compinit dump
                 # now so the next shell start does not stall rebuilding it.
                 su - "$u" -c 'command -v zsh >/dev/null 2>&1 && zsh -f -c "autoload -Uz compinit && compinit" >/dev/null 2>&1' \
@@ -5193,7 +5234,16 @@ menu_nushell() { # <user> <home>
     done
 }
 
-# ---- tmux TPM manager ----
+# ---- tmux manager (configuration + TPM plugin management) ----
+
+# Current value of a `set -g <key> <value>` option in a tmux.conf.
+tmux_opt_get() { # <conf> <key>
+    local conf="$1" key="$2" v
+    v=$(grep -E "^set(-option)? +-g +${key}( +|$)" "$conf" 2>/dev/null | tail -1 | awk '{print $NF}')
+    v=${v#\"}; v=${v%\"}
+    printf '%s' "$v"
+}
+
 menu_tpm() { # <user> <home>
     local u="$1" home_dir="$2"
     local tpm="$home_dir/.tmux/plugins/tpm" conf="$home_dir/.tmux.conf"
@@ -5202,6 +5252,8 @@ menu_tpm() { # <user> <home>
         c=$(tui_menu "tmux plugins (TPM) — $u" "Tmux Plugin Manager $(stp "$tpm"):" \
             install "Install tmux + TPM" \
             plugins "Manage popular plugins (space-select)" \
+            custom "Add a custom plugin (git URL)" \
+            update "Update all installed plugins" \
             current "Show plugin lines in .tmux.conf" \
             uninstall "Uninstall TPM and all tmux plugins" \
             back    "Back") || return 0
@@ -5236,6 +5288,30 @@ menu_tpm() { # <user> <home>
                 grep -q "run '~/.tmux/plugins/tpm/tpm'" "$conf" || echo "run '~/.tmux/plugins/tpm/tpm'" >> "$conf"
                 chown "$u" "$conf" 2>/dev/null
                 tui_msg "Done" "Block updated. Inside tmux: prefix + I to install,\nprefix + alt + u to remove unlisted plugins." ;;
+            custom)
+                [ -d "$tpm" ] || { tui_msg "Missing" "Install TPM first."; continue; }
+                local url name existing
+                url=$(tui_input "Custom tmux plugin" "Repository (owner/repo or full git URL):" "https://github.com/") || continue
+                case "$url" in
+                    ""|https://github.com/) continue ;;
+                    */*) case "$url" in https://*|http://*) ;; *) url="https://github.com/$url" ;; esac ;;
+                esac
+                name=$(basename "$url" .git)
+                [ -n "$name" ] || continue
+                if grep -q "@plugin '$name'" "$conf" 2>/dev/null; then
+                    tui_msg "Already added" "'$name' is already in the plugin block of $conf."
+                    continue
+                fi
+                existing=$(sed -n '/^# >>> systui tmux plugins >>>/,/^# <<< systui tmux plugins <<</p' "$conf" 2>/dev/null | grep "@plugin " || true)
+                {
+                    [ -n "$existing" ] && printf '%s\n' "$existing"
+                    echo "set -g @plugin '$name'"
+                } | write_marked_block "$conf" "tmux plugins"
+                chown "$u" "$conf" 2>/dev/null
+                tui_msg "Plugin added" "'$name' added to the plugin block.\nInside tmux press prefix + I to install it." ;;
+            update)
+                [ -x "$tpm/bin/update_plugins" ] || { tui_msg "Missing" "TPM is not installed (or update_plugins is missing)."; continue; }
+                run_cmd "Updating all tmux plugins" su - "$u" -c "~/.tmux/plugins/tpm/bin/update_plugins all" ;;
             current)
                 grep -n "@plugin\|tpm" "$conf" 2>/dev/null > ${SYSTUI_TMP}/sh2 || echo "(none)" > ${SYSTUI_TMP}/sh2
                 tui_text ".tmux.conf plugin lines — $u" ${SYSTUI_TMP}/sh2 ;;
@@ -5249,6 +5325,169 @@ strip the systui plugin block and tpm run line from .tmux.conf?" || continue
                 sed -i "\|run '~/.tmux/plugins/tpm/tpm'|d" "$conf" 2>/dev/null
                 tui_msg "Removed" "TPM and plugins removed. Reload tmux config\n(prefix + : source-file ~/.tmux.conf) or restart tmux." ;;
             back) return 0 ;;
+        esac
+    done
+}
+
+# Status-bar theme presets, written to the systui "tmux theme" block.
+menu_tmux_theme() { # <user> <home> <conf>
+    local u="$1" home_dir="$2" conf="$3"
+    local t tpm="$home_dir/.tmux/plugins/tpm"
+    t=$(tui_radio "tmux status theme — $u" "Status-bar theme (themes that need TPM also add the @plugin line):" \
+        plain "Default — no custom styling" on \
+        dark "Dark — minimal high-contrast" off \
+        light "Light — light background" off \
+        catppuccin "Catppuccin mocha (TPM plugin; needs prefix + I)" off \
+        dracula "Dracula (TPM plugin; needs prefix + I)" off) || return 0
+    case "$t" in
+        plain)
+            write_marked_block "$conf" "tmux theme" </dev/null
+            tui_msg "Theme" "Custom styling removed from $conf." ;;
+        dark)
+            write_marked_block "$conf" "tmux theme" <<'EOF'
+set -g status-style 'bg=colour234,fg=colour245'
+set -g status-left '#[fg=colour232,bg=colour39] #S #[default]'
+set -g status-right '#[fg=colour232,bg=colour39] %H:%M %d-%b #[default]'
+set -g window-status-current-style 'fg=colour39,bold'
+set -g pane-border-style 'fg=colour236'
+set -g pane-active-border-style 'fg=colour39'
+EOF
+            tui_msg "Theme" "Dark theme written to $conf." ;;
+        light)
+            write_marked_block "$conf" "tmux theme" <<'EOF'
+set -g status-style 'bg=colour252,fg=colour234'
+set -g status-left '#[fg=colour255,bg=colour31] #S #[default]'
+set -g status-right '#[fg=colour255,bg=colour31] %H:%M %d-%b #[default]'
+set -g window-status-current-style 'fg=colour31,bold'
+set -g pane-border-style 'fg=colour250'
+set -g pane-active-border-style 'fg=colour31'
+EOF
+            tui_msg "Theme" "Light theme written to $conf." ;;
+        catppuccin)
+            [ -d "$tpm" ] || tui_msg "Note" "TPM is not installed — install it in the plugin menu\nand press prefix + I to fetch the theme."
+            write_marked_block "$conf" "tmux theme" <<'EOF'
+set -g @plugin 'catppuccin/tmux'
+set -g @catppuccin_flavour 'mocha'
+set -g @catppuccin_status_background 'default'
+EOF
+            tui_msg "Theme" "Catppuccin set. Inside tmux press prefix + I to install." ;;
+        dracula)
+            [ -d "$tpm" ] || tui_msg "Note" "TPM is not installed — install it in the plugin menu\nand press prefix + I to fetch the theme."
+            write_marked_block "$conf" "tmux theme" <<'EOF'
+set -g @plugin 'dracula/tmux'
+set -g @dracula-show-powerline true
+set -g @dracula-show-left-icon session
+EOF
+            tui_msg "Theme" "Dracula set. Inside tmux press prefix + I to install." ;;
+    esac
+    chown "$u" "$conf" 2>/dev/null
+}
+
+# Toggle common tmux options; checked = set to a sane value, unchecked = removed
+# from the managed block (user's own lines are never touched).
+menu_tmux_options() { # <user> <home> <conf>
+    local u="$1" home_dir="$2" conf="$3"
+    local o
+    o=$(tui_check "tmux options — $u" "Current values pre-checked. SPACE toggles, ENTER applies\n(unchecking removes the option from the systui block):" \
+        mouse "Mouse support (set -g mouse on)" "$([ "$(tmux_opt_get "$conf" mouse)" = on ] && echo on || echo off)" \
+        vi "Vi keys in copy-mode & panes (mode-keys vi)" "$([ "$(tmux_opt_get "$conf" mode-keys)" = vi ] && echo on || echo off)" \
+        base1 "Number windows & panes from 1" "$([ "$(tmux_opt_get "$conf" base-index)" = 1 ] && echo on || echo off)" \
+        renum "Renumber windows after one closes" "$([ "$(tmux_opt_get "$conf" renumber-windows)" = on ] && echo on || echo off)" \
+        hist "Scrollback history 10000 lines" "$([ "$(tmux_opt_get "$conf" history-limit)" = 10000 ] && echo on || echo off)" \
+        esc "Escape time 10 ms (snappier alt-key)" "$([ "$(tmux_opt_get "$conf" escape-time)" = 10 ] && echo on || echo off)" \
+        status "Status bar" "$([ "$(tmux_opt_get "$conf" status)" != off ] && echo on || echo off)" \
+        term "tmux-256color default terminal" "$([ "$(tmux_opt_get "$conf" default-terminal)" = tmux-256color ] && echo on || echo off)" \
+        clip "Clipboard integration (set-clipboard on)" "$([ "$(tmux_opt_get "$conf" set-clipboard)" = on ] && echo on || echo off)" \
+        repeat "Repeat prefix key 500 ms" "$([ "$(tmux_opt_get "$conf" repeat-time)" = 500 ] && echo on || echo off)" \
+        interval "Status refresh every 1 s" "$([ "$(tmux_opt_get "$conf" status-interval)" = 1 ] && echo on || echo off)") || return 0
+    o=" ${o//\"/} "
+    {
+        case "$o" in *" mouse "*)    echo 'set -g mouse on' ;; esac
+        case "$o" in *" vi "*)       echo 'set -g mode-keys vi' ;; esac
+        case "$o" in *" base1 "*)    echo 'set -g base-index 1'; echo 'set -g pane-base-index 1' ;; esac
+        case "$o" in *" renum "*)    echo 'set -g renumber-windows on' ;; esac
+        case "$o" in *" hist "*)     echo 'set -g history-limit 10000' ;; esac
+        case "$o" in *" esc "*)      echo 'set -g escape-time 10' ;; esac
+        case "$o" in *" status "*)   echo 'set -g status on' ;; esac
+        case "$o" in *" term "*)     echo 'set -g default-terminal "tmux-256color"' ;; esac
+        case "$o" in *" clip "*)     echo 'set -g set-clipboard on' ;; esac
+        case "$o" in *" repeat "*)   echo 'set -g repeat-time 500' ;; esac
+        case "$o" in *" interval "*) echo 'set -g status-interval 1' ;; esac
+    } | write_marked_block "$conf" "tmux options"
+    chown "$u" "$conf" 2>/dev/null
+    tui_msg "Done" "tmux options block updated in $conf.\nApply with: tmux source-file ~/.tmux.conf"
+}
+
+# Change the prefix key (default C-b).
+menu_tmux_prefix() { # <user> <home> <conf>
+    local u="$1" home_dir="$2" conf="$3"
+    local cur p v
+    cur=$(tmux_opt_get "$conf" prefix); [ -n "$cur" ] || cur=C-b
+    p=$(tui_radio "tmux prefix — $u" "Current prefix: $cur\nSPACE selects, ENTER applies:" \
+        C-b "Ctrl-b (default)" "$([ "$cur" = C-b ] && echo on || echo off)" \
+        C-a "Ctrl-a (screen style)" "$([ "$cur" = C-a ] && echo on || echo off)" \
+        C-Space "Ctrl-Space" "$([ "$cur" = C-Space ] && echo on || echo off)" \
+        custom "Custom (type your own, e.g. F12 or M-a)" off) || return 0
+    [ -z "$p" ] && return 0
+    if [ "$p" = custom ]; then
+        v=$(tui_input "Prefix" "tmux prefix key (e.g. C-x, F12, M-a):" "$cur") || return 0
+        [ -n "$v" ] && p="$v" || return 0
+    fi
+    write_marked_block "$conf" "tmux prefix" <<EOF
+unbind C-b
+unbind C-a
+unbind C-Space
+set -g prefix $p
+bind $p send-prefix
+EOF
+    chown "$u" "$conf" 2>/dev/null
+    tui_msg "Prefix" "Prefix set to '$p'.\nApply with: tmux source-file ~/.tmux.conf"
+}
+
+# Top-level tmux menu: configuration + plugin management.
+menu_tmux() { # <user> <home>
+    local u="$1" home_dir="$2"
+    local conf="$home_dir/.tmux.conf" tpm="$home_dir/.tmux/plugins/tpm"
+    while true; do
+        local c
+        c=$(tui_menu "tmux — $u" "Terminal multiplexer $(st tmux) — configuration & plugins:" \
+            install "Install tmux" \
+            plugins "TPM plugin manager (install, popular, custom, update)" \
+            theme "Status-bar theme" \
+            config "Configure options (mouse, prefix, vi keys...)" \
+            prefix "Change prefix key" \
+            view "Show current .tmux.conf" \
+            backup "Create timestamped backup" \
+            reload "Reload config in running tmux" \
+            remove "Remove tmux package" \
+            back "Back") || return 0
+        case "$c" in
+            install)
+                if command -v tmux >/dev/null 2>&1; then
+                    tui_msg "tmux" "tmux is already installed: $(command -v tmux)"
+                else
+                    pm_install tmux
+                fi ;;
+            plugins) menu_tpm "$u" "$home_dir" ;;
+            theme)   menu_tmux_theme "$u" "$home_dir" "$conf" ;;
+            config)  menu_tmux_options "$u" "$home_dir" "$conf" ;;
+            prefix)  menu_tmux_prefix "$u" "$home_dir" "$conf" ;;
+            view)    [ -f "$conf" ] && tui_text "$conf" "$conf" || tui_msg "tmux" "$conf does not exist yet." ;;
+            backup)
+                [ -f "$conf" ] || { tui_msg "tmux" "Nothing to back up — $conf does not exist."; continue; }
+                local bak="$conf.systui-$(date +%Y%m%d-%H%M%S).bak"
+                cp -p "$conf" "$bak" && chown "$u" "$bak" 2>/dev/null
+                tui_msg "Backup" "Saved to:\n$bak" ;;
+            reload)
+                if [ -n "${TMUX:-}" ] || [ -S "${TMPDIR:-/tmp}/tmux-$(id -u)/default" ]; then
+                    run_cmd "Reloading tmux config" tmux source-file "$conf"
+                else
+                    tui_msg "tmux" "No running tmux server found.\nThe next tmux start reads $conf automatically."
+                fi ;;
+            remove)
+                tui_yesno "Remove tmux" "Uninstall the tmux package for all users?" || continue
+                pm_remove tmux ;;
+            back|"") return 0 ;;
         esac
     done
 }
@@ -5295,13 +5534,13 @@ menu_shell_hierarchy() {
     home_dir=$(user_home "$u"); [ -n "$home_dir" ] || { tui_msg "Error" "User not found."; return 0; }
     cur_shell=$(basename "$(getent passwd "$u" | cut -d: -f7)")
     while true; do
-        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" bash "Bash $(st bash)" "$([ "$cur_shell" = bash ] && echo on || echo off)" zsh "Zsh $(st zsh)" "$([ "$cur_shell" = zsh ] && echo on || echo off)" fish "Fish $(st fish)" "$([ "$cur_shell" = fish ] && echo on || echo off)" nu "Nushell $(st nu)" "$([ "$cur_shell" = nu ] && echo on || echo off)" tmux "tmux plugins" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
+        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" bash "Bash $(st bash)" "$([ "$cur_shell" = bash ] && echo on || echo off)" zsh "Zsh $(st zsh)" "$([ "$cur_shell" = zsh ] && echo on || echo off)" fish "Fish $(st fish)" "$([ "$cur_shell" = fish ] && echo on || echo off)" nu "Nushell $(st nu)" "$([ "$cur_shell" = nu ] && echo on || echo off)" tmux "tmux" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
         case "$sh_" in
             bash) m=$(tui_menu "Bash Manager" "Install, remove or configure:" install "Install/reinstall Bash" uninstall "Uninstall Bash" omb "oh-my-bash" bashit "Bash-it" blesh "ble.sh" back "Back") || continue; case "$m" in install) pm_install bash;; uninstall) safe_remove_shell bash;; omb) menu_omb "$u" "$home_dir";; bashit) menu_bashit "$u" "$home_dir";; blesh) menu_blesh "$u" "$home_dir";; esac;;
             zsh) m=$(tui_menu "Zsh Manager" "Install, remove or configure:" install "Install/reinstall Zsh" uninstall "Uninstall Zsh" omz "oh-my-zsh" zinit "zinit" back "Back") || continue; case "$m" in install) menu_zsh_install;; uninstall) safe_remove_shell zsh;; omz) menu_omz "$u" "$home_dir";; zinit) menu_zinit "$u" "$home_dir";; esac;;
             fish) m=$(tui_menu "Fish Manager" "Install, remove or configure:" install "Install/reinstall Fish" uninstall "Uninstall Fish" fisher "Fisher" back "Back") || continue; case "$m" in install) menu_fish_install;; uninstall) safe_remove_shell fish;; fisher) menu_fisher "$u" "$home_dir";; esac;;
             nu) menu_nushell "$u" "$home_dir" ;;
-            tmux) menu_tpm "$u" "$home_dir";;
+            tmux) menu_tmux "$u" "$home_dir";;
             more) menu_more_shells "$u" "$home_dir" ;;
         esac
     done
@@ -5586,8 +5825,14 @@ omb_set_array() {
         warn "${arr}=() spans multiple lines in $rc — edit it manually to: ${arr}=($*)"
         return 1
     else
-        # Insert before the OMB source line so OMB picks it up.
-        sed -i "/^source.*oh-my-bash.sh/i ${arr}=($*)" "$rc"
+        # Insert before the framework source line (this helper is used for
+        # oh-my-bash AND oh-my-zsh) so the framework picks the array up;
+        # append at the end of the file as a last resort.
+        if grep -qE '^[[:space:]]*(source|\.) .*oh-my-(bash|zsh)\.sh' "$rc" 2>/dev/null; then
+            sed -i -E "/^[[:space:]]*(source|\.) .*oh-my-(bash|zsh)\.sh/i ${arr}=($*)" "$rc"
+        else
+            printf '\n%s=(%s)\n' "$arr" "$*" >> "$rc"
+        fi
     fi
 }
 
@@ -5824,6 +6069,24 @@ plugin_remove_match() {
     local file="$1" pattern="$2"
     [ -f "$file" ] || return 0
     sed -i "\\|$pattern|d" "$file" 2>/dev/null || true
+}
+
+# Locate the distro-installed .zsh source file for a zsh plugin package.
+# Layouts differ: Debian/Fedora use /usr/share/<name>/, Arch/Alpine use
+# /usr/share/zsh/plugins/<name>/ — probe the known paths, then fall back to a
+# shallow find. Empty output = not installed (or an unusual layout).
+zsh_plugin_src_path() { # <plugin-name>
+    local name="$1" p
+    for p in \
+        "/usr/share/$name/$name.zsh" \
+        "/usr/share/$name/$name.plugin.zsh" \
+        "/usr/share/zsh/plugins/$name/$name.plugin.zsh" \
+        "/usr/share/zsh/plugins/$name/$name.zsh" \
+        "/usr/share/zsh/$name/$name.zsh"; do
+        [ -f "$p" ] && { printf '%s\n' "$p"; return 0; }
+    done
+    find /usr/share/zsh /usr/share -maxdepth 4 -type f \
+        \( -name "$name.zsh" -o -name "$name.plugin.zsh" \) 2>/dev/null | head -1
 }
 
 plugin_choose_shells() {
@@ -6305,7 +6568,23 @@ menu_plugin_simple_init() { # title command package init-bash init-zsh init-fish
             install) pm_install "$pkg" ;;
             integrate)
                 shells=$(plugin_choose_shells) || continue; shells=${shells//\"/}
-                for sh in $shells; do rc=$(plugin_rc_file "$sh" "$home_dir"); case "$sh" in bash) [ -n "$ib" ] && plugin_add_line "$rc" "$ib" "$u";; zsh) [ -n "$iz" ] && plugin_add_line "$rc" "$iz" "$u";; fish) [ -n "$ifish" ] && plugin_add_line "$rc" "$ifish" "$u";; esac; done ;;
+                for sh in $shells; do rc=$(plugin_rc_file "$sh" "$home_dir"); case "$sh" in
+                    bash) [ -n "$ib" ] && plugin_add_line "$rc" "$ib" "$u";;
+                    zsh)
+                        # "@detect:<pkg>" resolves the distro-specific source
+                        # path at integrate time (after the package exists).
+                        if [ -n "$iz" ] && [ "${iz#@detect:}" != "$iz" ]; then
+                            local _zp; _zp=$(zsh_plugin_src_path "${iz#@detect:}")
+                            if [ -n "$_zp" ]; then
+                                plugin_add_line "$rc" "source $_zp" "$u"
+                            else
+                                tui_msg "Not found" "Could not locate the .zsh file for '${iz#@detect:}'.\nFind it after install and source it manually."
+                            fi
+                        elif [ -n "$iz" ]; then
+                            plugin_add_line "$rc" "$iz" "$u"
+                        fi ;;
+                    fish) [ -n "$ifish" ] && plugin_add_line "$rc" "$ifish" "$u";;
+                esac; done ;;
             edit)
                 [ -n "$cfg" ] || cfg="$home_dir/.profile"
                 mkdir -p "$(dirname "$cfg")"; touch "$cfg"; chown "$u" "$cfg" 2>/dev/null || true
@@ -6670,10 +6949,10 @@ menu_shell_plugins() {
             atuin) menu_plugin_simple_init "Atuin" atuin atuin 'eval "$(atuin init bash)"' 'eval "$(atuin init zsh)"' 'atuin init fish | source' "$u" "$home_dir" "$home_dir/.config/atuin/config.toml" ;;
             direnv) menu_plugin_simple_init "direnv" direnv direnv 'eval "$(direnv hook bash)"' 'eval "$(direnv hook zsh)"' 'direnv hook fish | source' "$u" "$home_dir" "$home_dir/.config/direnv/direnvrc" ;;
             carapace) menu_plugin_simple_init "Carapace" carapace carapace 'source <(carapace _carapace bash)' 'source <(carapace _carapace zsh)' 'carapace _carapace fish | source' "$u" "$home_dir" "$home_dir/.config/carapace/bridges.yaml" ;;
-            syntax) menu_plugin_simple_init "Zsh syntax highlighting" zsh-syntax-highlighting zsh-syntax-highlighting '' 'source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
+            syntax) menu_plugin_simple_init "Zsh syntax highlighting" zsh-syntax-highlighting zsh-syntax-highlighting '' '@detect:zsh-syntax-highlighting' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
             github) menu_shell_github_plugins "$u" "$home_dir" ;;
             azp) menu_azp "$u" "$home_dir" ;;
-            autosuggest) menu_plugin_simple_init "Zsh autosuggestions" zsh-autosuggestions zsh-autosuggestions '' 'source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
+            autosuggest) menu_plugin_simple_init "Zsh autosuggestions" zsh-autosuggestions zsh-autosuggestions '' '@detect:zsh-autosuggestions' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
             user) target=$(shell_plugin_target) || continue; u=${target%%|*}; home_dir=${target#*|} ;;
             back|"") return 0 ;;
         esac
@@ -7098,6 +7377,7 @@ menu_shells() {
             aliases "Alias manager (catalog, custom aliases, import and validation)" \
             mappings "Key mapping configuration (Bash, Zsh, Fish, Readline)" \
             plugins "Plugins (Starship, fzf, completions and more)" \
+            tmux "tmux — configuration & plugin management" \
             readline "Readline/inputrc tuning" \
             default "Set default shell" advanced "Advanced shell settings" back "Back") || return 0
         case "$c" in
@@ -7110,6 +7390,11 @@ menu_shells() {
             aliases) menu_aliases ;;
             mappings) menu_shell_mappings ;;
             plugins) menu_shell_plugins ;;
+            tmux)
+                local _tu _th
+                _tu=$(tui_input "tmux" "Manage tmux for which user?" "${SUDO_USER:-root}") || continue
+                _th=$(user_home "$_tu"); [ -n "$_th" ] || { tui_msg "Error" "User '$_tu' was not found."; continue; }
+                menu_tmux "$_tu" "$_th" ;;
             readline) safe_edit /etc/inputrc || true ;;
             default) menu_set_default_shell ;;
             advanced) menu_shell_advanced ;;
