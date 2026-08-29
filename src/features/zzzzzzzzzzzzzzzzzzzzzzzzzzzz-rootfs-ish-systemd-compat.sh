@@ -10,7 +10,7 @@
 ###############################################################################
 
 rootfs_install_ish_systemd_compat() { # <target>
-    local t="$1" real_systemd init_path
+    local t="$1" real_systemd init_path distro_id=""
 
     [ -d "$t" ] || return 1
 
@@ -24,6 +24,29 @@ rootfs_install_ish_systemd_compat() { # <target>
         return 0
     }
 
+    # Ubuntu Resolute can satisfy the essential `coreutils` meta-package with
+    # uutils/rust-coreutils. Its rustix auxv probe panics on iSH-AOK because the
+    # emulated kernel does not expose the Linux auxiliary-vector interfaces it
+    # expects. Prefer GNU coreutils in iSH-targeted Ubuntu images when the
+    # package is available. This is best-effort: the compatibility launcher
+    # below also avoids depending on coreutils during early boot/login.
+    if [ -r "$t/etc/os-release" ]; then
+        while IFS='=' read -r key value; do
+            case "$key" in
+                ID) distro_id=${value#\"}; distro_id=${distro_id%\"}; break ;;
+            esac
+        done < "$t/etc/os-release"
+    fi
+    if [ "$distro_id" = ubuntu ] && [ -x "$t/usr/bin/apt-get" ]; then
+        if grep -qE '^(Package: (rust-coreutils|coreutils-from-uutils)|Status: install ok installed)$' \
+            "$t/var/lib/dpkg/status" 2>/dev/null || [ -x "$t/usr/bin/uutils" ]; then
+            rootfs_apt_force_ipv4 "$t" 2>/dev/null || true
+            in_chroot "$t" sh -c \
+                'export DEBIAN_FRONTEND=noninteractive; apt-get update >/dev/null 2>&1 && apt-get install -y coreutils-from-gnu >/dev/null 2>&1' \
+                || warn "Could not switch Ubuntu rootfs to coreutils-from-gnu; some Rust coreutils may still fail on iSH-AOK."
+        fi
+    fi
+
     mkdir -p "$t/usr/local/sbin" "$t/etc/systui" "$t/run" "$t/proc" "$t/sys" "$t/dev" "$t/dev/pts" "$t/tmp"
 
     cat > "$t/usr/local/sbin/systui-ish-init" <<EOF
@@ -32,13 +55,23 @@ rootfs_install_ish_systemd_compat() { # <target>
 # to the distro's real systemd. On iSH/iSH-AOK it runs a lightweight PID 1
 # compatibility supervisor because cgroups, namespaces, seccomp and several
 # process-control interfaces required by systemd are only partially available.
+#
+# Early iSH detection intentionally uses only shell builtins. Ubuntu Resolute
+# may use Rust/uutils coreutils, whose uname/cat/mkdir implementations can panic
+# before a shell prompt when rustix cannot read the Linux auxiliary vector.
 
 REAL_SYSTEMD='$real_systemd'
 
+read_first_line() {
+    line=''
+    IFS= read -r line < "\$1" 2>/dev/null || true
+    printf '%s' "\$line"
+}
+
 is_ish_kernel() {
-    k=\$(uname -r 2>/dev/null || true)
-    v=\$(cat /proc/version 2>/dev/null || true)
-    case "\$k \$v" in
+    v=''
+    [ -r /proc/version ] && IFS= read -r v < /proc/version 2>/dev/null || true
+    case "\$v" in
         *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) return 0 ;;
     esac
     [ -e /proc/ish ] && return 0
@@ -56,7 +89,9 @@ export SYSTEMD_LOG_TARGET=console
 export SYSTEMD_LOG_LEVEL=warning
 export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-mkdir -p /run /run/lock /tmp /proc /sys /dev /dev/pts
+# These calls are best-effort because some coreutils implementations are not
+# usable on iSH. The workbench normally creates the directories/mounts first.
+mkdir -p /run /run/lock /tmp /proc /sys /dev /dev/pts 2>/dev/null || true
 chmod 1777 /tmp 2>/dev/null || true
 
 # The host/chroot launcher often provides these already. Mount only when the
@@ -77,7 +112,9 @@ fi
     fi
 }
 
-[ -r /etc/hostname ] && hostname "\$(cat /etc/hostname)" 2>/dev/null || true
+host_name=''
+[ -r /etc/hostname ] && IFS= read -r host_name < /etc/hostname 2>/dev/null || true
+[ -n "\$host_name" ] && hostname "\$host_name" 2>/dev/null || true
 
 # Run traditional compatibility hooks when present. This lets packages with
 # SysV scripts remain usable even though systemd itself cannot safely be PID 1.
@@ -86,20 +123,18 @@ for script in /etc/init.d/rcS /etc/rc.local; do
 done
 
 # Start a conservative set of common daemons if their legacy launchers exist.
-# Failures are ignored because an iSH rootfs may intentionally omit them.
 for svc in dbus cron crond rsyslog ssh sshd networking network-manager; do
     if [ -x "/etc/init.d/\$svc" ]; then
         "/etc/init.d/\$svc" start >/dev/console 2>&1 || true
     fi
 done
 
-# Give the user a usable console while acting as PID 1. PID 1 must reap orphaned
-# children, so keep a tiny supervisor loop around the interactive shell.
+# Give the user a usable console while acting as PID 1.
 while :; do
     if [ -x /bin/bash ]; then
-        /bin/bash -l
+        /bin/bash --noprofile --norc
     else
-        /bin/sh -l
+        /bin/sh
     fi
     rc=\$?
     echo "iSH compatibility shell exited with status \$rc; restarting." >/dev/console 2>/dev/null || true
@@ -128,17 +163,19 @@ MODE=auto
 DESCRIPTION=Use real systemd on normal Linux and the systui iSH PID1 compatibility supervisor on iSH-AOK.
 EOF
 
-    # Reduce boot-time assumptions made by systemd-aware packages when the same
-    # image is inspected from inside iSH. These variables are harmless when the
-    # compatibility launcher is not active.
+    # Login-shell detection must not invoke uname/cat: on Ubuntu Resolute those
+    # may resolve to Rust/uutils coreutils and panic on iSH before login finishes.
     mkdir -p "$t/etc/profile.d"
     cat > "$t/etc/profile.d/systui-ish-systemd-compat.sh" <<'EOF'
-case "$(uname -r 2>/dev/null) $(cat /proc/version 2>/dev/null)" in
+_systui_proc_version=''
+[ -r /proc/version ] && IFS= read -r _systui_proc_version < /proc/version 2>/dev/null || true
+case "$_systui_proc_version" in
     *-ish*|*ish_aok*|*iSH-AOK*|*iSH*)
         export container=ish-aok
         export SYSTEMD_IN_CHROOT=1
         ;;
 esac
+unset _systui_proc_version
 EOF
     chmod 0644 "$t/etc/profile.d/systui-ish-systemd-compat.sh"
 
