@@ -56,7 +56,6 @@ build_debfamily() {
 rootfs_ensure_systemd_selected() { # <target> <distro>
     local target="$1" distro="$2"
 
-    # Already installed: avoid unnecessary package-manager work.
     if [ -x "$target/lib/systemd/systemd" ] || [ -x "$target/usr/lib/systemd/systemd" ]; then
         return 0
     fi
@@ -76,8 +75,6 @@ rootfs_ensure_systemd_selected() { # <target> <distro>
             in_chroot "$target" zypper --non-interactive install systemd || return 1
             ;;
         *)
-            # Distro-specific stage3/base images (for example Gentoo systemd)
-            # may already provide systemd without a generic installer path.
             warn "systemd was selected for $distro, but Systui has no automatic package installer for that distro."
             return 1
             ;;
@@ -89,9 +86,9 @@ rootfs_ensure_systemd_selected() { # <target> <distro>
     }
 }
 
-# Wrap the final postconfig layer. Filter user/preset kernel packages before the
-# canonical postconfig sees them, then install systemd before the existing iSH
-# compatibility wrapper creates and verifies the direct /sbin/init entrypoint.
+# Filter requested kernel packages before the canonical postconfig package pass.
+# After base postconfig has prepared repositories/DNS and installed normal
+# packages, guarantee systemd is present and refresh the iSH compatibility init.
 if declare -F rootfs_postconfig >/dev/null 2>&1 && \
    ! declare -F _systui_systemd_base_rootfs_postconfig >/dev/null 2>&1; then
     eval "$(declare -f rootfs_postconfig | sed '1s/^rootfs_postconfig[[:space:]]*()/_systui_systemd_base_rootfs_postconfig ()/')"
@@ -104,19 +101,29 @@ rootfs_postconfig() {
     filtered_pkgs=$(rootfs_filter_unsupported_kernel_packages "${14:-}")
     args[13]="$filtered_pkgs"
 
+    _systui_systemd_base_rootfs_postconfig "${args[@]}" || rc=$?
+    [ "$rc" -eq 0 ] || return "$rc"
+
     if [ "$init_choice" = systemd ]; then
         rootfs_ensure_systemd_selected "$target" "$distro" || {
             warn "Could not install the selected systemd init system into the new rootfs."
             return 1
         }
-    fi
 
-    _systui_systemd_base_rootfs_postconfig "${args[@]}" || rc=$?
-    [ "$rc" -eq 0 ] || return "$rc"
+        # The earlier compatibility wrapper may have run before systemd existed.
+        # Refresh it now against the installed systemd binary so the new image
+        # always leaves postconfig with a direct executable /sbin/init.
+        if declare -F rootfs_install_ish_systemd_compat >/dev/null 2>&1; then
+            SYSTUI_ISH_COMPAT_SKIP_COREUTILS_MIGRATION=1 \
+                rootfs_install_ish_systemd_compat "$target" || return 1
+        fi
 
-    if [ "$init_choice" = systemd ]; then
         [ -x "$target/sbin/init" ] || {
             warn "systemd rootfs completed without executable /sbin/init"
+            return 1
+        }
+        [ ! -L "$target/sbin/init" ] || {
+            warn "systemd rootfs /sbin/init is unexpectedly a symlink"
             return 1
         }
     fi
