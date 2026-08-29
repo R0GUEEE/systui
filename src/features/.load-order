@@ -26,3 +26,4 @@ zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
 zzzzzzzzzzzzzzzzzzzzzz-rootfs-no-namespace-backends.sh
 zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
+zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
