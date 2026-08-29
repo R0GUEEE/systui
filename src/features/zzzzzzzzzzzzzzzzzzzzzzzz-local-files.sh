@@ -20,14 +20,11 @@ systui_local_files_mount() { # <icloud|iphone>
         *) return 1 ;;
     esac
 
-    # Local Files mounts require these exact locations. mkdir -p is harmless
-    # when the directory already exists.
     if ! mkdir -p "$mountpoint"; then
         tui_msg "Local Files" "Could not create $mountpoint."
         return 1
     fi
 
-    # Do not stack another mount on an already-mounted destination.
     if mountpoint -q "$mountpoint" 2>/dev/null || grep -qs " $mountpoint " /proc/mounts 2>/dev/null; then
         tui_msg "Local Files" "$label is already mounted at:\n$mountpoint"
         return 0
@@ -42,10 +39,12 @@ systui_local_files_mount() { # <icloud|iphone>
     return 1
 }
 
-menu_local_files() {
+# Storage exposes the two iOS Local Files mounts directly. Generic storage
+# operations intentionally remain omitted from this menu.
+menu_storage() {
     while true; do
         local c
-        c=$(tui_menu "Local Files" "Mount iOS Local Files:" \
+        c=$(tui_menu "Storage" "Storage configuration:" \
             icloud "Mount iCloud at /mnt/iCloud" \
             iphone "Mount iPhone at /mnt/iPhone" \
             back   "Back") || return 0
@@ -57,20 +56,4 @@ menu_local_files() {
     done
 }
 
-# Storage is intentionally limited to the iOS Local Files integration.
-# Generic usage/SMART/reserve/format/tmpfs/swap/label/fstab/list/mount/
-# unmount/bind entries are omitted from this menu.
-menu_storage() {
-    while true; do
-        local c
-        c=$(tui_menu "Storage" "Storage configuration:" \
-            localfiles "Local Files (iCloud and iPhone)" \
-            back       "Back") || return 0
-        case "$c" in
-            localfiles) menu_local_files ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
-
-export -f systui_local_files_mount menu_local_files menu_storage
+export -f systui_local_files_mount menu_storage
