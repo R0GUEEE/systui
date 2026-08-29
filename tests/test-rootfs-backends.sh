@@ -65,6 +65,25 @@ check "qemu-debootstrap is offered for a foreign arch" \
 check "arch-qualified support check tracks the catalogue" \
     unsupported debian qemu-debootstrap "$(host_debarch)"
 
+# Building the backend menu happens immediately after release selection. Suite
+# validation must inspect debootstrap's local scripts without executing the
+# bootstrapper, which may access repositories and hang the interactive TUI.
+debootstrap_validation_is_local() {
+    local tmp marker
+    tmp=$(mktemp -d)
+    marker="$tmp/debootstrap-called"
+    (
+        debootstrap() { : > "$marker"; sleep 30; }
+        DEBOOTSTRAP_DIR="$tmp/missing" rootfs_backend_catalog debian amd64 trixie >/dev/null
+    )
+    local rc=$?
+    [ "$rc" -eq 0 ] && [ ! -e "$marker" ]
+    rc=$?
+    rm -rf "$tmp"
+    return "$rc"
+}
+check "release validation never executes debootstrap" debootstrap_validation_is_local
+
 # Arch Linux: x86_64 uses the official repos; ARM uses Arch Linux ARM.
 check "Arch offers pacstrap on amd64" lists_backend arch amd64 pacstrap
 check "Arch offers the ARM tarball on arm64" lists_backend arch arm64 alarm-tarball
@@ -106,6 +125,16 @@ check "Devuan riscv64 releases are ceres only" equals \
 # --- Bedrock Linux (meta-distro; hijacks a Debian base) ---------------------
 bedrock_has_candidate() { rootfs_release_candidates bedrock x86_64 | grep -qx "$1"; }
 check "Bedrock offers the Debian-family backends" lists_backend bedrock "" mmdebstrap
+bedrock_uses_debian_base_suite() {
+    local tmp result
+    tmp=$(mktemp -d)
+    mkdir -p "$tmp/scripts"
+    : > "$tmp/scripts/trixie"
+    result=$(DEBOOTSTRAP_DIR="$tmp" rootfs_backend_catalog bedrock amd64 current)
+    rm -rf "$tmp"
+    grep -q '^debootstrap|' <<< "$result"
+}
+check "Bedrock validates debootstrap against its Debian base" bedrock_uses_debian_base_suite
 check "Bedrock has amd64/arm64/armhf/i386 arch candidates" \
     equals "$(rootfs_distro_archs bedrock | cut -d'|' -f1 | tr '\n' ' ')" "amd64 arm64 armhf i386 "
 check "Bedrock asset arch maps amd64 to x86_64" equals "$(rootfs_bedrock_asset_arch amd64)" x86_64

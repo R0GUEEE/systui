@@ -214,7 +214,11 @@ rootfs_backend_release_supported() { # <distro> <backend> <release> [arch]
     [ -n "$release" ] || return 0
     case "$backend" in
         debootstrap|qemu-debootstrap)
-            rootfs_validate_debootstrap_suite "$release"
+            # Bedrock's selected release names the hijack installer; its
+            # bootstrap backend always builds a Debian trixie base first.
+            local suite="$release"
+            [ "$distro" = bedrock ] && suite=trixie
+            rootfs_validate_debootstrap_suite "$suite"
             ;;
         rinse)
             case "$arch" in amd64|i386|'') ;; *) return 1 ;; esac
@@ -1131,11 +1135,11 @@ rootfs_run_second_stage() { # <target> <arch> <use_qemu>
 
 rootfs_validate_debootstrap_suite() { # <suite>
     local suite="$1" d="${DEBOOTSTRAP_DIR:-/usr/share/debootstrap}"
-    [ -r "$d/scripts/$suite" ] && return 0
-    # Some suites are accepted through a script symlink or a vendor-provided
-    # script outside the conventional path; debootstrap --print-debs is the
-    # authoritative lightweight validation when available.
-    debootstrap --print-debs "$suite" 2>>"$LOGFILE" | grep -q .
+    # Suite support is defined by debootstrap's local script catalogue. Do not
+    # execute `debootstrap --print-debs` here: this validator runs while the
+    # backend menu is being assembled, and that command can perform repository
+    # work and block the TUI indefinitely on a slow or disconnected host.
+    [ -r "$d/scripts/$suite" ]
 }
 
 # Run a command inside the rootfs, best effort. Usage: in_chroot <target> <cmd...>
