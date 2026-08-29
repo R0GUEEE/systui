@@ -582,7 +582,12 @@ System Configuration > Packages now contains Package Managers, Repos, Catalogue,
 
 APT repository management includes both `/etc/apt/sources.list` and `/etc/apt/sources.list.d/`. The signing-key menu can install available Debian, Ubuntu, Devuan, and Kali archive keyrings using a SPACE-to-select checklist.
 
-System Configuration > Shells separates Managers from Plugins. Each Bash, Zsh, and Fish manager includes installation, removal, and its framework/plugin-manager configuration. Cross-shell plugins include Starship, fzf, completion packages, zoxide, Atuin, direnv, Carapace, syntax highlighting, and autosuggestions.
+System Configuration > Shells separates Managers from Plugins. Each Bash, Zsh, Fish, and Nushell manager includes installation, removal, and its framework/plugin-manager configuration (oh-my-bash, Bash-it, ble.sh, oh-my-zsh, zinit, Fisher, TPM). A "More shells" entry covers dash, ksh, mksh, tcsh, Elvish, xonsh, yash, and PowerShell (pwsh) — with per-distro package names and a GitHub-release installer for PowerShell. Cross-shell plugins include Starship, fzf, completion packages, zoxide, Atuin, direnv, Carapace, syntax highlighting, and autosuggestions.
+
+### Shell plugin configuration managers
+System Configuration > Shells > Plugins now opens a per-user manager for each plugin. Starship, fzf, completions, zoxide, Atuin, direnv, Carapace, Zsh syntax highlighting, and Zsh autosuggestions include install/remove actions, shell integration, editable configuration, status inspection, and cleanup controls.
+
+The **awesome-zsh-plugins catalogue** (Plugins ▸ awesome-zsh-plugins catalogue) exposes a curated subset of [unixorn/awesome-zsh-plugins](https://github.com/unixorn/awesome-zsh-plugins) — about 75 plugins grouped by category (navigation, history, git, completion, vi-mode, aliases, prompt widgets, language tooling, misc). Plugins can be installed into oh-my-zsh (`custom/plugins` + `plugins=()`), zinit (`zinit light` lines), or plain Zsh (`~/.local/share/zsh-plugins` + auto-detected `source` lines). The oh-my-zsh external and zinit popular catalogues were also enriched with top picks from the list.
 
 ## Terminal file managers
 
@@ -598,9 +603,6 @@ System Configuration > Shells separates Managers from Plugins. Each Bash, Zsh, a
 - xplr
 
 Each entry supports installation/removal, a recommended starter configuration, direct configuration editing, launching, and a GitHub-backed add-on manager. Add-ons are installed per user under the applicable `~/.config` directory; custom Git repositories are also supported.
-
-### Shell plugin configuration managers
-System Configuration > Shells > Plugins now opens a per-user manager for each plugin. Starship, fzf, completions, zoxide, Atuin, direnv, Carapace, Zsh syntax highlighting, and Zsh autosuggestions include install/remove actions, shell integration, editable configuration, status inspection, and cleanup controls.
 
 ## Updating
 

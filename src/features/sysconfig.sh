@@ -254,6 +254,14 @@ zsh|Zsh|Shells
 fish|Fish|Shells
 nu|Nushell|Shells
 starship|Starship prompt|Shells
+dash|dash (Debian Almquist)|Shells
+ksh|KornShell|Shells
+mksh|MirBSD Korn shell|Shells
+tcsh|tcsh (TENEX C shell)|Shells
+elvish|Elvish|Shells
+xonsh|xonsh|Shells
+yash|yash|Shells
+pwsh|PowerShell|Shells
 nano|nano|Editors
 vim|vim|Editors
 nvim|Neovim|Editors
@@ -2010,7 +2018,13 @@ fish|Fish|Friendly interactive shell
 ksh|KornShell|Korn shell
 mksh|MirBSD Korn Shell|Compact Korn shell
 nushell|Nushell|Structured-data shell
-starship|Starship|Cross-shell prompt"
+starship|Starship|Cross-shell prompt
+dash|dash|Debian Almquist shell
+tcsh|tcsh|TENEX C shell
+elvish|Elvish|Expressive modern shell
+xonsh|xonsh|Python-powered shell
+yash|yash|Yet another shell
+pwsh|PowerShell|Microsoft PowerShell"
 [network]="openssh-server|OpenSSH Server|Secure remote shell server
 openssh-client|OpenSSH Client|SSH and SCP client tools
 nmap|Nmap|Network scanner
@@ -4548,14 +4562,28 @@ zsh-completions|zsh-users/zsh-completions|Extra completion definitions
 zsh-history-substring-search|zsh-users/zsh-history-substring-search|Type text, arrows search history
 fzf-tab|Aloxaf/fzf-tab|fzf-powered tab completion
 fast-syntax-highlighting|zdharma-continuum/fast-syntax-highlighting|Faster highlighting engine
-zsh-autocomplete|marlonrichert/zsh-autocomplete|Real-time completion menus"
+zsh-autocomplete|marlonrichert/zsh-autocomplete|Real-time completion menus
+enhancd|b4b4r07/enhancd|Enhanced cd with frecency jump
+zsh-abbr|olets/zsh-abbr|Fish-style auto-expanding abbreviations
+alias-tips|djui/alias-tips|Remind you of aliases you defined
+history-search-multi-word|zdharma-continuum/history-search-multi-word|Syntax-highlighted multi-word Ctrl-R
+git-extra-commands|unixorn/git-extra-commands|Extra git helper commands
+zsh-auto-notify|MichaelAquilina/zsh-auto-notify|Notify when long commands finish
+command-execution-timer|olets/command-execution-timer|Show how long commands took
+zsh-autoswitch-virtualenv|MichaelAquilina/zsh-autoswitch-virtualenv|Auto-switch Python virtualenvs"
 
 ZINIT_POPULAR="zsh-users/zsh-autosuggestions|Fish-style inline suggestions
 zsh-users/zsh-syntax-highlighting|Command colorization
 zsh-users/zsh-completions|Extra completion definitions
 Aloxaf/fzf-tab|fzf-powered tab completion
 zdharma-continuum/fast-syntax-highlighting|Faster highlighting engine
-romkatv/powerlevel10k|Powerlevel10k prompt"
+romkatv/powerlevel10k|Powerlevel10k prompt
+b4b4r07/enhancd|Enhanced cd with frecency jump
+olets/zsh-abbr|Fish-style auto-expanding abbreviations
+djui/alias-tips|Remind you of aliases you defined
+zdharma-continuum/history-search-multi-word|Syntax-highlighted multi-word Ctrl-R
+MichaelAquilina/zsh-auto-notify|Notify when long commands finish
+olets/command-execution-timer|Show how long commands took"
 
 FISHER_POPULAR="IlanCosman/tide|Powerlevel10k-style async prompt
 PatrickF1/fzf.fish|fzf keybindings (files, history, git)
@@ -5264,13 +5292,173 @@ menu_shell_hierarchy() {
     home_dir=$(user_home "$u"); [ -n "$home_dir" ] || { tui_msg "Error" "User not found."; return 0; }
     cur_shell=$(basename "$(getent passwd "$u" | cut -d: -f7)")
     while true; do
-        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" bash "Bash $(st bash)" "$([ "$cur_shell" = bash ] && echo on || echo off)" zsh "Zsh $(st zsh)" "$([ "$cur_shell" = zsh ] && echo on || echo off)" fish "Fish $(st fish)" "$([ "$cur_shell" = fish ] && echo on || echo off)" nu "Nushell $(st nu)" "$([ "$cur_shell" = nu ] && echo on || echo off)" tmux "tmux plugins" off) || return 0
+        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" bash "Bash $(st bash)" "$([ "$cur_shell" = bash ] && echo on || echo off)" zsh "Zsh $(st zsh)" "$([ "$cur_shell" = zsh ] && echo on || echo off)" fish "Fish $(st fish)" "$([ "$cur_shell" = fish ] && echo on || echo off)" nu "Nushell $(st nu)" "$([ "$cur_shell" = nu ] && echo on || echo off)" tmux "tmux plugins" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
         case "$sh_" in
             bash) m=$(tui_menu "Bash Manager" "Install, remove or configure:" install "Install/reinstall Bash" uninstall "Uninstall Bash" omb "oh-my-bash" bashit "Bash-it" blesh "ble.sh" back "Back") || continue; case "$m" in install) pm_install bash;; uninstall) safe_remove_shell bash;; omb) menu_omb "$u" "$home_dir";; bashit) menu_bashit "$u" "$home_dir";; blesh) menu_blesh "$u" "$home_dir";; esac;;
             zsh) m=$(tui_menu "Zsh Manager" "Install, remove or configure:" install "Install/reinstall Zsh" uninstall "Uninstall Zsh" omz "oh-my-zsh" zinit "zinit" back "Back") || continue; case "$m" in install) menu_zsh_install;; uninstall) safe_remove_shell zsh;; omz) menu_omz "$u" "$home_dir";; zinit) menu_zinit "$u" "$home_dir";; esac;;
             fish) m=$(tui_menu "Fish Manager" "Install, remove or configure:" install "Install/reinstall Fish" uninstall "Uninstall Fish" fisher "Fisher" back "Back") || continue; case "$m" in install) menu_fish_install;; uninstall) safe_remove_shell fish;; fisher) menu_fisher "$u" "$home_dir";; esac;;
             nu) menu_nushell "$u" "$home_dir" ;;
             tmux) menu_tpm "$u" "$home_dir";;
+            more) menu_more_shells "$u" "$home_dir" ;;
+        esac
+    done
+}
+
+# ---- Additional shells (dash, ksh, mksh, tcsh, elvish, xonsh, yash, pwsh) ----
+
+# Map a shell name to its package name on the active package manager. Verified
+# against repology (2026-08): plain names match on apt/apk/pacman/dnf/zypper/
+# xbps; Debian renamed ksh to ksh93u+m; Gentoo keeps everything under
+# app-shells/ (xonsh under dev-python/). Empty output = no native package.
+shell_pkg() { # <shell>
+    case "$1" in
+        pwsh)
+            case "$PM" in
+                emerge) echo app-shells/pwsh-bin ;;
+                *) echo powershell ;;
+            esac
+            return 0 ;;
+    esac
+    case "$PM" in
+        emerge)
+            case "$1" in
+                dash) echo app-shells/dash ;; ksh) echo app-shells/ksh ;;
+                mksh) echo app-shells/mksh ;; tcsh) echo app-shells/tcsh ;;
+                elvish) echo app-shells/elvish ;; xonsh) echo dev-python/xonsh ;;
+                yash) echo app-shells/yash ;;
+                *) echo "$1" ;;
+            esac ;;
+        apt)
+            case "$1" in ksh) echo ksh93u+m ;; *) echo "$1" ;; esac ;;
+        *) echo "$1" ;;
+    esac
+}
+
+# Uninstall a shell defensively: never remove the shell running systui, never
+# remove a shell that is still some user's login shell, clean up /etc/shells.
+safe_remove_shell() { # <shell>
+    local sh="$1" bin users="" u
+    bin=$(command -v "$sh" 2>/dev/null) || { tui_msg "Not installed" "$sh is not installed."; return 0; }
+    [ "$sh" = "$(basename "${SHELL:-}")" ] && {
+        tui_msg "Refusing" "$sh is the shell currently running systui (SHELL=$SHELL)."; return 0; }
+    for u in $(awk -F: '{print $1}' /etc/passwd 2>/dev/null); do
+        [ "$(basename "$(getent passwd "$u" 2>/dev/null | cut -d: -f7)")" = "$sh" ] && users="$users $u"
+    done
+    [ -n "$users" ] && {
+        tui_msg "In use" "$sh is the login shell of:$users\nChange it first (Shells ▸ Set default shell)."; return 0; }
+    tui_yesno "Uninstall $sh" "Remove $sh via ${PM:-pm}?" || return 0
+    pm_remove "$(shell_pkg "$sh")"
+    sed -i "\|^${bin}\$|d" /etc/shells 2>/dev/null || true
+}
+
+# Latest stable PowerShell from GitHub releases — the universal path, since
+# Debian/Fedora/openSUSE do not ship powershell in their own repositories.
+pwsh_github_install() {
+    local arch arch_str api ver url tmp
+    arch=$(uname -m)
+    case "$arch" in
+        x86_64|amd64) arch_str="x64" ;;
+        aarch64|arm64) arch_str="arm64" ;;
+        *) tui_msg "Unsupported architecture" "No pre-built PowerShell binary for: $arch"; return 1 ;;
+    esac
+    command -v curl >/dev/null 2>&1 || pm_install curl
+    command -v tar  >/dev/null 2>&1 || pm_install tar
+    api=$(curl -fsSL https://api.github.com/repos/PowerShell/PowerShell/releases/latest) || {
+        tui_msg "Download failed" "Could not query the latest PowerShell release."; return 1; }
+    ver=$(printf '%s\n' "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+    url=$(printf '%s\n' "$api" | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' \
+        | grep -E "/powershell-${ver#v}-linux-${arch_str}\.tar\.gz$" | head -n1)
+    [ -n "$url" ] || { tui_msg "No asset" "No ${arch_str} tarball found for PowerShell ${ver}."; return 1; }
+    tmp=$(mktemp -d) || return 1
+    run_cmd "Download PowerShell $ver" curl -fsSL "$url" -o "$tmp/pwsh.tar.gz"
+    run_cmd "Extract PowerShell $ver" tar -xzf "$tmp/pwsh.tar.gz" -C "$tmp"
+    [ -x "$tmp/pwsh" ] || { tui_msg "Extraction failed" "pwsh binary not found in archive."; rm -rf "$tmp"; return 1; }
+    run_cmd "Install PowerShell $ver to /opt/microsoft/powershell/7" \
+        mkdir -p /opt/microsoft/powershell/7
+    cp -a "$tmp"/. /opt/microsoft/powershell/7/ || { rm -rf "$tmp"; return 1; }
+    chmod 0755 /opt/microsoft/powershell/7/pwsh
+    ln -sf /opt/microsoft/powershell/7/pwsh /usr/local/bin/pwsh
+    rm -rf "$tmp"
+    tui_msg "PowerShell installed" "pwsh $ver → /usr/local/bin/pwsh\n(Requires ICU + OpenSSL libraries at runtime.)"
+}
+
+# Parameterized install-method chooser for the additional shells.
+menu_shell_install_any() { # <shell> <display>
+    local sh="$1" disp="$2" method pkg choices=()
+    pkg=$(shell_pkg "$sh")
+    choices=(pm "Package manager (${PM:-pm} install ${pkg:-$sh})")
+    case "$sh" in
+        pwsh)  choices+=(github "GitHub release binary (latest stable, auto-detect arch)") ;;
+        xonsh) choices+=(pip "pip (pip install xonsh — Python environment)") ;;
+    esac
+    command -v brew >/dev/null 2>&1 && choices+=(brew "Homebrew (brew install $sh)")
+    choices+=(back "Back")
+    method=$(tui_menu "Install $disp" "Choose an installation method:" "${choices[@]}") || return 0
+    case "$method" in
+        pm)
+            if [ "$PM" = apt ] && [ "$sh" = ksh ]; then
+                pm_install ksh93u+m || pm_install ksh || return 1
+            elif [ -n "$pkg" ]; then
+                pm_install "$pkg"
+            else
+                tui_msg "No package" "No native ${PM:-pm} package known for $disp."
+            fi ;;
+        pip)
+            if command -v pipx >/dev/null 2>&1; then
+                run_cmd "Install xonsh via pipx" pipx install xonsh
+            else
+                run_cmd "Install xonsh via pip" pip install --user --break-system-packages xonsh \
+                    || run_cmd "Install xonsh via pip (classic)" pip install --user xonsh
+            fi ;;
+        github) pwsh_github_install ;;
+        brew) run_cmd "Install $disp via Homebrew" brew install "$sh" ;;
+        back) return 0 ;;
+    esac
+}
+
+# Generic manager for a plain (non-framework) additional shell.
+menu_plain_shell() { # <user> <home> <shell> <display> <blurb>
+    local u="$1" home_dir="$2" sh="$3" disp="$4" blurb="$5"
+    while true; do
+        local c
+        c=$(tui_menu "$disp — $u" "$blurb:" \
+            install "Install/reinstall $disp (choose method)" \
+            default "Set as the default login shell for $u" \
+            uninstall "Uninstall $disp" \
+            back    "Back") || return 0
+        case "$c" in
+            install) menu_shell_install_any "$sh" "$disp" ;;
+            default) menu_set_default_shell ;;
+            uninstall) safe_remove_shell "$sh" ;;
+            back) return 0 ;;
+        esac
+    done
+}
+
+menu_more_shells() { # <user> <home>
+    local u="$1" home_dir="$2"
+    while true; do
+        local c
+        c=$(tui_menu "More shells — $u" "Additional shell options:" \
+            dash   "dash — Debian Almquist shell (POSIX; /bin/sh on Debian)" \
+            ksh    "ksh — KornShell 93u+m (AT&T)" \
+            mksh   "mksh — MirBSD Korn shell (lightweight)" \
+            tcsh   "tcsh — TENEX C shell (with csh)" \
+            elvish "Elvish — modern expressive shell" \
+            xonsh  "xonsh — Python-powered shell" \
+            yash   "yash — yet another shell (POSIX, scriptable)" \
+            pwsh   "PowerShell — Microsoft's shell (pwsh)" \
+            back   "Back") || return 0
+        case "$c" in
+            dash)   menu_plain_shell "$u" "$home_dir" dash "dash" "Debian Almquist shell — fast, minimal POSIX sh" ;;
+            ksh)    menu_plain_shell "$u" "$home_dir" ksh "KornShell" "KornShell 93u+m — ksh93 with modern fixes" ;;
+            mksh)   menu_plain_shell "$u" "$home_dir" mksh "mksh" "MirBSD Korn shell — small, fast, portable" ;;
+            tcsh)   menu_plain_shell "$u" "$home_dir" tcsh "tcsh" "TENEX C shell — interactive C-shell with completion" ;;
+            elvish) menu_plain_shell "$u" "$home_dir" elvish "Elvish" "Expressive scripting + friendly interactive mode" ;;
+            xonsh)  menu_plain_shell "$u" "$home_dir" xonsh "xonsh" "Python REPL + shell hybrid" ;;
+            yash)   menu_plain_shell "$u" "$home_dir" yash "yash" "yet another shell — POSIX with advanced scripting" ;;
+            pwsh)   menu_plain_shell "$u" "$home_dir" pwsh "PowerShell" "Cross-platform automation shell (.NET)" ;;
+            back|"") return 0 ;;
         esac
     done
 }
@@ -6188,6 +6376,232 @@ menu_shell_github_plugins() {
     tui_msg "Shell plugins" "Selected GitHub projects were installed or updated for $u."
 }
 
+# ---- awesome-zsh-plugins catalogue -------------------------------------------
+#
+# Curated subset of https://github.com/unixorn/awesome-zsh-plugins (Plugins
+# section, fetched 2026-08). Format: tag|description|repo|category. Tags are
+# used as clone directory names and in plugins=(), so they must be unique and
+# valid directory names. Repos are owner/name pairs straight from the source
+# list. Categories: nav hist git comp vi alias prompt lang misc.
+AZP_CATALOG=$(cat <<'EOF'
+enhancd|Enhanced cd with frecency jump|b4b4r07/enhancd|nav
+zsh-z|Frecency directory jumping (native Zsh)|agkozak/zsh-z|nav
+autojump|Learns directories; jump with j|wting/autojump|nav
+zsh-abbr|Fish-style auto-expanding abbreviations|olets/zsh-abbr|nav
+interactive-cd|Fish-like cd tab completion|changyuheng/zsh-interactive-cd|nav
+favorite-directories|Jump to favorite directories|seletskiy/zsh-favorite-directories|nav
+autoenv|Per-directory environment|zpm-zsh/autoenv|nav
+fz|Fuzzy completion for z|changyuheng/fz|nav
+history-search-multi-word|Multi-word Ctrl-R history search|zdharma-continuum/history-search-multi-word|hist
+history-filter|Exclude patterns from history|MichaelAquilina/zsh-history-filter|hist
+fzf-history-search|Ctrl-R with fzf|joshskidmore/zsh-fzf-history-search|hist
+histdb|SQLite history + fzf|larkery/zsh-histdb|hist
+extend-history|Record exit code per history entry|xav-b/zsh-extend-history|hist
+directory-history|Per-directory history|tymm/zsh-directory-history|hist
+zsh-history|Query history with SQL|b4b4r07/zsh-history|hist
+zsh-hist|Edit history inline|marlonrichert/zsh-hist|hist
+history-sync|Git-synced history across machines|vitobotta/zsh-history-sync|hist
+passwordless-history|Keep secrets out of history|jgogstad/passwordless-history|hist
+git-fuzzy|fzf-powered git interface|bigH/git-fuzzy|git
+git-extra-commands|Extra git helper commands|unixorn/git-extra-commands|git
+git-add-remote|Add upstream remote easily|caarlos0/git-add-remote|git
+open-pr|Open pull requests from the CLI|caarlos0/zsh-open-pr|git
+branch-manager|Manage git branches|elstgav/branch-manager|git
+git-smart-commands|Smarter git commands|seletskiy/zsh-git-smart-commands|git
+blackbox|GPG-encrypted secrets in git|StackExchange/blackbox|git
+gitignore|Create .gitignore files|voronkovich/gitignore.plugin.zsh|git
+git-worktree|Git worktree helpers|alexiszamanidis/zsh-git-worktree|git
+cleanbranches|fzf-based branch cleanup|wu9o/ohmyzsh-cleanbranches|git
+zsh-navigation-tools|htop-like tools + history browser|zdharma-continuum/zsh-navigation-tools|comp
+abbrev-alias|Vim-style abbreviation expansion|momo-lab/zsh-abbrev-alias|comp
+fuzzy-search-and-edit|Fuzzy-open files by name|seletskiy/zsh-fuzzy-search-and-edit|comp
+zsh-fzy|fzy-based completions|aperezdc/zsh-fzy|comp
+vi-motions|Extra vim motions/text objects|zsh-vi-more/vi-motions|vi
+vi-increment|vim Ctrl-A/Ctrl-X increment|zsh-vi-more/vi-increment|vi
+evil-registers|Use vim registers in ZLE|zsh-vi-more/evil-registers|vi
+opp|Vim text-object-ish|hchbaw/opp.zsh|vi
+vi-quote|Quote/unquote motions|zsh-vi-more/vi-quote|vi
+alias-tips|Remind you of aliases|djui/alias-tips|alias
+alias-finder|Show alias when you use a command|akash329d/zsh-alias-finder|alias
+expand-ealias|Space expands ealiases|zigius/expand-ealias.plugin.zsh|alias
+alias-expand-space|Expand aliases on space|spqw/zsh-alias-expand-space|alias
+command-execution-timer|Show command duration|olets/command-execution-timer|prompt
+auto-notify|Notify on long commands|MichaelAquilina/zsh-auto-notify|prompt
+zsh-defer|Defer slow plugin init|romkatv/zsh-defer|prompt
+zsh-no-ps2|Enter continues incomplete commands|romkatv/zsh-no-ps2|prompt
+colorize|Colorize command output|zpm-zsh/colorize|prompt
+prettyping|Prettier ping output|unixorn/prettyping|prompt
+zhooks|Inspect zsh hook arrays/functions|agkozak/zhooks|prompt
+zsh-window-title|Dynamic window titles|olets/zsh-window-title|prompt
+zsh-titles|tmux/screen window titles|jreese/zsh-titles|prompt
+asdf|asdf version-manager integration|kiurchv/asdf.plugin.zsh|lang
+autoswitch-virtualenv|Auto python venv switching|MichaelAquilina/zsh-autoswitch-virtualenv|lang
+zsh-eza|eza aliases + integration|zsh-contrib/zsh-eza|lang
+fd-zsh|fd aliases|MohamedElashri/fd-zsh|lang
+terraform|Terraform aliases/completions|ptavares/zsh-terraform|lang
+kubectx-zshplugin|Install kubectx/kubens + integration|unixorn/kubectx-zshplugin|lang
+zsh-kubectx|kubectx integration|ptavares/zsh-kubectx|lang
+zsh-aws|aws-vault integration|zsh-contrib/zsh-aws|lang
+containers|podman/docker aliases|redxtech/zsh-containers|lang
+sdkman|sdkman installer + completions|ptavares/zsh-sdkman|lang
+evalcache|Cache slow eval init|mroth/evalcache|lang
+zsh-deno|deno aliases/settings|cowboyd/zsh-deno|lang
+zsh-tmux|tmux integration|zsh-contrib/zsh-tmux|lang
+undollar|Strip $ from pasted prompt|zpm-zsh/undollar|misc
+emoji-cli|Emoji completion|b4b4r07/emoji-cli|misc
+zsh-emojis|ASCII emoji variables|MichaelAquilina/zsh-emojis|misc
+title|Set terminal window title|zpm-zsh/title|misc
+docker-helpers|Docker helper scripts|unixorn/docker-helpers.zshplugin|misc
+warhol|grc colorization|unixorn/warhol.plugin.zsh|misc
+claude-shell|AI shell assistance (Claude)|myk-org/claude-shell|misc
+zsh-expand|Expand aliases/spellings/globals|MenkeTechnologies/zsh-expand|misc
+appup|start/stop/up/down for compose/Vagrant|Cloudstek/zsh-plugin-appup|misc
+check-deps|Show how to install missing deps|zpm-zsh/check-deps|misc
+clipboard|Cross-platform clipboard helper|zpm-zsh/clipboard|misc
+almostontop|Clear output before next command|Valiev/almostontop|misc
+EOF
+)
+
+# Best file to source for a plain-clone zsh plugin directory. Empty output
+# means the layout is unusual and needs a manual look at the README.
+zsh_plugin_file() { # <plugin-dir>
+    local d="$1" name f cand=""
+    [ -d "$d" ] || return 1
+    name=$(basename "$d")
+    [ -f "$d/$name.plugin.zsh" ] && { echo "$name.plugin.zsh"; return 0; }
+    for f in "$d"/*.plugin.zsh; do
+        [ -f "$f" ] && { basename "$f"; return 0; }
+    done
+    for f in "$d"/*.zsh; do
+        [ -f "$f" ] || continue
+        case "$(basename "$f")" in
+            *.plugin.zsh|*init*.zsh|*completion*.zsh|*compinit*|*alias*.zsh) continue ;;
+        esac
+        cand="$f"
+    done
+    [ -n "$cand" ] && { basename "$cand"; return 0; }
+    return 1
+}
+
+azp_repo_for() { # <tag> -> owner/repo (empty if unknown)
+    local line
+    line=$(grep -m1 "^$1|" <<<"$AZP_CATALOG") || return 1
+    cut -d'|' -f3 <<<"$line"
+}
+
+# Install/update selected AZP tags into the chosen setup.
+# azp_apply <user> <home> <omz|zinit|plain> <tags...>
+azp_apply() {
+    local u="$1" h="$2" mgr="$3"; shift 3
+    [ "$#" -gt 0 ] || return 0
+    command -v git >/dev/null 2>&1 || pm_install git
+    local rc="$h/.zshrc" tag repo dest srcf
+    case "$mgr" in
+        omz)
+            local current add="" final
+            current=" $(omb_current "$rc" plugins 2>/dev/null || true) "
+            for tag in "$@"; do
+                repo=$(azp_repo_for "$tag") || continue
+                dest="$h/.oh-my-zsh/custom/plugins/$tag"
+                fm_as_user "$u" "if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 https://github.com/$repo.git '$dest'; fi"
+                case "$current" in *" $tag "*) ;; *) add="$add $tag" ;; esac
+            done
+            if [ -n "$add" ]; then
+                final="$current$add"
+                if grep -qE '^plugins=\(' "$rc" 2>/dev/null; then
+                    omb_set_array "$rc" plugins $final
+                else
+                    local tmp; tmp=$(mktemp)
+                    { echo "plugins=($final)"; cat "$rc"; } > "$tmp" && mv "$tmp" "$rc" && chown "$u" "$rc" 2>/dev/null
+                fi
+            fi
+            tui_msg "oh-my-zsh" "Selected plugins cloned into custom/plugins and\nappended to plugins=() in $rc" ;;
+        zinit)
+            {
+                local l
+                for tag in "$@"; do
+                    repo=$(azp_repo_for "$tag") || continue
+                    grep -q "zinit light $repo" "$rc" 2>/dev/null || echo "zinit light $repo"
+                done
+            } | write_marked_block "$rc" "azp zinit"
+            chown "$u" "$rc" 2>/dev/null
+            tui_msg "zinit" "zinit light lines written to $rc\nPlugins download on next zsh start." ;;
+        plain)
+            local lines="" first=1
+            for tag in "$@"; do
+                repo=$(azp_repo_for "$tag") || continue
+                dest="$h/.local/share/zsh-plugins/$tag"
+                fm_as_user "$u" "mkdir -p ~/.local/share/zsh-plugins; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 https://github.com/$repo.git '$dest'; fi"
+                srcf=$(zsh_plugin_file "$dest") || { warn "No loadable .zsh file found for $tag — check its README."; continue; }
+                if [ "$first" = 1 ]; then
+                    lines="source ~/.local/share/zsh-plugins/$tag/$srcf"; first=0
+                else
+                    lines="$lines
+source ~/.local/share/zsh-plugins/$tag/$srcf"
+                fi
+            done
+            [ -n "$lines" ] && printf '%s\n' "$lines" | write_marked_block "$rc" "azp plugins" && chown "$u" "$rc" 2>/dev/null
+            tui_msg "Plain zsh" "Plugins cloned to ~/.local/share/zsh-plugins and\nsourced from $rc (systui azp plugins block)." ;;
+    esac
+}
+
+menu_azp_pick() { # <user> <home> <omz|zinit|plain> <category|all>
+    local u="$1" h="$2" mgr="$3" cat="$4"
+    local args=() tag desc repo catname state sel
+    while IFS='|' read -r tag desc repo catname; do
+        [ -z "$tag" ] && continue
+        [ "$cat" != all ] && [ "$catname" != "$cat" ] && continue
+        state=off
+        case "$mgr" in
+            omz)   [ -d "$h/.oh-my-zsh/custom/plugins/$tag" ] && state=on ;;
+            zinit) grep -q "zinit light $repo" "$h/.zshrc" 2>/dev/null && state=on ;;
+            plain) grep -Fq "zsh-plugins/$tag" "$h/.zshrc" 2>/dev/null && state=on ;;
+        esac
+        args+=("$tag" "$desc — $repo" "$state")
+    done <<<"$AZP_CATALOG"
+    [ ${#args[@]} -eq 0 ] && { tui_msg "Empty" "No plugins in this category."; return 0; }
+    sel=$(tui_check "Zsh plugins — $mgr ($cat)" "Installed pre-checked. SPACE toggles, ENTER applies:" "${args[@]}") || return 0
+    sel=${sel//\"/}
+    [ -z "$sel" ] && return 0
+    azp_apply "$u" "$h" "$mgr" $sel
+}
+
+menu_azp_category() { # <user> <home> <omz|zinit|plain>
+    local u="$1" h="$2" mgr="$3" c
+    while true; do
+        c=$(tui_menu "Zsh plugins — awesome-zsh-plugins ($mgr)" "Curated from unixorn/awesome-zsh-plugins. Choose a category:" \
+            nav "Navigation — cd, jumping, directories" \
+            hist "History — search, filter, sync" \
+            git "Git — helpers, PRs, worktrees" \
+            comp "Completion — menus, abbreviations, fzf" \
+            vi "Vi-mode — motions, text objects" \
+            alias "Aliases — tips, expanders" \
+            prompt "Prompt & widgets — timers, notify, titles" \
+            lang "Languages & tooling — asdf, venv, k8s, cloud" \
+            misc "Miscellaneous — clipboard, emoji, helpers" \
+            all "All categories (space-select)" \
+            back "Back") || return 0
+        case "$c" in
+            back|"") return 0 ;;
+            *) menu_azp_pick "$u" "$h" "$mgr" "$c" ;;
+        esac
+    done
+}
+
+menu_azp() { # <user> <home>
+    local u="$1" h="$2" mgr
+    mgr=$(tui_radio "awesome-zsh-plugins — $u" "Install selected plugins into which setup?" \
+        omz "oh-my-zsh — custom/plugins + plugins=()" on \
+        zinit "zinit — zinit light lines in .zshrc" off \
+        plain "Plain Zsh — ~/.local/share/zsh-plugins + source" off) || return 0
+    [ -n "$mgr" ] || return 0
+    case "$mgr" in
+        omz) [ -d "$h/.oh-my-zsh" ] || { tui_msg "Missing" "Install oh-my-zsh first (Managers ▸ Zsh ▸ oh-my-zsh)."; return 0; } ;;
+        zinit) [ -d "$h/.local/share/zinit" ] || { tui_msg "Missing" "Install zinit first (Managers ▸ Zsh ▸ zinit)."; return 0; } ;;
+    esac
+    menu_azp_category "$u" "$h" "$mgr"
+}
+
 menu_shell_plugins() {
     local target u home_dir c
     target=$(shell_plugin_target) || return 0
@@ -6204,6 +6618,7 @@ menu_shell_plugins() {
             syntax "Zsh syntax highlighting — source and style settings" \
             autosuggest "Zsh autosuggestions — source and style settings" \
             github "More GitHub plugins — Bash, Zsh and Fish catalogue" \
+            azp "awesome-zsh-plugins catalogue — curated Zsh plugins (space-select)" \
             user "Change target user" back "Back") || return 0
         case "$c" in
             starship) menu_plugin_starship "$u" "$home_dir" ;;
@@ -6215,6 +6630,7 @@ menu_shell_plugins() {
             carapace) menu_plugin_simple_init "Carapace" carapace carapace 'source <(carapace _carapace bash)' 'source <(carapace _carapace zsh)' 'carapace _carapace fish | source' "$u" "$home_dir" "$home_dir/.config/carapace/bridges.yaml" ;;
             syntax) menu_plugin_simple_init "Zsh syntax highlighting" zsh-syntax-highlighting zsh-syntax-highlighting '' 'source /usr/share/zsh-syntax-highlighting/zsh-syntax-highlighting.zsh' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
             github) menu_shell_github_plugins "$u" "$home_dir" ;;
+            azp) menu_azp "$u" "$home_dir" ;;
             autosuggest) menu_plugin_simple_init "Zsh autosuggestions" zsh-autosuggestions zsh-autosuggestions '' 'source /usr/share/zsh-autosuggestions/zsh-autosuggestions.zsh' '' "$u" "$home_dir" "$home_dir/.zshrc" ;;
             user) target=$(shell_plugin_target) || continue; u=${target%%|*}; home_dir=${target#*|} ;;
             back|"") return 0 ;;
@@ -6597,7 +7013,7 @@ menu_set_default_shell() {
 
     # Build the radio list from every shell binary we know about, filtering to
     # only those actually present in PATH on this system.
-    for sh in bash zsh fish nu ksh mksh dash tcsh csh sh; do
+    for sh in bash zsh fish nu ksh mksh dash tcsh csh elvish xonsh yash pwsh sh; do
         bin=$(command -v "$sh" 2>/dev/null) || continue
         local label="$sh  ($bin)"
         [ "$sh" = "$cur_shell" ] && label="$sh  ($bin)  ← current" \
