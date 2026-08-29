@@ -31,3 +31,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzz-common-openssh.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-engines.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-compat.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-existing-repair.sh
