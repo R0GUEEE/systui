@@ -1632,6 +1632,45 @@ rootfs_package_catalog() { # distro existing-packages -> final package string
 }
 
 
+# Resolve bootstrap catalogue tags to the executable that proves the tool is
+# actually usable. Several catalogue tags are package names rather than command
+# names, so `command -v "$tag"` is not sufficient.
+rootfs_bs_command() { # <tag>
+    case "$1" in
+        arch-install-scripts) printf 'pacstrap\n' ;;
+        systemd-container)    printf 'systemd-nspawn\n' ;;
+        xbps-tools)           printf 'xbps-install\n' ;;
+        xz-utils)             printf 'xz\n' ;;
+        binfmt-support)       printf 'update-binfmts\n' ;;
+        *)                    printf '%s\n' "$1" ;;
+    esac
+}
+
+rootfs_bs_has_command() { # <command>
+    local cmd="$1" dir
+    command -v "$cmd" >/dev/null 2>&1 && return 0
+    for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+        [ -x "$dir/$cmd" ] && return 0
+    done
+    return 1
+}
+
+rootfs_bs_installed() { # <tag>
+    local tag="$1" cmd q
+    case "$tag" in
+        qemu-user-static)
+            for q in /usr/local/bin/qemu-*-static /usr/bin/qemu-*-static /bin/qemu-*-static; do
+                [ -x "$q" ] && return 0
+            done
+            return 1
+            ;;
+        *)
+            cmd=$(rootfs_bs_command "$tag")
+            rootfs_bs_has_command "$cmd"
+            ;;
+    esac
+}
+
 menu_rootfs_bootstrap_tools() {
     # Returns the correct package name for a tool under the active package manager.
     # Format per entry: tag|apt_pkg|pacman_pkg|dnf_pkg|apk_pkg
@@ -1704,21 +1743,21 @@ zypper|zypper|openSUSE/SUSE rootfs bootstrap via zypper --root
 zstd|zstd|Zstandard compression (needed for Arch bootstrap tarballs)
 xz-utils|xz-utils|XZ/LZMA compression (needed for Void/Gentoo tarballs)"
 
-    # Build menu items: "tag  [INSTALLED|NOT INSTALLED]  description"
-    local _items=() _tag
-    while IFS='|' read -r _tag _lbl _desc; do
-        [ -n "$_tag" ] || continue
-        local _status
-        if command -v "$_tag" >/dev/null 2>&1; then
-            _status="✓ INSTALLED"
-        else
-            _status="○ not installed"
-        fi
-        _items+=("$_tag" "$_status  $_lbl")
-    done <<< "$_BS_CATALOGUE"
-
-    # Main bootstrap tools menu loop
+    # Main bootstrap tools menu loop. Rebuild the items on every pass so
+    # returning from an install/uninstall submenu immediately refreshes status.
+    local _items=() _tag _lbl _desc _status
     while true; do
+        _items=()
+        while IFS='|' read -r _tag _lbl _desc; do
+            [ -n "$_tag" ] || continue
+            if rootfs_bs_installed "$_tag"; then
+                _status="✓ INSTALLED"
+            else
+                _status="○ not installed"
+            fi
+            _items+=("$_tag" "$_status  $_lbl")
+        done <<< "$_BS_CATALOGUE"
+
         local _choice
         _choice=$(tui_menu "Rootfs Bootstrap Tools" \
             "Select a package to install, uninstall, or configure:" \
@@ -1777,7 +1816,7 @@ _menu_bs_package() {
     _label=$(_bs_label "$_tag")
     _desc=$(_bs_desc "$_tag")
 
-    if command -v "$_tag" >/dev/null 2>&1; then
+    if rootfs_bs_installed "$_tag"; then
         _status="installed"
     else
         _status="not installed"
@@ -1785,7 +1824,7 @@ _menu_bs_package() {
 
     while true; do
         # Refresh install status in case it changed
-        if command -v "$_tag" >/dev/null 2>&1; then
+        if rootfs_bs_installed "$_tag"; then
             _status="installed"
         else
             _status="not installed"
@@ -1870,7 +1909,7 @@ _rootfs_bs_install_chroot_distro() {
 _bs_install() {
     local _tag="$1" _pkg="$2" _BS_PKGS="$3"
     
-    if command -v "$_tag" >/dev/null 2>&1; then
+    if rootfs_bs_installed "$_tag"; then
         tui_msg "$_tag" "$_tag is already installed."
         return 0
     fi
@@ -1915,7 +1954,7 @@ _bs_install() {
 _bs_uninstall() {
     local _tag="$1" _pkg="$2"
 
-    if ! command -v "$_tag" >/dev/null 2>&1; then
+    if ! rootfs_bs_installed "$_tag"; then
         tui_msg "$_tag" "$_tag is not installed."
         return 0
     fi

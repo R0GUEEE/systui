@@ -274,6 +274,17 @@ check "bootstrap tools menu includes qemu-user-static" contains \
     "$PROJECT_DIR/src/features/rootfs.sh" "qemu-user-static"
 check "bootstrap tools menu maps packages via _bs_pkg" contains \
     "$PROJECT_DIR/src/features/rootfs.sh" "_bs_pkg"
+check "bootstrap detection helper exists" function_exists rootfs_bs_installed
+check "bootstrap detection maps pacstrap package to command" bash -c \
+    '. "$1/src/features/rootfs.sh" 2>/dev/null; [ "$(rootfs_bs_command arch-install-scripts)" = pacstrap ]' _ "$PROJECT_DIR"
+check "bootstrap detection maps systemd-container to nspawn" bash -c \
+    '. "$1/src/features/rootfs.sh" 2>/dev/null; [ "$(rootfs_bs_command systemd-container)" = systemd-nspawn ]' _ "$PROJECT_DIR"
+check "bootstrap detection maps xbps-tools to xbps-install" bash -c \
+    '. "$1/src/features/rootfs.sh" 2>/dev/null; [ "$(rootfs_bs_command xbps-tools)" = xbps-install ]' _ "$PROJECT_DIR"
+check "bootstrap detection maps xz-utils to xz" bash -c \
+    '. "$1/src/features/rootfs.sh" 2>/dev/null; [ "$(rootfs_bs_command xz-utils)" = xz ]' _ "$PROJECT_DIR"
+check "bootstrap menu status uses executable-aware detection" contains \
+    "$PROJECT_DIR/src/features/rootfs.sh" 'rootfs_bs_installed "$_tag"'
 check "rootfs init selector includes runit option" contains \
     "$PROJECT_DIR/src/features/rootfs.sh" "runit    \"runit\" off"
 check "rootfs init selector includes custom init path" contains \
