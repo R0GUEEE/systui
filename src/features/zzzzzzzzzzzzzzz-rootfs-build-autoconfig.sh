@@ -1,6 +1,11 @@
 # shellcheck shell=bash
 ###############################################################################
 # ROOTFS BUILD AUTO-CONFIGURATION
+#
+# Keep builder defaults automatic without rewriting rootfs_builder_impl.  The
+# previous declare/awk/eval transform could produce a malformed function body
+# and leave wizard commands at top level, causing systui to open directly into
+# the target-directory prompt while features were being sourced.
 ###############################################################################
 
 ROOTFS_BASE=/opt/rootfs
@@ -18,13 +23,6 @@ rootfs_backend_auto_select() { # <distro> <arch> <release>
     done <<< "$(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)"
     [ -n "$first" ] && { printf '%s\n' "$first"; return 0; }
     return 1
-}
-
-rootfs_autoconfig_backend() { # <distro> <backend>
-    local distro="$1" backend="$2"
-    case "$distro" in
-        debian|devuan|ubuntu|kali|bedrock) rootfs_backend_auto_optimize "$distro" "$backend" ;;
-    esac
 }
 
 rootfs_target_collision_resolve() { # <distro> <release> <arch> <initial-target>
@@ -50,86 +48,98 @@ rootfs_target_collision_resolve() { # <distro> <release> <arch> <initial-target>
     printf '%s\n' "$target"
 }
 
-# Keep one transformation layer for the guided builder. All values below are
-# deterministic defaults, so there is no reason to stop the user for them.
-if declare -F rootfs_builder_impl >/dev/null 2>&1; then
-    _systui_rootfs_builder_src=$(declare -f rootfs_builder_impl)
-    _systui_rootfs_builder_src=$(printf '%s\n' "$_systui_rootfs_builder_src" | awk '
-        BEGIN { backend=0; target=0; identity=0; postcfg=0; compression=0 }
-
-        /# ---- 4: bootstrap backend \(release-aware\) ----/ {
-            backend=1
-            print "    # ---- bootstrap backend (automatic, host-aware) ----"
-            print "    backend=$(rootfs_backend_auto_select \"$distro\" \"$arch\" \"$release\") || {"
-            print "        tui_msg \"No compatible bootstrap\" \"No supported bootstrap backend is available for $distro $release $arch.\""
-            print "        return 0"
-            print "    }"
-            print "    rootfs_autoconfig_backend \"$distro\" \"$backend\""
-            print "    rootfs_check_host_deps \"$distro\" \"$backend\" \"$arch\" gz || return 0"
-            print "    log \"rootfs: auto-selected backend=$backend for $distro/$release/$arch\""
-            next
-        }
-        backend && /if needs_qemu \"\$arch\"; then/ { backend=0; print; next }
-        backend { next }
-
-        /pkgs=\$\(rootfs_package_catalog \"\$distro\" \"\$pkgs\"\)/ {
-            print "    # Always seed basic retrieval tools; skip the extra package catalogue."
-            print "    pkgs=\"$pkgs git curl wget\""
-            next
-        }
-
-        /mirror=\$\(tui_input \"Rootfs Builder 7\/13\"/ {
-            print "    # Mirror is derived from the selected distro and architecture."
-            print "    mirror=\"$def_mirror\""
-            next
-        }
-        /rootfs_valid_mirror \"\$mirror\"/ { next }
-
-        /# ---- 7: target directory ----/ { target=1; print; next }
-        target && /mkdir -p \"\$target\"/ {
-            print "    target=$(rootfs_target_collision_resolve \"$distro\" \"$release\" \"$arch\" \"$target\") || return 0"
-            print "    mkdir -p \"$target\""
-            target=0
-            next
-        }
-        target {
-            if ($0 ~ /target=\$\(tui_input/ || $0 ~ /\"\$ROOTFS_BASE\/\$\{distro\}-\$\{release\}-\$\{arch\}\"\) \|\| return 0/) print
-            next
-        }
-
-        /# ---- 8: identity ----/ {
-            identity=1
-            print "    # Identity and regular account are generated automatically."
-            print "    hostname_v=\"${distro^}-iSH\""
-            print "    rootpw=\"\""
-            print "    local mkuser=\"ish\" userpw=\"\" usersudo=0"
-            next
-        }
-        identity && /# ---- 10: expanded in-rootfs configuration ----/ {
-            identity=0
-            postcfg=1
-            print "    # Additional in-rootfs options use the safe defaults automatically."
-            print "    local postcfg=\"dns hosts tz mounts cleanup manifest\" tz=\"UTC\" locale_v=\"C.UTF-8\" shell_v=\"bash\" editor_v=\"nano\" ssh_port=\"22\""
-            next
-        }
-        identity { next }
-
-        postcfg && /# ---- 11: compression/ {
-            postcfg=0
-            compression=1
-            print "    # Compression is fixed to tar.gz for maximum compatibility."
-            print "    local comp=\"gz\""
-            next
-        }
-        postcfg { next }
-
-        compression && /# ---- 12: confirm ----/ { compression=0; print; next }
-        compression { next }
-
-        { print }
-    ')
-    eval "$_systui_rootfs_builder_src"
-    unset _systui_rootfs_builder_src
+# Capture the original builder once, changing only its function name.  No body
+# transformation is performed, so sourcing this feature cannot expose or run
+# wizard statements at top level.
+if declare -F rootfs_builder_impl >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_builder_impl >/dev/null 2>&1; then
+    eval "$(declare -f rootfs_builder_impl | sed '1s/^rootfs_builder_impl[[:space:]]*()/_systui_base_rootfs_builder_impl ()/')"
 fi
+
+# Save the small UI helpers used by the builder so the wrapper can auto-answer
+# deterministic steps only while a rootfs build is actually running.
+for _systui_ui_fn in tui_input tui_password tui_yesno tui_check tui_radio; do
+    if declare -F "$_systui_ui_fn" >/dev/null 2>&1 && ! declare -F "_systui_base_${_systui_ui_fn}" >/dev/null 2>&1; then
+        eval "$(declare -f "$_systui_ui_fn" | sed "1s/^${_systui_ui_fn}[[:space:]]*()/_systui_base_${_systui_ui_fn} ()/")"
+    fi
+done
+unset _systui_ui_fn
+
+# These wrappers delegate normally unless rootfs_builder_impl set the private
+# build flag. Bash dynamic scoping lets the wrappers see the builder's local
+# distro/def_mirror variables without exporting or persisting them.
+tui_input() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
+        case "${1:-}" in
+            "Rootfs Builder 7/13") printf '%s\n' "${def_mirror:-${3:-}}"; return 0 ;;
+            "Rootfs Builder 9/13") printf '%s-iSH\n' "${distro^}"; return 0 ;;
+            User) printf 'ish\n'; return 0 ;;
+            Timezone) printf 'UTC\n'; return 0 ;;
+        esac
+    fi
+    _systui_base_tui_input "$@"
+}
+
+tui_password() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
+        case "${1:-}" in Root\ password|User) printf '\n'; return 0 ;; esac
+    fi
+    _systui_base_tui_password "$@"
+}
+
+tui_yesno() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
+        case "${1:-}" in
+            "Rootfs Builder 10/13") return 0 ;; # always create regular user ish
+            sudo) return 1 ;;                    # no sudo grant by default
+        esac
+    fi
+    _systui_base_tui_yesno "$@"
+}
+
+tui_check() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ] && [ "${1:-}" = "Rootfs Builder 11/13" ]; then
+        printf '"dns" "hosts" "tz" "mounts" "cleanup" "manifest"\n'
+        return 0
+    fi
+    _systui_base_tui_check "$@"
+}
+
+tui_radio() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ] && [ "${1:-}" = "Rootfs Builder 12/13" ]; then
+        printf 'gz\n'
+        return 0
+    fi
+    _systui_base_tui_radio "$@"
+}
+
+# The backend and package catalogue are derived automatically only during the
+# guided build. Save their originals for all other callers.
+if declare -F rootfs_backend_menu >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_backend_menu >/dev/null 2>&1; then
+    eval "$(declare -f rootfs_backend_menu | sed '1s/^rootfs_backend_menu[[:space:]]*()/_systui_base_rootfs_backend_menu ()/')"
+fi
+if declare -F rootfs_package_catalog >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_package_catalog >/dev/null 2>&1; then
+    eval "$(declare -f rootfs_package_catalog | sed '1s/^rootfs_package_catalog[[:space:]]*()/_systui_base_rootfs_package_catalog ()/')"
+fi
+
+rootfs_backend_menu() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
+        rootfs_backend_auto_select "$1" "$2" "$3"
+    else
+        _systui_base_rootfs_backend_menu "$@"
+    fi
+}
+
+rootfs_package_catalog() {
+    if [ "${SYSTUI_ROOTFS_AUTOMATIC_BUILD:-0}" = 1 ]; then
+        printf '%s\n' "${2:-} git curl wget"
+    else
+        _systui_base_rootfs_package_catalog "$@"
+    fi
+}
+
+rootfs_builder_impl() {
+    local SYSTUI_ROOTFS_AUTOMATIC_BUILD=1
+    _systui_base_rootfs_builder_impl "$@"
+}
 
 return 0 2>/dev/null || true
