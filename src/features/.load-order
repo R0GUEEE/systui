@@ -37,3 +37,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-osc-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-systemd-kernel-filter.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-runit-ubuntu-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-readiness-repair.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-init-reinstall.sh
