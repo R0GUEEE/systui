@@ -26,12 +26,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shellcheck -x \
+          shellcheck -S warning -x \
             install.sh update.sh \
             src/core/*.sh \
             src/features/health.sh \
             src/features/zz-rootfs-distro-managers.sh \
-            share/homebrew/install-homebrew-root.sh || true
+            share/homebrew/install-homebrew-root.sh
       - name: Regression tests
         shell: bash
         run: |
