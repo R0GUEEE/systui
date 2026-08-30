@@ -15,8 +15,6 @@ export SYSTUI_LIBDIR="$PROJECT_DIR"
 manifest="$PROJECT_DIR/src/features/.load-order"
 [ -r "$manifest" ]
 
-# Manifest is the application's dependency graph: every entry must be unique
-# and exist, and the final ARG_MAX cleanup must remain last.
 duplicates=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | sort | uniq -d)
 [ -z "$duplicates" ] || { printf 'duplicate feature entries:\n%s\n' "$duplicates" >&2; exit 1; }
 last=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)
@@ -28,8 +26,6 @@ while IFS= read -r rel || [ -n "$rel" ]; do
     . "$PROJECT_DIR/src/features/$rel"
 done < "$manifest"
 
-# Final definitions must route through the unified capability layer rather than
-# whichever earlier override happened to load first.
 declare -F systui_detect_init >/dev/null
 declare -F systui_rootfs_init_detect >/dev/null
 declare -F detect_init >/dev/null
@@ -37,6 +33,11 @@ declare -F rootfs_wb_init_detect >/dev/null
 declare -F svc >/dev/null
 declare -f detect_init | grep -q 'systui_detect_init'
 declare -f rootfs_wb_init_detect | grep -q 'systui_rootfs_init_detect'
+declare -f svc | grep -q 'SYSTUI_SERVICE_RUNTIME'
+
+# Unsafe service tokens must be rejected before any backend command runs.
+svc start 'sshd;touch /tmp/pwned' >/dev/null 2>&1 && { echo 'unsafe service name accepted' >&2; exit 1; }
+svc bogus sshd >/dev/null 2>&1 && { echo 'unsafe service action accepted' >&2; exit 1; }
 
 # Automatic foreign-package recovery must be disabled by default.
 [ "${SYSTUI_PM_NO_WEB_FALLBACK:-}" = 1 ]
@@ -59,6 +60,12 @@ provision_load_config "$tmpdir/provision.conf"
 [ "$SAFE_VALUE" = ok ]
 [ ! -e "$pwn" ]
 [ "$LOGFILE" = "$tmpdir/original.log" ]
+
+# The updater must no longer preserve caller-controlled deletion paths through
+# sudo, and arbitrary caches require a Systui ownership marker.
+grep -q 'Refusing to recursively remove untrusted update cache' "$PROJECT_DIR/update.sh"
+! grep -q 'preserve-env=SYSTUI_UPDATE_CACHE' "$PROJECT_DIR/update.sh"
+grep -q '.systui-update-cache' "$PROJECT_DIR/update.sh"
 
 # Final environment cleanup should remove exported Bash functions, protecting
 # iSH's small ARG_MAX from BASH_FUNC_* growth.
