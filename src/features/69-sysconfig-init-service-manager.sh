@@ -1,6 +1,64 @@
 # shellcheck shell=bash
 # PHASE 69 — authoritative init/service manager menu integration.
 
+sysconfig_systemd_available() {
+    command -v systemctl >/dev/null 2>&1 \
+        || [ -d /etc/systemd/system ] \
+        || [ -d /usr/lib/systemd/system ] \
+        || [ -d /lib/systemd/system ]
+}
+
+sysconfig_systemd_unit_name() { # <unit-or-service>
+    local s="$1"
+    case "$s" in
+        *.*) printf '%s\n' "$s" ;;
+        *) printf '%s.service\n' "$s" ;;
+    esac
+}
+
+sysconfig_systemd_mask_offline() { # <mask|unmask> <unit>
+    local action="$1" unit="$2" path target
+    unit=$(sysconfig_systemd_unit_name "$unit")
+    path="/etc/systemd/system/$unit"
+    mkdir -p /etc/systemd/system || return 1
+
+    case "$action" in
+        mask)
+            if [ -e "$path" ] && [ ! -L "$path" ]; then
+                tui_msg "Mask service" "Refusing to replace existing unit file: $path"
+                return 1
+            fi
+            ln -sfn /dev/null "$path" || return 1
+            ;;
+        unmask)
+            if [ ! -L "$path" ]; then
+                return 0
+            fi
+            target=$(readlink "$path" 2>/dev/null || true)
+            if [ "$target" != /dev/null ]; then
+                tui_msg "Unmask service" "Refusing to remove non-mask symlink: $path -> ${target:-unknown}"
+                return 1
+            fi
+            rm -f -- "$path" || return 1
+            ;;
+        *) return 2 ;;
+    esac
+}
+
+sysconfig_systemd_mask_service() { # <mask|unmask> <unit>
+    local action="$1" unit="$2"
+    sysconfig_valid_token "$unit" || { tui_msg "Invalid service" "Unsafe service name."; return 1; }
+    sysconfig_systemd_available || { tui_msg "N/A" "systemd is not installed on this system."; return 1; }
+
+    if declare -F sysconfig_systemd_usable >/dev/null 2>&1 && sysconfig_systemd_usable; then
+        run_cmd "systemctl $action $unit" systemctl "$action" "$unit"
+        return $?
+    fi
+
+    sysconfig_systemd_mask_offline "$action" "$unit" || return $?
+    tui_msg "Systemd service" "$unit was ${action}ed offline. The filesystem state is ready for the next systemd boot."
+}
+
 sysconfig_service_config_path() { # <service>
     local s="$1"
     case "${INIT:-}" in
@@ -165,7 +223,7 @@ menu_services() {
         c=$(tui_menu "Services  [init: ${INIT:-unknown}]" "Service management:" \
             manage "Manage services (start/stop/config/status/logs)" \
             list "List services" failed "Show failed services" \
-            mask "Mask/unmask service (systemd)" analyze "Boot analysis" \
+            mask "Mask/unmask service (systemd; offline supported)" analyze "Boot analysis" \
             initswap "Open Init Manager" advanced "Advanced service settings" back "Back") || return 0
         case "$c" in
             manage) menu_services_manage ;;
@@ -186,13 +244,15 @@ menu_services() {
                 tui_text "Failed services" "$SYSTUI_TMP/svc"
                 ;;
             mask)
-                if declare -F sysconfig_systemd_usable >/dev/null 2>&1 && sysconfig_systemd_usable; then
-                    local a s
-                    a=$(tui_radio "Mask service" "Action:" mask Mask on unmask Unmask off) || continue
-                    s=$(tui_input "Mask service" "Service name:" "") || continue
-                    sysconfig_valid_token "$s" || continue
-                    run_cmd "systemctl $a $s" systemctl "$a" "$s"
-                else tui_msg "N/A" "Masking requires a running systemd manager."; fi
+                local a s
+                if ! sysconfig_systemd_available; then
+                    tui_msg "N/A" "systemd is not installed on this system."
+                    continue
+                fi
+                a=$(tui_radio "Mask service" "Action:" mask Mask on unmask Unmask off) || continue
+                s=$(tui_input "Mask service" "Service/unit name:" "") || continue
+                sysconfig_valid_token "$s" || { tui_msg "Invalid service" "Unsafe service name."; continue; }
+                sysconfig_systemd_mask_service "$a" "$s" || true
                 ;;
             analyze)
                 if declare -F sysconfig_systemd_usable >/dev/null 2>&1 && sysconfig_systemd_usable && command -v systemd-analyze >/dev/null 2>&1; then
