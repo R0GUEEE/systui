@@ -74,8 +74,13 @@ systui_load_features() { # [manifest]
             echo "systui: failed to load $feature" >&2
             return 1
         }
-        systui_should_scrub_function_exports && systui_unexport_all_functions
+        # Do not let a deliberate "no scrub needed" result become the loader's
+        # return status on native Linux. A completed feature load is success.
+        if systui_should_scrub_function_exports; then
+            systui_unexport_all_functions
+        fi
     done < "$manifest"
+    return 0
 }
 
 export -n -f systui_unexport_all_functions systui_should_scrub_function_exports systui_resolve_feature_path systui_load_features 2>/dev/null || true
