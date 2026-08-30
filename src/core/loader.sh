@@ -6,7 +6,7 @@ systui_unexport_all_functions() {
     while IFS= read -r line; do
         fn=${line##* }
         [ -n "${fn:-}" ] || continue
-        export -n -f "$fn" 2>/dev/null || true
+        export -n -f "${fn?}" 2>/dev/null || true
     done < <(declare -Fx)
 }
 
@@ -15,8 +15,6 @@ systui_should_scrub_function_exports() {
         1|yes|true|always) return 0 ;;
         0|no|false|never) return 1 ;;
     esac
-    # In auto mode, constrained iSH runtimes need aggressive scrubbing. Native
-    # Linux keeps legacy export behavior until remaining feature callers migrate.
     if declare -F systui_is_ish >/dev/null 2>&1; then
         systui_is_ish
     else
