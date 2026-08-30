@@ -150,14 +150,13 @@ bedrock_aok_discovery_rows() {
 }
 
 bedrock_aok_discovery_source_urls() { # <tag>
-    local wanted="$1" tag label url origin
-    while IFS='|' read -r tag label url origin; do
+    local wanted="$1" tag url
+    while IFS='|' read -r tag _ url _; do
         [ "$tag" = "$wanted" ] || continue
         printf '%s\n' "$url"
     done <<< "$(bedrock_aok_discovery_rows)"
 }
 
-# Extend phase 81 source resolution with live web discoveries.
 if declare -F bedrock_aok_extra_source_urls >/dev/null 2>&1 && ! declare -F _bedrock_aok_extra_source_urls_before_web >/dev/null 2>&1; then
     eval "$(declare -f bedrock_aok_extra_source_urls | sed '1s/^bedrock_aok_extra_source_urls[[:space:]]*()/_bedrock_aok_extra_source_urls_before_web ()/')"
 fi
@@ -173,10 +172,10 @@ if declare -F bedrock_aok_extra_catalog_rows >/dev/null 2>&1 && ! declare -F _be
     eval "$(declare -f bedrock_aok_extra_catalog_rows | sed '1s/^bedrock_aok_extra_catalog_rows[[:space:]]*()/_bedrock_aok_extra_catalog_rows_before_web ()/')"
 fi
 bedrock_aok_extra_catalog_rows() {
-    local tag label url origin
+    local tag label
     {
         _bedrock_aok_extra_catalog_rows_before_web 2>/dev/null || true
-        while IFS='|' read -r tag label url origin; do
+        while IFS='|' read -r tag label _; do
             [ -n "$tag" ] && printf '%s|%s\n' "$tag" "$label"
         done <<< "$(bedrock_aok_discovery_rows)"
     } | awk -F'|' 'NF >= 1 && $1 != "" && !seen[$1]++ {print}'
@@ -197,7 +196,6 @@ bedrock_aok_discovery_report() {
     tui_text "Bedrock web source discovery" "$out"
 }
 
-# Replace phase 81 sources menu with explicit web discovery controls.
 bedrock_aok_sources_menu() {
     local c
     while true; do
