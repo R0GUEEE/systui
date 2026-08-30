@@ -2,9 +2,9 @@
 # Central feature-manifest loader.
 
 systui_unexport_all_functions() {
-    local decl attrs fn
-    while read -r decl attrs fn; do
-        [ "$decl" = declare ] || continue
+    local line fn
+    while IFS= read -r line; do
+        fn=${line##* }
         [ -n "${fn:-}" ] || continue
         export -n -f "$fn" 2>/dev/null || true
     done < <(declare -Fx)
