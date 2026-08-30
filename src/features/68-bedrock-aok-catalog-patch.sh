@@ -70,6 +70,44 @@ bedrock_aok_patch_script() { # <script>
     bedrock_aok_patch_catalog_resolver "$f"
 }
 
+bedrock_aok_repair_installed_catalog() {
+    local brl backup
+    brl=$(bedrock_aok_brl 2>/dev/null || true)
+    [ -n "$brl" ] && [ -f "$brl" ] || return 1
+    grep -q '^# __SYSTUI_CATALOG_RESOLVER_PATCH__' "$brl" 2>/dev/null && return 0
+
+    backup="${brl}.systui-catalog.bak"
+    cp -f -- "$brl" "$backup" || return 1
+    chmod 0755 "$backup" 2>/dev/null || true
+    if ! bedrock_aok_patch_catalog_resolver "$brl" || ! sh -n "$brl" >/dev/null 2>&1; then
+        cp -f -- "$backup" "$brl" 2>/dev/null || true
+        chmod 0755 "$brl" 2>/dev/null || true
+        warn "bedrock-aok: catalog resolver patch failed validation; restored $backup"
+        return 1
+    fi
+    chmod 0755 "$brl" 2>/dev/null || true
+    log "bedrock-aok: repaired installed brl catalog resolver (backup: $backup)"
+}
+
+if declare -F bedrock_aok_refresh_urls_resilient >/dev/null 2>&1 \
+    && ! declare -F _systui_base_bedrock_aok_refresh_urls_catalog >/dev/null 2>&1; then
+    _systui_brl_refresh_def=$(declare -f bedrock_aok_refresh_urls_resilient)
+    _systui_brl_refresh_def=${_systui_brl_refresh_def/#bedrock_aok_refresh_urls_resilient ()/_systui_base_bedrock_aok_refresh_urls_catalog ()}
+    eval "$_systui_brl_refresh_def"
+    unset _systui_brl_refresh_def
+fi
+
+bedrock_aok_refresh_urls_resilient() {
+    bedrock_aok_repair_installed_catalog || true
+    if declare -F _systui_base_bedrock_aok_refresh_urls_catalog >/dev/null 2>&1; then
+        _systui_base_bedrock_aok_refresh_urls_catalog "$@"
+    else
+        local brl
+        brl=$(bedrock_aok_brl) || return 1
+        run_cmd "Refresh Bedrock-AOK stratum URLs" "$brl" update-urls
+    fi
+}
+
 bedrock_aok_catalog_arch_note() { # <tag>
     local tag="$1" arch
     arch=$(bedrock_aok_host_arch 2>/dev/null || uname -m 2>/dev/null || printf 'unknown')
