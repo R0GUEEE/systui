@@ -1,9 +1,7 @@
 #!/bin/bash
 ###############################################################################
-# systui Installation Script
-# Installs dependencies and sets up systui as an executable
+# systui — Installation Script
 ###############################################################################
-
 set -e
 
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,28 +11,13 @@ INSTALL_PREFIX="${INSTALL_PREFIX:-/usr}"
 BIN_DIR="$INSTALL_PREFIX/bin"
 LIB_DIR="$INSTALL_PREFIX/lib/systui"
 
-###############################################################################
-# Colors
-###############################################################################
-
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
-
-###############################################################################
-# Helper Functions
-###############################################################################
-
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 info() { echo -e "${BLUE}[INFO]${NC} $*"; }
 success() { echo -e "${GREEN}[OK]${NC} $*"; }
 warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
-require_root() {
-    if [ "$(id -u)" -ne 0 ]; then error "This script must be run as root. Try: sudo $0"; fi
-}
+require_root() { [ "$(id -u)" -eq 0 ] || error "This script must be run as root. Try: sudo $0"; }
 
 detect_pm() {
     if command -v apt-get >/dev/null 2>&1; then echo apt
@@ -68,7 +51,9 @@ refresh_package_metadata() {
     case "$pm" in
         apt) apt-get update ;;
         apk) apk update ;;
-        pacman) pacman -Syu --noconfirm ;;
+        pacman)
+            warn "Arch requires a full synchronized upgrade before dependency installation."
+            pacman -Syu --noconfirm ;;
         dnf) dnf makecache -y ;;
         yum) yum makecache -y ;;
         zypper) zypper --non-interactive refresh ;;
@@ -120,9 +105,9 @@ install_dependencies() {
     pm=$(detect_pm); [ -z "$pm" ] && error "Could not detect package manager. Please install manually."
     case "$pm" in
         apt|apk|pacman|dnf|yum|zypper|xbps)
-            pkg_bash=bash; pkg_dialog=dialog; pkg_coreutils=coreutils; pkg_grep=grep; pkg_sed=sed; pkg_awk=gawk; pkg_find=findutils; pkg_curl=curl; pkg_ca=ca-certificates ;;
+            pkg_bash='bash'; pkg_dialog='dialog'; pkg_coreutils='coreutils'; pkg_grep='grep'; pkg_sed='sed'; pkg_awk='gawk'; pkg_find='findutils'; pkg_curl='curl'; pkg_ca='ca-certificates' ;;
         emerge)
-            pkg_bash=app-shells/bash; pkg_dialog=dev-util/dialog; pkg_coreutils=sys-apps/coreutils; pkg_grep=sys-apps/grep; pkg_sed=sys-apps/sed; pkg_awk=sys-apps/gawk; pkg_find=sys-apps/findutils; pkg_curl=net-misc/curl; pkg_ca=app-misc/ca-certificates ;;
+            pkg_bash='app-shells/bash'; pkg_dialog='dev-util/dialog'; pkg_coreutils='sys-apps/coreutils'; pkg_grep='sys-apps/grep'; pkg_sed='sys-apps/sed'; pkg_awk='sys-apps/gawk'; pkg_find='sys-apps/findutils'; pkg_curl='net-misc/curl'; pkg_ca='app-misc/ca-certificates' ;;
     esac
     info "Detected package manager: $pm"
     command -v bash >/dev/null 2>&1 || required+=("$pkg_bash")
@@ -151,8 +136,7 @@ verify_dependencies() {
 
 install_project() {
     info "Installing systui to $LIB_DIR..."
-    if [ "$PROJECT_DIR" = "$LIB_DIR" ]; then error "Refusing to install: the source directory and \$LIB_DIR are the same path ($LIB_DIR).
-Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix."; fi
+    if [ "$PROJECT_DIR" = "$LIB_DIR" ]; then error "Refusing to install: the source directory and \$LIB_DIR are the same path ($LIB_DIR). Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix."; fi
     mkdir -p "$LIB_DIR" "$BIN_DIR"
     rm -rf -- "$LIB_DIR/src" "$LIB_DIR/share" "$LIB_DIR/docs"
     cp -r "$PROJECT_DIR/src" "$LIB_DIR/"
@@ -180,6 +164,8 @@ create_executable() {
     cat > "$wrapper_tmp" << 'WRAPPER'
 #!/bin/bash
 LIBDIR="__SYSTUI_LIBDIR__"
+SYSTUI_LIBDIR="$LIBDIR"
+export SYSTUI_LIBDIR
 . "$LIBDIR/src/core/config.sh" || exit 1
 . "$LIBDIR/src/core/tui-widgets.sh" || exit 1
 . "$LIBDIR/src/core/common.sh" || exit 1
@@ -198,13 +184,7 @@ require_root
 main_menu() {
     while true; do
         local choice
-        choice=$(tui_menu "Main Menu" "systui — choose a section:" \
-            provision "Ultimate Provision (quick system setup)" \
-            rootfs "Rootfs Builder (create minimal systems)" \
-            config "System Configuration" \
-            performance "Advanced performance tuning" \
-            awesome "Awesome Linux (software catalogue)" \
-            quit "Quit") || return 0
+        choice=$(tui_menu "Main Menu" "systui — choose a section:" provision "Ultimate Provision (quick system setup)" rootfs "Rootfs Builder (create minimal systems)" config "System Configuration" performance "Advanced performance tuning" awesome "Awesome Linux (software catalogue)" quit "Quit") || return 0
         case "$choice" in
             provision) menu_ultimate_provision ;;
             rootfs) menu_rootfs ;;
@@ -226,73 +206,37 @@ WRAPPER
 }
 
 create_manpage() {
-    info "Creating man page..."
     mkdir -p "$INSTALL_PREFIX/share/man/man1"
     cat > "$INSTALL_PREFIX/share/man/man1/systui.1" << 'MANPAGE'
-.TH SYSTUI 1 "2026-08-29" "systui __SYSTUI_VERSION__" "User Commands"
+.TH SYSTUI 1 "2026-08-30" "systui __SYSTUI_VERSION__" "User Commands"
 .SH NAME
 systui \- Linux System Administration Terminal UI
 .SH SYNOPSIS
 .B systui
 .SH DESCRIPTION
 systui is a terminal-based user interface for Linux system configuration, provisioning, and management.
-.SH FEATURES
-.IP "•" 2
-Ultimate Provision: Install, configure, run, update, and remove quick setup
-.IP "•" 2
-System Configuration: Shells, repositories, packages, services, and users
-.IP "•" 2
-Dialog-based TUI: Easy navigation and configuration
 .SH REQUIREMENTS
-.IP "•" 2
-Root access (for most operations)
-.IP "•" 2
-dialog command
-.IP "•" 2
-Standard Unix tools
-.SH USAGE
-.B sudo systui
-.PP
-Navigate using arrow keys and Enter. Press Tab to switch focus.
-.SH SEE ALSO
-dialog(1), bash(1)
-.SH AUTHOR
-systui Development Team
+Root access, Bash, dialog, and standard Unix tools.
 MANPAGE
     sed -i "s/__SYSTUI_VERSION__/$SYSTUI_VERSION/g" "$INSTALL_PREFIX/share/man/man1/systui.1"
-    success "Man page created at $INSTALL_PREFIX/share/man/man1/systui.1"
 }
 
 cleanup() {
-    info "Final checks..."
     [ -x "$BIN_DIR/systui" ] || error "Failed to create systui executable"
-    if ! command -v systui >/dev/null 2>&1; then warn "systui not in PATH. Add $BIN_DIR to your PATH:"; warn "  export PATH=\"$BIN_DIR:\$PATH\""; fi
+    if ! command -v systui >/dev/null 2>&1; then warn "systui not in PATH. Add $BIN_DIR to PATH."; fi
     success "Installation complete!"
 }
 
 main() {
-    echo ""
     echo "========== systui Installation =========="
     echo "Version: $SYSTUI_VERSION"
-    echo "Install prefix: $INSTALL_PREFIX"
-    echo "Library directory: $LIB_DIR"
-    echo ""
     require_root
-    info "Step 1: Installing system dependencies..."; install_dependencies
-    info "Step 2: Verifying dependencies..."; verify_dependencies
-    info "Step 3: Installing project files..."; install_project
-    info "Step 4: Creating executable..."; create_executable
-    info "Step 5: Creating documentation..."; create_manpage
+    install_dependencies
+    verify_dependencies
+    install_project
+    create_executable
+    create_manpage
     cleanup
-    echo ""
-    echo "========== Installation Complete =========="
-    echo ""
-    echo "To use systui, run:"
-    echo "  sudo $BIN_DIR/systui"
-    echo ""
-    echo "For help, see:"
-    echo "  man systui"
-    echo ""
 }
 
 main "$@"
