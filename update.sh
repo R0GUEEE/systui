@@ -105,7 +105,7 @@ printf '%s\n' 'managed-by=systui-update' > "$CACHE_DIR/.systui-update-cache"
 chown -R root:root "$CACHE_DIR"
 chmod go-w "$CACHE_DIR"
 
-[ -f "$CACHE_DIR/install.sh" ] || die "GitHub main does not contain install.sh."
+test -f "$CACHE_DIR/install.sh" || die "GitHub main does not contain install.sh."
 chmod 0755 "$CACHE_DIR/install.sh"
 [ ! -f "$CACHE_DIR/update.sh" ] || chmod 0755 "$CACHE_DIR/update.sh"
 

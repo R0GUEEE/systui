@@ -380,7 +380,7 @@ map_packages() {
 #
 # They used to be defined here as well. Because features are sourced after
 # core, the sysconfig.sh definitions won in the main shell -- but this file
-# also ran `export -f pm_install pm_remove pm_update`, so every child shell
+# also exported package-manager helpers into child shells, so every child shell
 # (fm_as_user's `bash -lc`, `su - "$u" -c`, ...) inherited *these* weaker
 # copies instead: no validate_packages, no `--` argument terminator, only
 # apt/apk/pacman/dnf handled, and `pacman -Sy` for installs, which is the

@@ -3329,7 +3329,7 @@ pm_advanced_menu() { # <manager-id>
 brew_root_compat_script() { printf '%s\n' "$SYSTUI_LIBDIR/share/homebrew/install-homebrew-root.sh"; }
 
 brew_root_compat_env_file() {
-    if [ -r /etc/systui/homebrew.env ] || [ -r /usr/local/lib/homebrew-root/libhomebrew_fakeuid.so ]; then
+    if [ -r /etc/systui/homebrew.env ]; then
         printf '/etc/systui/homebrew.env\n'
     else
         printf '%s\n' "${HOME}/.config/homebrew/brew.env"
@@ -3434,16 +3434,15 @@ menu_brew_install() {
     local c script buser
     while true; do
         buser=$(brew_target_user)
-        local shim_st; shim_st=$([ -f /usr/local/lib/homebrew-root/libhomebrew_fakeuid.so ] && echo "shim:OK" || echo "shim:none")
         local status_line
-        status_line="Root bypass: $(brew_root_bypass_enabled && echo ENABLED || echo disabled) | $shim_st"
+        status_line="Root bypass: $(brew_root_bypass_enabled && echo ENABLED || echo disabled)"
         [ -n "$buser" ] && status_line+=" | Target user: $buser" || status_line+=" | No non-root user found"
 
         c=$(tui_menu "Homebrew" "$status_line\n\nInstall / Manage:" \
             user       "Standard install — run as non-root user (recommended)" \
             rootcomp   "Root-compatibility layer — install with root permissions (any system)" \
             reinstall  "Force reinstall — uninstall then reinstall" \
-            rootconfig "Root configuration — bypass, shim, wrapper, permissions" \
+            rootconfig "Root configuration — user delegation, wrapper, permissions" \
             pkgops     "Formula operations — install / reinstall / remove" \
             config     "Full configuration setup" \
             repair     "Repair / re-link existing Homebrew installation" \
@@ -3526,165 +3525,73 @@ menu_brew_install() {
 }
 
 # ---------------------------------------------------------------------------
-# Root reconfiguration helpers — each performs one atomic step so they can be
-# called independently without re-running the full installer.
+# Root reconfiguration helpers — safe compatibility layer.
+# Older builds spoofed process identity here. That implementation is removed;
+# root invocation delegates to the maintained non-root-owner installer.
 # ---------------------------------------------------------------------------
 
-_brew_root_shim_dir()    { printf '%s' "/usr/local/lib/homebrew-root"; }
-_brew_root_wrapper()     { printf '%s' "/usr/local/bin/brew"; }
-_brew_root_profile()     { printf '%s' "/etc/profile.d/homebrew.sh"; }
-_brew_root_prefix()      {
-    local p; p=$(_brew_cfg_get /etc/systui/homebrew.env HOMEBREW_PREFIX)
+_brew_root_profile() { printf '%s' "/etc/profile.d/homebrew.sh"; }
+_brew_root_prefix() {
+    local p
+    p=$(_brew_cfg_get /etc/systui/homebrew.env HOMEBREW_PREFIX)
     printf '%s' "${p:-/home/linuxbrew/.linuxbrew}"
 }
 
-_brew_root_rebuild_shim() {
-    if [ "$(id -u)" -ne 0 ]; then tui_msg "Root required" "Rebuilding the shim requires root."; return 1; fi
-    command -v gcc >/dev/null 2>&1 || { tui_msg "Missing tool" "gcc is required to compile the UID shim.\nInstall build-essential (apt) or equivalent."; return 1; }
-    local sdir; sdir=$(_brew_root_shim_dir)
-    local src="$sdir/fakeuid.c" lib="$sdir/libhomebrew_fakeuid.so"
-    install -d -m 0755 -o root -g root "$sdir"
-    cat > "$src" <<'EOF_C'
-#define _GNU_SOURCE
-#include <sys/types.h>
-#include <unistd.h>
-uid_t getuid(void)  { return (uid_t)1000; }
-uid_t geteuid(void) { return (uid_t)1000; }
-gid_t getgid(void)  { return (gid_t)1000; }
-gid_t getegid(void) { return (gid_t)1000; }
-int getresuid(uid_t *r,uid_t *e,uid_t *s){if(r)*r=1000;if(e)*e=1000;if(s)*s=1000;return 0;}
-int getresgid(gid_t *r,gid_t *e,gid_t *s){if(r)*r=1000;if(e)*e=1000;if(s)*s=1000;return 0;}
-EOF_C
-    run_cmd "Compile UID shim" gcc -shared -fPIC -O2 -Wall -Wextra -o "$lib" "$src" || return 1
-    chmod 0755 "$lib"
-    tui_msg "Shim rebuilt" "UID shim written to:\n$lib"
-}
-
 _brew_root_reinstall_wrapper() {
-    if [ "$(id -u)" -ne 0 ]; then tui_msg "Root required" "Reinstalling the wrapper requires root."; return 1; fi
-    local prefix; prefix=$(_brew_root_prefix)
-    local repo="$prefix/Homebrew"
-    local real_brew="$repo/bin/brew"
-    local wrapper; wrapper=$(_brew_root_wrapper)
-    local shim
-    shim="$(_brew_root_shim_dir)/libhomebrew_fakeuid.so"
-    local envf=/etc/systui/homebrew.env
-    cat > "$wrapper" <<WRAP
-#!/usr/bin/env bash
-set -e
-export HOME="/root"
-export USER="root"
-export LOGNAME="root"
-export HOMEBREW_PREFIX="$prefix"
-export HOMEBREW_CELLAR="$prefix/Cellar"
-export HOMEBREW_REPOSITORY="$repo"
-export PATH="$prefix/bin:$prefix/sbin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-[ -r "$envf" ] && . "$envf"
-: "\${HOMEBREW_NO_ANALYTICS:=1}"
-: "\${HOMEBREW_NO_ENV_HINTS:=1}"
-: "\${HOMEBREW_NO_AUTO_UPDATE:=1}"
-: "\${HOMEBREW_NO_INSTALL_CLEANUP:=1}"
-export HOMEBREW_NO_ANALYTICS HOMEBREW_NO_ENV_HINTS HOMEBREW_NO_AUTO_UPDATE HOMEBREW_NO_INSTALL_CLEANUP
-export LD_PRELOAD="$shim\${LD_PRELOAD:+:\$LD_PRELOAD}"
-exec "$real_brew" "\$@"
-WRAP
-    chmod 0755 "$wrapper"
-    tui_msg "Wrapper reinstalled" "Root brew wrapper written to:\n$wrapper\nUsing prefix: $prefix"
+    local script
+    if [ "$(id -u)" -ne 0 ]; then
+        tui_msg "Root required" "Reinstalling Homebrew root compatibility requires root."
+        return 1
+    fi
+    script=$(brew_root_compat_script)
+    [ -r "$script" ] || { tui_msg "Homebrew" "Installer script not found:\n$script"; return 1; }
+    run_cmd "Reinstall Homebrew root compatibility" bash "$script"
 }
 
 _brew_root_fix_perms() {
-    if [ "$(id -u)" -ne 0 ]; then tui_msg "Root required" "Fixing permissions requires root."; return 1; fi
-    local prefix; prefix=$(_brew_root_prefix)
-    [ -d "$prefix" ] || { tui_msg "Not found" "Homebrew prefix not found:\n$prefix\nInstall Homebrew first."; return 1; }
-    run_cmd "Fix Homebrew prefix ownership" chown -R root:root "$prefix"
-    run_cmd "Fix Homebrew prefix permissions" chmod -R u+rwX,go+rX "$prefix"
-    tui_msg "Permissions fixed" "Ownership and permissions updated for:\n$prefix"
-}
-
-_brew_root_update_profile() {
-    if [ "$(id -u)" -ne 0 ]; then tui_msg "Root required" "Updating the profile requires root."; return 1; fi
-    local prefix; prefix=$(_brew_root_prefix)
-    local prof; prof=$(_brew_root_profile)
-    local envf=/etc/systui/homebrew.env
-    mkdir -p /etc/profile.d
-    cat > "$prof" <<PROF
-export HOMEBREW_PREFIX="$prefix"
-export HOMEBREW_CELLAR="$prefix/Cellar"
-export HOMEBREW_REPOSITORY="$prefix/Homebrew"
-export PATH="/usr/local/bin:$prefix/bin:$prefix/sbin:\$PATH"
-export MANPATH="$prefix/share/man\${MANPATH+:\$MANPATH}"
-export INFOPATH="$prefix/share/info\${INFOPATH+:\$INFOPATH}"
-[ -r "$envf" ] && . "$envf"
-PROF
-    chmod 0644 "$prof"
-    for _pf in /root/.bashrc /root/.profile; do
-        touch "$_pf" 2>/dev/null || true
-        grep -Fq '/etc/profile.d/homebrew.sh' "$_pf" 2>/dev/null || \
-            printf '\n# Root-managed Homebrew\n[ -r /etc/profile.d/homebrew.sh ] && . /etc/profile.d/homebrew.sh\n' >> "$_pf"
-    done
-    tui_msg "Profile updated" "$prof written.\nPrefix: $prefix"
+    local prefix buser
+    if [ "$(id -u)" -ne 0 ]; then
+        tui_msg "Root required" "Permission repair requires root."
+        return 1
+    fi
+    prefix=$(_brew_root_prefix)
+    buser=$(brew_target_user)
+    [ -n "$buser" ] && [ "$buser" != root ] || {
+        tui_msg "Homebrew" "No non-root Homebrew owner is configured."
+        return 1
+    }
+    [ -d "$prefix" ] || { tui_msg "Homebrew" "Homebrew prefix does not exist:\n$prefix"; return 1; }
+    run_cmd "Repair Homebrew ownership" chown -R "$buser" "$prefix"
 }
 
 _brew_root_remove_layer() {
-    if [ "$(id -u)" -ne 0 ]; then tui_msg "Root required" "Removing the root layer requires root."; return 1; fi
-    tui_yesno "Remove root-compat layer" "This will:\n• Remove /usr/local/bin/brew wrapper\n• Remove the UID shim library\n• Remove /etc/profile.d/homebrew.sh\n• Remove /etc/systui/homebrew.env\n\nThe Homebrew installation itself is kept. Continue?" || return 0
-    rm -f "$(_brew_root_wrapper)" 2>/dev/null || true
-    rm -rf "$(_brew_root_shim_dir)" 2>/dev/null || true
-    rm -f "$(_brew_root_profile)" 2>/dev/null || true
-    rm -f /etc/systui/homebrew.env 2>/dev/null || true
-    for _pf in /root/.bashrc /root/.profile; do
-        [ -f "$_pf" ] && sed -i '/Root-managed Homebrew/d;/etc\/profile\.d\/homebrew\.sh/d' "$_pf" 2>/dev/null || true
-    done
-    tui_msg "Root layer removed" "All root-compat files have been removed.\nTo use brew again, log in as a non-root user or reinstall the compat layer."
+    if [ "$(id -u)" -ne 0 ]; then
+        tui_msg "Root required" "Removing Systui Homebrew compatibility settings requires root."
+        return 1
+    fi
+    rm -f /etc/systui/homebrew.env /etc/profile.d/homebrew.sh 2>/dev/null || true
+    rm -rf /usr/local/lib/homebrew-root 2>/dev/null || true
+    tui_msg "Homebrew" "Removed obsolete Systui root-compatibility settings. The Homebrew installation itself was left intact."
 }
 
 menu_brew_root_config() {
+    local c script buser prefix
     while true; do
-        local shim_ok wrapper_ok bypass_state prefix
-        shim_ok=$([ -f "$(_brew_root_shim_dir)/libhomebrew_fakeuid.so" ] && echo "✓ installed" || echo "✗ not found")
-        wrapper_ok=$([ -x "$(_brew_root_wrapper)" ] && echo "✓ present" || echo "✗ not found")
-        bypass_state=$(brew_root_bypass_enabled && echo "ENABLED" || echo "disabled")
+        buser=$(brew_target_user)
         prefix=$(_brew_root_prefix)
-
-        local c
-        c=$(tui_menu "Brew Root Config" \
-            "Root bypass: $bypass_state | Shim: $shim_ok | Wrapper: $wrapper_ok\nPrefix: $prefix\n\nRoot compatibility options:" \
-            bypass    "$(brew_root_bypass_enabled && echo 'Disable' || echo 'Enable') permanent root bypass (HOMEBREW_ALLOW_ROOT)" \
-            shim      "Rebuild UID shim  (libhomebrew_fakeuid.so)" \
-            wrapper   "Reinstall root wrapper  (/usr/local/bin/brew)" \
-            perms     "Fix prefix ownership and permissions" \
-            profile   "Update /etc/profile.d/homebrew.sh" \
-            full      "Full root-compat reinstall (re-run installer script)" \
-            remove    "Remove root-compat layer" \
-            back      "Back") || return 0
-
+        c=$(tui_menu "Homebrew root configuration" \
+            "Homebrew is executed as a non-root owner.\nOwner: ${buser:-not configured}\nPrefix: $prefix" \
+            reinstall "Reinstall safe root compatibility wrapper" \
+            perms "Repair Homebrew ownership" \
+            remove "Remove obsolete Systui root settings" \
+            back "Back") || return 0
         case "$c" in
-            bypass)
-                if [ "$(id -u)" -ne 0 ]; then
-                    tui_msg "Root bypass" "Changing the system-wide root bypass requires root."; continue
-                fi
-                if brew_root_bypass_enabled; then
-                    tui_yesno "Disable root bypass" "Remove HOMEBREW_ALLOW_ROOT from /etc/systui/homebrew.env?" || continue
-                    brew_set_root_bypass 0
-                    tui_msg "Root bypass" "Root bypass disabled. brew runs under the non-root target user."
-                else
-                    tui_yesno "Enable root bypass" "Set HOMEBREW_ALLOW_ROOT=1 permanently?\n\nOnly enable this if the root-compat layer (shim + wrapper) is installed." || continue
-                    brew_set_root_bypass 1
-                    tui_msg "Root bypass" "Root bypass enabled. brew runs directly as root."
-                fi
-                ;;
-            shim)    _brew_root_rebuild_shim ;;
-            wrapper) _brew_root_reinstall_wrapper ;;
-            perms)   _brew_root_fix_perms ;;
-            profile) _brew_root_update_profile ;;
-            full)
-                if [ "$(id -u)" -ne 0 ]; then
-                    tui_msg "Homebrew" "Full root-compat reinstall requires root."; continue
-                fi
+            reinstall)
                 script=$(brew_root_compat_script)
                 [ -r "$script" ] || { tui_msg "Homebrew" "Installer script not found:\n$script"; continue; }
-                run_cmd "Reinstall Homebrew root-compat layer" bash "$script"
+                run_cmd "Install Homebrew root compatibility" bash "$script"
                 ;;
+            perms) _brew_root_fix_perms ;;
             remove) _brew_root_remove_layer ;;
             back|"") return 0 ;;
         esac

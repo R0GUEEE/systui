@@ -3046,7 +3046,7 @@ rootfs_wb_engine_argv() { # <target> <engine> <command> [args...]
             fi
             ;;
         proot)
-            # -0 presents a fake uid 0 inside the tree, which is what makes
+            # -0 presents an effective uid-0 mapping inside the tree, which makes
             # package managers work without real root. proot performs its own
             # binding, so this must NOT be combined with kernel mounts.
             printf '%s\n' proot -0 -r "$t"
