@@ -3,7 +3,7 @@
 # as a compatibility fallback while mappings migrate to share/packages.tsv.
 
 systui_package_map_load() {
-    local file="${1:-$SYSTUI_LIBDIR/share/packages.tsv}" canonical alpine arch fedora void extra
+    local file="$SYSTUI_LIBDIR/share/packages.tsv" canonical alpine arch fedora void extra
     [ -r "$file" ] || return 0
     declare -p PKG_MAP >/dev/null 2>&1 || return 0
 
