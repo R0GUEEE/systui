@@ -3,7 +3,6 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 tui_msg(){ :; }
-run_cmd(){ shift; "$@"; }
 log(){ :; }
 warn(){ :; }
 bedrock_aok_require(){ return 0; }
@@ -31,13 +30,31 @@ bedrock_aok_http_text(){
     esac
 }
 
+expected='https://images.linuxcontainers.org/images/nixos/unstable/arm64/default/20260829_01:03/rootfs.tar.xz'
 url=$(bedrock_aok_resolve_lxc_direct nixos)
-case "$url" in
-    https://images.linuxcontainers.org/images/nixos/unstable/arm64/default/20260829_01:03/rootfs.tar.xz) ;;
-    *) printf 'unexpected URL: %s\n' "$url" >&2; exit 1 ;;
-esac
+[ "$url" = "$expected" ] || { printf 'unexpected URL: %s\n' "$url" >&2; exit 1; }
 
-bedrock_aok_refresh_one_url nixos
-grep -q '^nixos https://images.linuxcontainers.org/images/nixos/unstable/arm64/default/20260829_01:03/rootfs.tar.xz$' "$TMPDIR/cache"
-
+refreshed=$(bedrock_aok_refresh_one_url nixos)
+[ "$refreshed" = "$expected" ]
+grep -q "^nixos $expected$" "$TMPDIR/cache"
 printf 'ok - direct NixOS LXC resolver selects newest arm64 rootfs\n'
+
+# First normal `brl fetch` fails because its internal lookup_url resolver is
+# broken. The Systui path must then invoke `brl fetch-url nixos <resolved-url>`
+# directly rather than re-entering `brl fetch nixos`.
+: > "$TMPDIR/calls"
+run_cmd(){
+    local desc="$1"; shift
+    printf '%s | %s\n' "$desc" "$*" >> "$TMPDIR/calls"
+    case "$*" in
+        '/tmp/fake-brl fetch nixos') return 1 ;;
+        "/tmp/fake-brl fetch-url nixos $expected") return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+bedrock_aok_fetch_stratum_resilient nixos
+grep -Fq "/tmp/fake-brl fetch nixos" "$TMPDIR/calls"
+grep -Fq "/tmp/fake-brl fetch-url nixos $expected" "$TMPDIR/calls"
+[ "$(grep -Fc '/tmp/fake-brl fetch nixos' "$TMPDIR/calls")" -eq 1 ]
+printf 'ok - failed Bedrock lookup is bypassed with fetch-url\n'
