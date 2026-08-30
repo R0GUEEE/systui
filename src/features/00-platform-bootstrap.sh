@@ -7,6 +7,7 @@
     echo "systui: missing core platform capability layer" >&2
     return 1
 }
+# shellcheck source=../core/platform.sh
 . "$SYSTUI_LIBDIR/src/core/platform.sh"
 
 detect_init() {
