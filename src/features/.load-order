@@ -58,7 +58,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-audit-feature-restore.
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-omb-nonblocking.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-init-login.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-manage-integration.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ish-argmax-pre-runtime.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ish-argmax-pre-runtime.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-runtime-command.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-function-export-cleanup.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-install-execution-guard.sh
@@ -82,6 +82,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 76-sysconfig-multi-init-services.sh
 77-host-native-install-default.sh
 78-bedrock-init-compatibility.sh
+79-busybox-init-support.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
