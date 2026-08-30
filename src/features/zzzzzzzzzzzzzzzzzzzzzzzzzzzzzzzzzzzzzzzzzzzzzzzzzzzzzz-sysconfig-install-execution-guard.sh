@@ -29,16 +29,30 @@ systui_guard_timeout_seconds() {
 
 systui_guard_exec() { # <timeout-seconds> <argv...>
     local seconds="$1"; shift
+    local -a prefix=(env
+        CI=1
+        NONINTERACTIVE=1
+        DEBIAN_FRONTEND=noninteractive
+        DEBCONF_NONINTERACTIVE_SEEN=true
+        NEEDRESTART_MODE=a
+        APT_LISTCHANGES_FRONTEND=none
+        GIT_TERMINAL_PROMPT=0
+        GIT_ASKPASS=/bin/false
+        SSH_ASKPASS=/bin/false
+        "GIT_HTTP_LOW_SPEED_LIMIT=${GIT_HTTP_LOW_SPEED_LIMIT:-1024}"
+        "GIT_HTTP_LOW_SPEED_TIME=${GIT_HTTP_LOW_SPEED_TIME:-60}"
+        HOMEBREW_NO_ENV_HINTS=1)
+
     if command -v timeout >/dev/null 2>&1; then
         # GNU coreutils supports --kill-after/--foreground; BusyBox commonly
         # supports only the simple form. Probe without assuming either.
         if timeout --help 2>&1 | grep -q -- '--kill-after'; then
-            timeout --foreground --signal=TERM --kill-after=15s "${seconds}s" "$@"
+            "${prefix[@]}" timeout --foreground --signal=TERM --kill-after=15s "${seconds}s" "$@"
         else
-            timeout "$seconds" "$@"
+            "${prefix[@]}" timeout "$seconds" "$@"
         fi
     else
-        "$@"
+        "${prefix[@]}" "$@"
     fi
 }
 
@@ -61,20 +75,7 @@ run_cmd() {
     echo "================================================================="
 
     set +e
-    env \
-        CI=1 \
-        NONINTERACTIVE=1 \
-        DEBIAN_FRONTEND=noninteractive \
-        DEBCONF_NONINTERACTIVE_SEEN=true \
-        NEEDRESTART_MODE=a \
-        APT_LISTCHANGES_FRONTEND=none \
-        GIT_TERMINAL_PROMPT=0 \
-        GIT_ASKPASS=/bin/false \
-        SSH_ASKPASS=/bin/false \
-        GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1024}" \
-        GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-60}" \
-        HOMEBREW_NO_ENV_HINTS=1 \
-        systui_guard_exec "$timeout_s" "$@" </dev/null 2>&1 | tee -a "$LOGFILE"
+    systui_guard_exec "$timeout_s" "$@" </dev/null 2>&1 | tee -a "$LOGFILE"
     rc=${PIPESTATUS[0]}
 
     if [ "$had_errexit" -eq 1 ]; then set -e; else set +e; fi
