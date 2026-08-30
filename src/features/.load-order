@@ -1,5 +1,6 @@
 00-platform-bootstrap.sh
 health.sh
+30-health-runtime-capabilities.sh
 rootfs.sh
 sysconfig.sh
 ultimate-provision.sh
