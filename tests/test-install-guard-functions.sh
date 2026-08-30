@@ -14,16 +14,27 @@ run_cmd() { "$@"; }
 . "$GUARD"
 
 sample_guard_function() {
-    printf 'function-ok:%s\n' "$1"
+    printf '%s|%s|%s\n' "$#" "${1:-}" "${2:-}"
 }
 
-out=$(systui_guard_exec 5 sample_guard_function hello)
-[ "$out" = 'function-ok:hello' ]
+out=$(systui_guard_exec 5 sample_guard_function hello world)
+[ "$out" = '2|hello|world' ]
 
-# Function bodies must remain local; the ARG_MAX fix depends on avoiding
-# BASH_FUNC_* propagation into external children.
-export -n -f sample_guard_function 2>/dev/null || true
-! env | grep -q '^BASH_FUNC_sample_guard_function%%='
+# Model the rootfs path shape that regressed: argv[1] must be the target, never
+# the function name itself.
+rootfs_exec_raw() {
+    printf '%s|%s|%s\n' "$1" "$2" "$3"
+}
+out=$(systui_guard_exec 5 rootfs_exec_raw /opt/rootfs/debian-forky-arm64 /tmp/install.sh git)
+[ "$out" = '/opt/rootfs/debian-forky-arm64|/tmp/install.sh|git' ]
+
+# External executable argv must also remain exact after the guard metadata is
+# removed.
+out=$(systui_guard_exec 5 printf '%s|%s\n' hello world)
+[ "$out" = 'hello|world' ]
+
+export -n -f sample_guard_function rootfs_exec_raw 2>/dev/null || true
+! env | grep -Eq '^BASH_FUNC_(sample_guard_function|rootfs_exec_raw)%%='
 
 slow_guard_function() {
     sleep 5
