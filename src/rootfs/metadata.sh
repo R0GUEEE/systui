@@ -20,8 +20,10 @@ systui_rootfs_metadata_valid_key() {
 }
 
 systui_rootfs_metadata_valid_value() {
-    local value="${1:-}"
-    [ "$value" != *$'\n'* ] && [ "$value" != *$'\r'* ] && [ "$value" != *'='* ]
+    case "${1:-}" in
+        *$'\n'*|*$'\r'*|*=*) return 1 ;;
+        *) return 0 ;;
+    esac
 }
 
 systui_rootfs_metadata_set() { # <target> <key> <value>
