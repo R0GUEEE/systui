@@ -7,8 +7,15 @@
 # network operation that never returns. Ordinary run_cmd uses remain interactive.
 ###############################################################################
 
+# Preserve the previous run_cmd using Bash builtins only. Avoid an external
+# declare -f | sed pipeline here: on iSH an already-large inherited environment
+# can make the sed exec fail with E2BIG before cleanup code gets a chance to run.
 if declare -F run_cmd >/dev/null 2>&1 && ! declare -F _systui_base_run_cmd_install_guard >/dev/null 2>&1; then
-    eval "$(declare -f run_cmd | sed '1s/^run_cmd[[:space:]]*()/_systui_base_run_cmd_install_guard ()/')"
+    _systui_run_cmd_def=$(declare -f run_cmd)
+    _systui_run_cmd_def=${_systui_run_cmd_def/#run_cmd ()/_systui_base_run_cmd_install_guard ()}
+    _systui_run_cmd_def=${_systui_run_cmd_def/#run_cmd()/_systui_base_run_cmd_install_guard()}
+    eval "$_systui_run_cmd_def"
+    unset _systui_run_cmd_def
 fi
 
 systui_installish_run() { # <description> <argv...>
@@ -57,9 +64,6 @@ systui_guard_exec_function() { # <timeout-seconds> <function> [args...]
     ) &
     pid=$!
 
-    # Watch the child from another lightweight process. The parent remains able
-    # to collect the real function exit status. On expiry, terminate the shell
-    # function process and then force-kill it if it did not exit promptly.
     (
         sleep "$seconds"
         if kill -0 "$pid" 2>/dev/null; then
@@ -74,7 +78,6 @@ systui_guard_exec_function() { # <timeout-seconds> <function> [args...]
     kill "$watcher" 2>/dev/null || true
     wait "$watcher" 2>/dev/null || true
 
-    # Match coreutils timeout's conventional status for a TERM watchdog expiry.
     if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
         return 124
     fi
@@ -82,9 +85,16 @@ systui_guard_exec_function() { # <timeout-seconds> <function> [args...]
 }
 
 systui_guard_exec() { # <timeout-seconds> <argv...>
-    local seconds="$1" cmd="${2:-}"
-    shift
-    [ -n "$cmd" ] || return 127
+    local seconds="${1:-}" cmd="${2:-}"
+    [ -n "$seconds" ] && [ -n "$cmd" ] || return 127
+
+    # Remove both guard metadata arguments. Previously only the timeout was
+    # shifted, leaving the command/function name at the front of "$@". The
+    # function path then received its own name as argv[1], e.g.:
+    #   rootfs_exec_raw rootfs_exec_raw /opt/rootfs/... 
+    # which made chroot try to enter a directory literally named
+    # "rootfs_exec_raw".
+    shift 2
 
     if declare -F "$cmd" >/dev/null 2>&1; then
         systui_guard_exec_function "$seconds" "$cmd" "$@"
@@ -106,8 +116,6 @@ systui_guard_exec() { # <timeout-seconds> <argv...>
         HOMEBREW_NO_ENV_HINTS=1)
 
     if command -v timeout >/dev/null 2>&1; then
-        # GNU coreutils supports --kill-after/--foreground; BusyBox commonly
-        # supports only the simple form. Probe without assuming either.
         if timeout --help 2>&1 | grep -q -- '--kill-after'; then
             "${prefix[@]}" timeout --foreground --signal=TERM --kill-after=15s "${seconds}s" "$cmd" "$@"
         else
@@ -159,7 +167,5 @@ run_cmd() {
     return "$rc"
 }
 
-# Keep these functions local to the Systui process. Exporting run_cmd or the
-# guard helpers would unnecessarily enlarge every child environment.
 export -n -f run_cmd 2>/dev/null || true
 export -n -f systui_installish_run systui_guard_timeout_seconds systui_guard_export_noninteractive systui_guard_exec_function systui_guard_exec 2>/dev/null || true
