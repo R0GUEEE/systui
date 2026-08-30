@@ -1,11 +1,5 @@
 # shellcheck shell=bash
 # PHASE 65 — safe, transactional Bedrock-AOK command updates.
-#
-# Upstream `brl self-update` currently replaces the live command before the
-# downloaded script is syntax-checked. If upstream publishes a malformed brl,
-# the installed command is left broken. Stage and validate the candidate first,
-# and recover from the upstream-created .bak when the current command is already
-# invalid.
 
 bedrock_aok_validate_script() { # <path>
     local script="$1"
@@ -13,27 +7,46 @@ bedrock_aok_validate_script() { # <path>
     sh -n "$script" >/dev/null 2>&1
 }
 
+bedrock_aok_canonical_brl() { # <path>
+    local p="$1" resolved
+    resolved=$(readlink -f "$p" 2>/dev/null || true)
+    if [ -n "$resolved" ] && [ -e "$resolved" ]; then
+        printf '%s\n' "$resolved"
+    else
+        printf '%s\n' "$p"
+    fi
+}
+
 bedrock_aok_restore_backup() { # <installed-brl>
-    local brl="$1" backup
-    backup="${brl}.bak"
-    [ -f "$backup" ] || return 1
-    bedrock_aok_validate_script "$backup" || return 1
-    cp -f -- "$backup" "$brl" || return 1
-    chmod 0755 "$brl" 2>/dev/null || true
-    bedrock_aok_validate_script "$brl"
+    local requested="$1" brl candidate
+    brl=$(bedrock_aok_canonical_brl "$requested")
+    for candidate in \
+        "${brl}.bak" \
+        "${requested}.bak" \
+        /bedrock/bin/brl.bak
+    do
+        [ -f "$candidate" ] || continue
+        bedrock_aok_validate_script "$candidate" || continue
+        cp -f -- "$candidate" "$brl" || continue
+        chmod 0755 "$brl" 2>/dev/null || true
+        if bedrock_aok_validate_script "$brl"; then
+            log "bedrock-aok: restored valid backup $candidate -> $brl"
+            return 0
+        fi
+    done
+    return 1
 }
 
 bedrock_aok_self_update() {
-    local brl work candidate backup
+    local requested brl work candidate backup
     bedrock_aok_require || return 1
-    brl=$(bedrock_aok_brl) || return 1
+    requested=$(bedrock_aok_brl) || return 1
+    brl=$(bedrock_aok_canonical_brl "$requested")
 
-    # Recover first when a previous upstream self-update already installed a
-    # malformed command. Upstream writes <brl>.bak before replacing the file.
     if ! bedrock_aok_validate_script "$brl"; then
-        if bedrock_aok_restore_backup "$brl"; then
+        if bedrock_aok_restore_backup "$requested"; then
             tui_msg "Bedrock-AOK recovered" \
-"The installed brl command was syntactically invalid. systui restored the valid backup at ${brl}.bak before checking for updates."
+"The installed brl command was syntactically invalid. Systui restored a valid backup before checking for updates."
         else
             tui_msg "Bedrock-AOK is broken" \
 "The installed brl command is syntactically invalid and no valid backup could be restored. Reinstall Bedrock-AOK before updating."
@@ -46,8 +59,6 @@ bedrock_aok_self_update() {
     mkdir -p -- "$work" || return 1
     candidate="$work/brl"
 
-    # Download through the existing trusted upstream integration. This also
-    # applies Systui's compatibility patch before validation.
     bedrock_aok_download brl "$candidate" || return 1
     chmod 0755 "$candidate" || return 1
 
@@ -62,7 +73,6 @@ bedrock_aok_self_update() {
     cp -f -- "$brl" "$backup" || return 1
     chmod 0755 "$backup" 2>/dev/null || true
 
-    # Install atomically in the same directory where possible.
     if ! cp -f -- "$candidate" "${brl}.systui-new"; then
         return 1
     fi
@@ -81,5 +91,5 @@ bedrock_aok_self_update() {
     fi
 
     run_cmd "Bedrock-AOK version" "$brl" version || true
-    tui_msg "Bedrock-AOK updated" "The brl command was downloaded, syntax-checked, backed up, and installed successfully."
+    tui_msg "Bedrock-AOK updated" "The canonical brl executable was downloaded, syntax-checked, backed up, and installed successfully."
 }
