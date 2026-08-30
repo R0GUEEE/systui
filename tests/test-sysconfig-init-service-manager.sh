@@ -12,5 +12,13 @@ grep -Fq 'systemctl daemon-reload' "$F"
 grep -Fq '/etc/conf.d/$s' "$F"
 grep -Fq '/etc/sv/$s/run' "$F"
 grep -Fq '/etc/init.d/$s' "$F"
+
+grep -Fq 'sysconfig_systemd_mask_offline' "$F"
+grep -Fq 'ln -sfn /dev/null "$path"' "$F"
+grep -Fq 'target=$(readlink "$path"' "$F"
+grep -Fq 'Refusing to remove non-mask symlink' "$F"
+grep -Fq 'offline supported' "$F"
+! grep -Fq 'Masking requires a running systemd manager.' "$F"
+
 bash -n "$F"
-printf 'ok - init manager and service config navigation restored\n'
+printf 'ok - init manager, service config, and offline systemd masking are wired\n'
