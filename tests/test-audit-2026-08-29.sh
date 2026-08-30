@@ -49,9 +49,12 @@ check "Homebrew wrapper drops root privileges" bash -c '
     grep -Eq "runuser -u|sudo -H -u" "$1/share/homebrew/install-homebrew-root.sh"
 ' _ "$PROJECT_DIR"
 
-check "updater uses root-owned cache" bash -c '
-    grep -Fq "SYSTUI_UPDATE_CACHE" "$1/update.sh" &&
-    grep -Fq "git_cache clean -fdx" "$1/update.sh"
+check "updater uses fixed root-owned cache" bash -c '
+    grep -Fq '\''CACHE_DIR="/var/lib/systui/source"'\'' "$1/update.sh" &&
+    ! grep -Fq '\''SYSTUI_UPDATE_CACHE'\'' "$1/update.sh" &&
+    grep -Fq '\''.systui-update-cache'\'' "$1/update.sh" &&
+    grep -Fq '\''Refusing to recursively remove untrusted update cache'\'' "$1/update.sh" &&
+    grep -Fq '\''chown -R root:root "$CACHE_DIR"'\'' "$1/update.sh"
 ' _ "$PROJECT_DIR"
 
 check "updater never executes install.sh from recorded user checkout" bash -c '
