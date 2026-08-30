@@ -54,9 +54,6 @@ bedrock_aok_compat_probe_namespace() { # <unshare-flag>
     esac
 }
 
-# Be conservative: metadata that says the kernel knows about seccomp is not
-# proof that this runtime can use a filter. Report native only when this process
-# is actually running under seccomp; otherwise callers see unsupported.
 bedrock_aok_compat_probe_seccomp() {
     local mode
     [ -r /proc/self/status ] || return 1
@@ -64,8 +61,6 @@ bedrock_aok_compat_probe_seccomp() {
     case "$mode" in 1|2) return 0 ;; *) return 1 ;; esac
 }
 
-# Presence of /sys/fs/cgroup alone is not enough. Require a real membership and
-# a writable control point before calling cgroups native.
 bedrock_aok_compat_probe_cgroup() {
     [ -r /proc/self/cgroup ] || return 1
     grep -q ':' /proc/self/cgroup 2>/dev/null || return 1
@@ -130,7 +125,8 @@ bedrock_aok_compat_fallback() { # <capability>
 }
 
 bedrock_aok_compat_write_config() {
-    local out=/etc/systui/bedrock-capabilities.conf cap state fallback runtime
+    local out cap state fallback runtime
+    out=${BEDROCK_AOK_COMPAT_CONFIG:-/etc/systui/bedrock-capabilities.conf}
     runtime="${SYSTUI_ENVIRONMENT:-unknown}"
     mkdir -p "$(dirname "$out")" 2>/dev/null || return 1
     {
@@ -145,7 +141,7 @@ bedrock_aok_compat_write_config() {
     } > "$out"
     chmod 0644 "$out" 2>/dev/null || true
 
-    if [ -d /bedrock/etc ]; then
+    if [ -d /bedrock/etc ] && [ "$out" != /bedrock/etc/systui-compat.conf ]; then
         cp -f "$out" /bedrock/etc/systui-compat.conf 2>/dev/null || true
         chmod 0644 /bedrock/etc/systui-compat.conf 2>/dev/null || true
     fi
