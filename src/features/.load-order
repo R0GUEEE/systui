@@ -98,4 +98,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 92-runtime-menu-cleanup.sh
 93-runtime-routing-cleanup.sh
 94-universal-software-catalogue.sh
+95-software-catalogue-registry-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
