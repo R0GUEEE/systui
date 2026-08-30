@@ -169,23 +169,26 @@ export SYSTUI_LIBDIR
 . "$LIBDIR/src/core/config.sh" || exit 1
 . "$LIBDIR/src/core/tui-widgets.sh" || exit 1
 . "$LIBDIR/src/core/common.sh" || exit 1
-manifest="$LIBDIR/src/features/.load-order"
-[ -r "$manifest" ] || { echo "systui: missing feature load manifest: $manifest" >&2; exit 1; }
-while IFS= read -r rel || [ -n "$rel" ]; do
-    case "$rel" in ''|'#'*) continue ;; esac
-    feature="$LIBDIR/src/features/$rel"
-    [ -f "$feature" ] || { echo "systui: feature manifest references missing file: $rel" >&2; exit 1; }
-    . "$feature" || { echo "systui: failed to load $feature" >&2; exit 1; }
-done < "$manifest"
+. "$LIBDIR/src/core/loader.sh" || exit 1
+systui_load_features || exit 1
 detect_pm
 detect_init
 detect_distro
 require_root
 main_menu() {
     while true; do
-        local choice
-        choice=$(tui_menu "Main Menu" "systui — choose a section:" provision "Ultimate Provision (quick system setup)" rootfs "Rootfs Builder (create minimal systems)" config "System Configuration" performance "Advanced performance tuning" awesome "Awesome Linux (software catalogue)" quit "Quit") || return 0
+        local choice runtime
+        runtime="${SYSTUI_ENVIRONMENT:-unknown}"
+        choice=$(tui_menu "Main Menu" "Runtime: $runtime  ·  Init: ${INIT:-unknown}  ·  Packages: ${PM:-unknown}\n\nsystui — choose a section:" \
+            health "System Health & diagnostics" \
+            provision "Ultimate Provision — quick system setup" \
+            rootfs "Root Filesystems — build, enter and manage" \
+            config "System Configuration" \
+            performance "Performance tuning" \
+            awesome "Software catalogue" \
+            quit "Quit") || return 0
         case "$choice" in
+            health) menu_health ;;
             provision) menu_ultimate_provision ;;
             rootfs) menu_rootfs ;;
             config) menu_sysconfig ;;
