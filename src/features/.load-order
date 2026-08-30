@@ -73,6 +73,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 67-bedrock-aok-direct-resolver.sh
 68-bedrock-aok-catalog-patch.sh
 69-sysconfig-init-service-manager.sh
+70-sysconfig-systemd-manager.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
