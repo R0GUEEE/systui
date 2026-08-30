@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-FILE="$ROOT/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-docker-image-normalization.sh"
+FILE="$ROOT/src/features/60-rootfs-docker-image-normalization.sh"
 LOAD="$ROOT/src/features/.load-order"
 
 . "$FILE"
