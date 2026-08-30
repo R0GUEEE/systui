@@ -17,7 +17,7 @@ sample_guard_function() {
     printf 'function-ok:%s\n' "$1"
 }
 
-out=$(systui_guard_exec 60 sample_guard_function hello)
+out=$(systui_guard_exec 5 sample_guard_function hello)
 [ "$out" = 'function-ok:hello' ]
 
 # Function bodies must remain local; the ARG_MAX fix depends on avoiding
@@ -26,11 +26,11 @@ export -n -f sample_guard_function 2>/dev/null || true
 ! env | grep -q '^BASH_FUNC_sample_guard_function%%='
 
 slow_guard_function() {
-    sleep 65
+    sleep 5
 }
 
 set +e
-SYSTUI_INSTALL_TIMEOUT=60 systui_guard_exec 60 slow_guard_function >/dev/null 2>&1
+systui_guard_exec 1 slow_guard_function >/dev/null 2>&1
 rc=$?
 set -e
 [ "$rc" -eq 124 ]
