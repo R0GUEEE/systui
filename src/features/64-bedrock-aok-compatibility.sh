@@ -54,27 +54,37 @@ bedrock_aok_compat_probe_namespace() { # <unshare-flag>
     esac
 }
 
+# Be conservative: metadata that says the kernel knows about seccomp is not
+# proof that this runtime can use a filter. Report native only when this process
+# is actually running under seccomp; otherwise callers see unsupported.
 bedrock_aok_compat_probe_seccomp() {
+    local mode
     [ -r /proc/self/status ] || return 1
-    grep -q '^Seccomp:' /proc/self/status 2>/dev/null || return 1
-    [ -e /proc/sys/kernel/seccomp/actions_avail ] || [ -d /proc/sys/kernel/seccomp ] || return 1
+    mode=$(awk '/^Seccomp:/ {print $2; exit}' /proc/self/status 2>/dev/null || true)
+    case "$mode" in 1|2) return 0 ;; *) return 1 ;; esac
 }
 
+# Presence of /sys/fs/cgroup alone is not enough. Require a real membership and
+# a writable control point before calling cgroups native.
 bedrock_aok_compat_probe_cgroup() {
-    [ -d /sys/fs/cgroup ] || return 1
     [ -r /proc/self/cgroup ] || return 1
-    return 0
+    grep -q ':' /proc/self/cgroup 2>/dev/null || return 1
+    if [ -r /sys/fs/cgroup/cgroup.controllers ]; then
+        [ -w /sys/fs/cgroup/cgroup.procs ] || return 1
+        return 0
+    fi
+    [ -d /sys/fs/cgroup ] || return 1
+    find /sys/fs/cgroup -maxdepth 2 -name tasks -writable -print -quit 2>/dev/null | grep -q .
 }
 
 bedrock_aok_compat_enable_userns() {
-    local f
+    local f n
     f=/proc/sys/kernel/unprivileged_userns_clone
     if [ -w "$f" ]; then
         printf '1\n' > "$f" 2>/dev/null || true
     fi
     f=/proc/sys/user/max_user_namespaces
     if [ -r "$f" ] && [ -w "$f" ]; then
-        local n
         read -r n < "$f" || n=0
         case "$n" in ''|*[!0-9]*) n=0 ;; esac
         [ "$n" -gt 0 ] || printf '1024\n' > "$f" 2>/dev/null || true
@@ -120,9 +130,8 @@ bedrock_aok_compat_fallback() { # <capability>
 }
 
 bedrock_aok_compat_write_config() {
-    local out cap state fallback runtime
+    local out=/etc/systui/bedrock-capabilities.conf cap state fallback runtime
     runtime="${SYSTUI_ENVIRONMENT:-unknown}"
-    out="${1:-/etc/systui/bedrock-capabilities.conf}"
     mkdir -p "$(dirname "$out")" 2>/dev/null || return 1
     {
         printf 'schema=1\n'
@@ -178,9 +187,6 @@ bedrock_aok_compat_summary() {
     printf '%b' "$line"
 }
 
-# Install hook: prepare the host before Bedrock runs its installer, then refresh
-# the profile after installation so /bedrock/etc receives the final capability
-# state. Builtin function preservation avoids exec-time ARG_MAX pressure.
 if declare -F bedrock_aok_install >/dev/null 2>&1 \
     && ! declare -F _systui_base_bedrock_aok_install_compat >/dev/null 2>&1; then
     _systui_bedrock_install_def=$(declare -f bedrock_aok_install)
