@@ -45,8 +45,6 @@ rootfs_ensure_systemd_manager() { # <target>
                 [ -x "$t/usr/bin/zypper" ] && in_chroot "$t" zypper --non-interactive install systemd dbus-1 >/dev/null 2>&1 || rc=$?
                 ;;
             gentoo)
-                # Gentoo profiles may deliberately be OpenRC-only. Do not
-                # mutate profile USE flags automatically.
                 return 2
                 ;;
             *)
@@ -75,9 +73,6 @@ EOF
     return 0
 }
 
-# Wrap the final postconfig function after all older rootfs compatibility
-# layers have loaded. This makes systemd + iSH compatibility a build invariant
-# for systemd-capable distributions without clobbering native-only distros.
 if declare -F rootfs_postconfig >/dev/null 2>&1 && ! declare -F _systui_systemd_default_rootfs_postconfig >/dev/null 2>&1; then
     eval "$(declare -f rootfs_postconfig | sed '1s/^rootfs_postconfig[[:space:]]*()/_systui_systemd_default_rootfs_postconfig ()/')"
 fi
@@ -93,10 +88,6 @@ rootfs_postconfig() {
         *) return "$ensure_rc" ;;
     esac
 }
-
-# ---------------------------------------------------------------------------
-# Comprehensive current-system init configuration utility
-# ---------------------------------------------------------------------------
 
 sysconfig_init_detect_all() {
     {
@@ -116,9 +107,9 @@ sysconfig_init_detect_all() {
 
 sysconfig_init_service_list() {
     case "${INIT:-unknown}" in
-        systemd) systemctl list-unit-files --type=service --no-pager 2>&1 > "$SYSTUI_TMP/init-list" ;;
+        systemd) systemctl list-unit-files --type=service --no-pager > "$SYSTUI_TMP/init-list" 2>&1 ;;
         openrc)  rc-status -a > "$SYSTUI_TMP/init-list" 2>&1 ;;
-        runit)   { echo "Enabled services:"; find /var/service /run/runit/service -mindepth 1 -maxdepth 1 -type l -o -type d 2>/dev/null; echo; echo "Definitions:"; find /etc/sv /etc/runit/sv -mindepth 1 -maxdepth 1 -type d 2>/dev/null; } > "$SYSTUI_TMP/init-list" ;;
+        runit)   { echo "Enabled services:"; find /var/service /run/runit/service -mindepth 1 -maxdepth 1 \( -type l -o -type d \) 2>/dev/null; echo; echo "Definitions:"; find /etc/sv /etc/runit/sv -mindepth 1 -maxdepth 1 -type d 2>/dev/null; } > "$SYSTUI_TMP/init-list" ;;
         sysvinit) { service --status-all 2>&1; echo; ls -1 /etc/init.d 2>/dev/null; } > "$SYSTUI_TMP/init-list" ;;
         *) printf 'No supported active init manager detected.\n' > "$SYSTUI_TMP/init-list" ;;
     esac
@@ -263,8 +254,6 @@ sysconfig_init_manager_menu() {
     done
 }
 
-# Replace Services > Manage with the comprehensive init utility while keeping
-# the existing create-service path intact.
 menu_services() {
     local c
     while true; do
@@ -280,7 +269,15 @@ menu_services() {
     done
 }
 
-export -f rootfs_ensure_systemd_manager rootfs_postconfig \
+# Systui sources feature files into one shell. These functions are intentionally
+# not exported: serialized Bash function bodies can exhaust iSH-AOK's small
+# execve ARG_MAX and make ordinary commands fail with "Argument list too long".
+for _systui_local_fn in \
+    rootfs_ensure_systemd_manager rootfs_postconfig \
     sysconfig_init_detect_all sysconfig_init_service_list sysconfig_init_service_action \
     sysconfig_init_logs sysconfig_init_edit_config sysconfig_systemd_controls \
     sysconfig_init_install_manager sysconfig_init_manager_menu menu_services
+ do
+    export -n -f "$_systui_local_fn" 2>/dev/null || true
+done
+unset _systui_local_fn
