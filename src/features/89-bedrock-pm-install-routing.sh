@@ -92,8 +92,8 @@ pm_install() {
 # host-only vendor/source installer code and use the native stratum package
 # manager directly.
 systui_bedrock_rebind_install_wrappers() {
-    local fn saved canonical
-    while read -r _ fn; do
+    local fn saved canonical _decl _flag
+    while read -r _decl _flag fn; do
         case "$fn" in menu_*_install) ;; *) continue ;; esac
         case "$fn" in menu_bedrock_*|menu_rootfs_*|_*) continue ;; esac
         saved="_systui_bedrock_target_original_${fn}"
