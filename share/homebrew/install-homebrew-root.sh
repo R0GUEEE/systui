@@ -32,9 +32,6 @@ case "$(uname -m)" in
 esac
 
 run_as_brew_user() {
-    # Never inherit a root-only working directory (commonly /root). Homebrew
-    # validates the current directory after privileges are dropped and refuses
-    # to run when the target account cannot traverse it.
     local workdir="$PWD"
     if command -v runuser >/dev/null 2>&1; then
         runuser -u "$BREW_USER" -- test -x "$workdir" >/dev/null 2>&1 || workdir="$BREW_HOME"
@@ -46,9 +43,7 @@ run_as_brew_user() {
             bash -c 'cd "$1" && shift && exec "$@"' bash "$workdir" "$@"
     elif command -v su >/dev/null 2>&1; then
         local quoted=() arg
-        if ! su -s /bin/bash "$BREW_USER" -c "test -x $(printf %q "$workdir")" >/dev/null 2>&1; then
-            workdir="$BREW_HOME"
-        fi
+        if ! su -s /bin/bash "$BREW_USER" -c "test -x $(printf %q "$workdir")" >/dev/null 2>&1; then workdir="$BREW_HOME"; fi
         for arg in "$@"; do printf -v arg '%q' "$arg"; quoted+=("$arg"); done
         su -s /bin/bash "$BREW_USER" -c "cd $(printf %q "$workdir") && HOME=$(printf %q "$BREW_HOME") USER=$(printf %q "$BREW_USER") LOGNAME=$(printf %q "$BREW_USER") ${quoted[*]}"
     else
@@ -67,7 +62,9 @@ install_deps() {
     elif command -v yum >/dev/null 2>&1; then
         yum install -y bash gcc gcc-c++ make curl file git procps-ng patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates
     elif command -v pacman >/dev/null 2>&1; then
-        # Arch does not support partial upgrades: refresh and upgrade together.
+        # Arch does not support partial upgrades. Make the system-wide impact
+        # explicit before pacman performs its required synchronized upgrade.
+        warn "Arch Linux detected: Homebrew prerequisite setup will run 'pacman -Syu' and may upgrade the entire system."
         pacman -Syu --noconfirm --needed base-devel curl file git python ruby ca-certificates
     elif command -v zypper >/dev/null 2>&1; then
         zypper --non-interactive refresh
@@ -109,14 +106,12 @@ install_brew() {
         log "Removing incomplete Homebrew checkout"
         rm -rf -- "$BREW_REPOSITORY"
     fi
-
     if [[ ! -x "$REAL_BREW" ]]; then
         log "Cloning Homebrew as $BREW_USER"
         run_as_brew_user git -c http.version=HTTP/1.1 clone --depth=1 --single-branch --branch=main --no-tags https://github.com/Homebrew/brew.git "$BREW_REPOSITORY"
     else
         log "Existing Homebrew checkout found"
     fi
-
     run_as_brew_user mkdir -p "$BREW_PREFIX/bin" "$BREW_PREFIX/sbin" "$BREW_PREFIX/Cellar" "$BREW_PREFIX/Caskroom" "$BREW_PREFIX/opt" "$BREW_PREFIX/var/homebrew"
     ln -sfn "$REAL_BREW" "$BREW_LINK"
     chown -h "$BREW_USER:$BREW_USER" "$BREW_LINK"
@@ -131,27 +126,19 @@ BREW_USER=$(printf %q "$BREW_USER")
 BREW_HOME=$(printf %q "$BREW_HOME")
 REAL_BREW=$(printf %q "$REAL_BREW")
 ROOT_ENV_FILE=$(printf %q "$ROOT_ENV_FILE")
-
-# Import only HOMEBREW_* settings from the root-owned systui config file.
-# Do not source arbitrary shell syntax into a privileged wrapper.
 if [ -r "\$ROOT_ENV_FILE" ]; then
     while IFS='=' read -r key value; do
-        case "\$key" in
-            HOMEBREW_[A-Z0-9_]*) export "\$key=\$value" ;;
-        esac
+        case "\$key" in HOMEBREW_[A-Z0-9_]*) export "\$key=\$value" ;; esac
     done < "\$ROOT_ENV_FILE"
 fi
-
 if [ "\$(id -u)" -eq 0 ]; then
     BREW_CWD="\$PWD"
     if command -v runuser >/dev/null 2>&1; then
         runuser -u "\$BREW_USER" -- test -x "\$BREW_CWD" >/dev/null 2>&1 || BREW_CWD="\$BREW_HOME"
-        exec runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" \
-            bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
+        exec runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
     elif command -v sudo >/dev/null 2>&1; then
         sudo -H -u "\$BREW_USER" test -x "\$BREW_CWD" >/dev/null 2>&1 || BREW_CWD="\$BREW_HOME"
-        exec sudo -H -u "\$BREW_USER" env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" \
-            bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
+        exec sudo -H -u "\$BREW_USER" env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
     else
         echo "brew: root invocation requires runuser or sudo to drop privileges" >&2
         exit 1
@@ -179,10 +166,7 @@ install_brew
 install_wrapper
 
 log "Verifying Homebrew through the privilege-dropping wrapper"
-(
-    cd "$BREW_HOME"
-    "$ROOT_WRAPPER" --version
-)
+( cd "$BREW_HOME"; "$ROOT_WRAPPER" --version )
 
 cat <<EOF_DONE
 
