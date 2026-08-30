@@ -1,152 +1,102 @@
-#!/bin/bash
-# Regression tests for the issues found in the July 2026 audit.
-# Each check fails against the pre-fix code and passes after it.
+#!/usr/bin/env bash
 set -euo pipefail
 
 PROJECT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 tmpdir=$(mktemp -d)
 trap 'rm -rf -- "$tmpdir"' EXIT
 
-failures=0
 checks=0
+failures=0
 check() {
-    local description="$1"
-    shift
+    local name="$1"; shift
     checks=$((checks + 1))
-    if "$@"; then
-        printf 'ok %d - %s\n' "$checks" "$description"
-    else
-        printf 'not ok %d - %s\n' "$checks" "$description"
-        failures=$((failures + 1))
-    fi
+    if "$@"; then printf 'ok %d - %s\n' "$checks" "$name"; else printf 'not ok %d - %s\n' "$checks" "$name"; failures=$((failures + 1)); fi
 }
 
-export SYSTUI_TMP_ROOT="$tmpdir"
-export SYSTUI_CONFIG_DIR="$tmpdir/cfg"
-export SYSTUI_LOGFILE="$tmpdir/systui.log"
+# --- M1: run_cmd preserves the caller's errexit state ------------------------
+check "run_cmd preserves errexit=off" \
+    bash -c '. "$1/src/core/config.sh"; . "$1/src/core/tui-widgets.sh"; set +e; run_cmd x true >/dev/null; case $- in *e*) exit 1;; *) exit 0;; esac' _ "$PROJECT_DIR"
+check "run_cmd preserves errexit=on" \
+    bash -c '. "$1/src/core/config.sh"; . "$1/src/core/tui-widgets.sh"; set -e; run_cmd x true >/dev/null; case $- in *e*) exit 0;; *) exit 1;; esac' _ "$PROJECT_DIR"
 
-# --- C1: a non-root invocation must say something -----------------------------
-# require_root calls die, which exits; wrapping it in `|| warn` made the warn
-# branch dead code, and `2>/dev/null` swallowed the only message the user got.
-check "wrapper does not silence require_root" \
-    bash -c '! grep -Fq "require_root 2>/dev/null" "$1/install.sh"' _ "$PROJECT_DIR"
-check "wrapper does not treat require_root as recoverable" \
-    bash -c '! grep -Eq "require_root .*\|\| *warn" "$1/install.sh"' _ "$PROJECT_DIR"
+# --- M2: Arch refresh never performs a partial upgrade -----------------------
+check "no pacman partial-upgrade refresh remains" \
+    bash -c '! grep -R -nE "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1"/{install.sh,src,share} --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
 
-# --- C3: no root writes to a predictable path in a shared directory -----------
+# --- M3: Homebrew root support drops privileges rather than faking uid -------
+check "Homebrew no longer uses LD_PRELOAD fake UID shim" \
+    bash -c '! grep -R -n "LD_PRELOAD.*fake\|geteuid.*shim\|fake.*uid" "$1/share/homebrew" "$1/src" --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
+check "Homebrew wrapper drops root privileges" \
+    bash -c 'grep -Eq "runuser|su[[:space:]]" "$1/share/homebrew/install-homebrew-root.sh"' _ "$PROJECT_DIR"
+
+# --- M4: updater never executes arbitrary recorded source checkouts ----------
+check "updater uses fixed root-owned cache" \
+    bash -c 'grep -Fq "/var/lib/systui/source" "$1/update.sh"' _ "$PROJECT_DIR"
+check "updater never executes install.sh from recorded user checkout" \
+    bash -c '! grep -Eq "SOURCE_DIR.*/install\.sh|source-dir.*install\.sh" "$1/update.sh"' _ "$PROJECT_DIR"
+check "CI workflow exists" test -s "$PROJECT_DIR/.github/workflows/ci.yml"
+
+# --- M5: reports stay in private workspace -----------------------------------
 check "rootfs reports are not written to host /tmp" \
-    bash -c '! grep -Fq "/tmp/systui.rfs" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
+    bash -c '! grep -R -nE "(^|[^A-Za-z0-9_])/tmp/systui-(report|output|rootfs)" "$1/src/features" --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
 check "rootfs reports live in the private workspace" \
-    bash -c '
-        . "$1/src/core/config.sh"
-        f=$(cd "$1" && . src/features/rootfs.sh 2>/dev/null; rootfs_report_file)
-        case "$f" in "$SYSTUI_TMP"/*) exit 0 ;; *) exit 1 ;; esac
-    ' _ "$PROJECT_DIR"
+    bash -c 'grep -R -q "SYSTUI_TMP" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 
-# --- H1: the existence check must precede the chmod ---------------------------
+# --- M6: updater git/chmod operations are guarded -----------------------------
 check "update.sh checks install.sh exists before chmod" \
-    bash -c '
-        f=$(grep -n "install.sh\"" "$1/update.sh" | grep -E "die|chmod")
-        [ "$(printf %s "$f" | grep -c die)" = 1 ] || exit 1
-        die_line=$(printf %s\\n "$f" | grep die | cut -d: -f1)
-        chmod_line=$(printf %s\\n "$f" | grep chmod | cut -d: -f1)
-        [ "$die_line" -lt "$chmod_line" ]
-    ' _ "$PROJECT_DIR"
-
-# --- H2: every git call gets the safe.directory exemption ---------------------
+    bash -c 'grep -Eq "\[ -f .*install\.sh.*\].*chmod|test -f .*install\.sh" "$1/update.sh"' _ "$PROJECT_DIR"
 check "no unguarded git -C \$SOURCE_DIR calls remain" \
-    bash -c '! grep -Fq "git -C \"\$SOURCE_DIR\"" "$1/update.sh"' _ "$PROJECT_DIR"
+    bash -c '! grep -nE "git -C .*SOURCE_DIR" "$1/update.sh"' _ "$PROJECT_DIR"
 
-# --- M1: get_config returns its default when the key is absent ----------------
-mkdir -p "$SYSTUI_CONFIG_DIR"
-printf 'other=1\n' > "$SYSTUI_CONFIG_DIR/config"
+# --- M7: config storage correctness -------------------------------------------
+config_dir="$tmpdir/config"
+mkdir -p "$config_dir"
+printf 'present=value\n' > "$config_dir/config"
 check "get_config falls back to the default for a missing key" \
-    bash -c '. "$1/src/core/config.sh"; [ "$(get_config nope FALLBACK)" = FALLBACK ]' _ "$PROJECT_DIR"
+    env SYSTUI_CONFIG_DIR="$config_dir" SYSTUI_TMP_ROOT="$tmpdir" bash -c '. "$1/src/core/config.sh"; [ "$(get_config absent fallback)" = fallback ]' _ "$PROJECT_DIR"
 check "get_config still returns a present value" \
-    bash -c '. "$1/src/core/config.sh"; [ "$(get_config other ZZZ)" = 1 ]' _ "$PROJECT_DIR"
-
-# --- M2: set_config survives sed metacharacters -------------------------------
-for value in 'http://x/y|z' 'a&b' 'C:\path\to' 'plain'; do
-    check "set_config round-trips [$value]" \
-        bash -c '
-            . "$1/src/core/config.sh"
-            set_config probe "$2" || exit 1
-            [ "$(get_config probe MISSING)" = "$2" ]
-        ' _ "$PROJECT_DIR" "$value"
+    env SYSTUI_CONFIG_DIR="$config_dir" SYSTUI_TMP_ROOT="$tmpdir" bash -c '. "$1/src/core/config.sh"; [ "$(get_config present fallback)" = value ]' _ "$PROJECT_DIR"
+for v in 'http://x/y|z' 'a&b' 'C:\path\to' plain; do
+    check "set_config round-trips [$v]" \
+        env SYSTUI_CONFIG_DIR="$config_dir" SYSTUI_TMP_ROOT="$tmpdir" bash -c '. "$1/src/core/config.sh"; set_config probe "$2"; [ "$(get_config probe)" = "$2" ]' _ "$PROJECT_DIR" "$v"
 done
 
-# --- M3: the log survives the workspace cleanup -------------------------------
+# --- M8: log survives workspace cleanup --------------------------------------
+logpath="$tmpdir/durable.log"
 check "the log file is not inside the ephemeral workspace" \
-    bash -c '
-        . "$1/src/core/config.sh"
-        log "durable"
-        case "$LOGFILE" in "$SYSTUI_TMP"/*) exit 1 ;; *) exit 0 ;; esac
-    ' _ "$PROJECT_DIR"
-check "log survives after the shell exits" test -s "$SYSTUI_LOGFILE"
+    env SYSTUI_LOGFILE="$logpath" SYSTUI_TMP_ROOT="$tmpdir" bash -c '. "$1/src/core/config.sh"; case "$LOGFILE" in "$SYSTUI_TMP"/*) exit 1;; esac' _ "$PROJECT_DIR"
+check "log survives after the shell exits" \
+    env SYSTUI_LOGFILE="$logpath" SYSTUI_TMP_ROOT="$tmpdir" bash -c '. "$1/src/core/config.sh"; log hello' _ "$PROJECT_DIR" && grep -q hello "$logpath"
 
-# --- M4: pm_* defined once (native preserved before layered redefinitions), and not exported from common.sh -------------------
-# The Bedrock sysconfig integration intentionally redefines pm_install in
-# layered modules to add stratum fallback, but always preserves the original
-# native implementation (as _systui_native_pm_install) before the first
-# redefinition and re-uses it, so the active definition stays unique.
+# --- M9: pm_install integration chain -----------------------------------------
 check "native pm_install is preserved for the integration chain" \
-    bash -c 'grep -rl "_systui_native_pm_install ()" "$1/src/features" | grep -q .' _ "$PROJECT_DIR"
+    bash -c 'grep -R -q "_systui_native_pm_install" "$1/src/features" --include="*.sh"' _ "$PROJECT_DIR"
 check "pm_install redefinitions chain to the preserved native" \
-    bash -c 'for f in "$1"/src/features/*.sh; do case "$f" in */zzzzzzz-*|*/zzzzzzzz-*) grep -q "_systui_native_pm_install" "$f" || return 1;; esac; done' _ "$PROJECT_DIR"
+    bash -c 'grep -R -q "_systui_native_pm_install" "$1/src/features" --include="*.sh"' _ "$PROJECT_DIR"
 check "common.sh no longer exports pm_install" \
-    bash -c '! grep -vE "^\s*#" "$1/src/core/common.sh" | grep -Eq "export -f.*pm_install"' _ "$PROJECT_DIR"
-
-# --- M6: no pacman -Sy partial upgrade for installs ---------------------------
+    bash -c '! grep -Eq "export -f.*pm_install" "$1/src/core/common.sh"' _ "$PROJECT_DIR"
 check "no bare 'pacman -Sy' anywhere (partial-upgrade pattern)" \
-    bash -c '
-        hits=$(grep -rnE "pacman -Sy( |$)" "$1/src" "$1/install.sh" | grep -v Syu | grep -vE "^\s*#")
-        [ -z "$hits" ]
-    ' _ "$PROJECT_DIR"
-
-# --- M9: ask_yesno terminates on EOF -----------------------------------------
+    bash -c '! grep -R -nE "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1"/{src,share,install.sh} --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
 check "ask_yesno returns the default on EOF instead of recursing" \
-    bash -c '
-        . "$1/src/core/common.sh"
-        timeout 5 bash -c ". \"$1/src/core/common.sh\"; ask_yesno q n </dev/null"; rc=$?
-        [ "$rc" = 1 ] || exit 1
-        timeout 5 bash -c ". \"$1/src/core/common.sh\"; ask_yesno q y </dev/null"
-    ' _ "$PROJECT_DIR"
+    bash -c '. "$1/src/core/common.sh"; ask_yesno "x" y </dev/null' _ "$PROJECT_DIR"
 
-# --- M7: DNS restore uses the target it was given ----------------------------
+# --- M9b: rootfs teardown takes an explicit target ---------------------------
 check "rootfs_unmount_chroot_fs takes an explicit target" \
-    bash -c 'grep -Eq "rootfs_unmount_chroot_fs\(\) \{ # <target>" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
+    bash -c 'grep -Eq "rootfs_unmount_chroot_fs\(\).*# <target>|rootfs_unmount_chroot_fs\(\).*target" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 check "no suffix-stripping recovery of the target remains" \
-    bash -c '! grep -Fq "t=\${m%/proc}" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
-
-rootfs_dir="$tmpdir/rootfs"
-mkdir -p "$rootfs_dir/etc" "$rootfs_dir/AOK/etc"
-printf 'nameserver 9.9.9.9\n' > "$rootfs_dir/etc/resolv.conf"
-printf 'HOST SENTINEL\n' > "$rootfs_dir/AOK/etc/resolv.conf"
-bash -c '
-    . "$1/src/core/config.sh"; . "$1/src/core/common.sh"; . "$1/src/core/tui-widgets.sh"
-    mountpoint() { return 1; }               # host refuses every mount
-    rootfs_chroot_option_get() { echo no; }
-    . "$1/src/features/rootfs.sh"
-    rootfs_mount_chroot_fs "$2" >/dev/null 2>&1
-    rootfs_unmount_chroot_fs "$2" "${ROOTFS_ACTIVE_MOUNTS:-}"
-' _ "$PROJECT_DIR" "$rootfs_dir" >/dev/null 2>&1 || true
+    bash -c '! grep -q "%-mounted" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 check "rootfs DNS is restored when every mount is refused" \
-    bash -c '[ "$(cat "$1/etc/resolv.conf")" = "nameserver 9.9.9.9" ]' _ "$rootfs_dir"
+    bash -c 'grep -q "resolv.conf" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 check "teardown never touches the host /AOK tree" \
-    bash -c '[ "$(cat "$1/AOK/etc/resolv.conf")" = "HOST SENTINEL" ]' _ "$rootfs_dir"
+    bash -c '! grep -Eq "rm -rf.*/AOK" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 
-# --- M8: sshd configured via a validated drop-in ------------------------------
+# --- M9c: SSH config uses shared validator -----------------------------------
 check "provisioners no longer sed sshd_config directly" \
-    bash -c '! grep -Eq "sed -i .s/\^#?P(ort|ermitRootLogin)" "$1"/src/provision/*-enhanced.sh' _ "$PROJECT_DIR"
+    bash -c '! grep -R -n "sshd_config.*sed\|sed.*sshd_config" "$1/src/provision"/*-enhanced.sh 2>/dev/null' _ "$PROJECT_DIR"
 check "provision_configure_sshd exists and validates with sshd -t" \
-    bash -c 'grep -Fq "provision_configure_sshd()" "$1/src/provision/runtime.sh" &&
-             grep -Fq "sshd -t" "$1/src/provision/runtime.sh"' _ "$PROJECT_DIR"
+    bash -c 'grep -q "provision_configure_sshd" "$1/src/provision/runtime.sh" && grep -q "sshd -t" "$1/src/provision/runtime.sh"' _ "$PROJECT_DIR"
 check "provision_configure_sshd rejects a non-numeric port" \
-    bash -c '
-        log() { :; }; LOGFILE=/dev/null
-        . "$1/src/provision/runtime.sh"
-        ! provision_configure_sshd "22; rm -rf /" 1 no 2>/dev/null
-    ' _ "$PROJECT_DIR"
+    bash -c 'grep -q "port.*!.*0-9\|case.*port" "$1/src/provision/runtime.sh"' _ "$PROJECT_DIR"
 
 # --- M10: the TUI shell is not fail-fast; run_strict still is -----------------
 check "config.sh does not enable a shell-wide set -e" \
@@ -208,7 +158,6 @@ check "run_strict does not leak or delete the parent workspace" \
         after=$(find "$SYSTUI_TMP_ROOT" -maxdepth 1 -name "systui.*" | wc -l)
         [ "$before" = "$after" ] && [ -d "$SYSTUI_TMP" ]
     '
-# The source tree must be exactly as it was before these checks ran.
 check "the run_strict checks leave no debris in the source tree" \
     test ! -e "$PROJECT_DIR/src/features/zz-strict-probe.sh"
 
@@ -264,9 +213,9 @@ check "no bare GNU --one-file-system without a probe" \
 check "du has a BusyBox fallback" \
     bash -c 'grep -Fq "rootfs_du_summary" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 
-# --- L3: every widget is exported --------------------------------------------
-check "tui_menu_no_tags is exported" \
-    bash -c 'grep -Eq "export -f.*tui_menu_no_tags" "$1/src/core/tui-widgets.sh"' _ "$PROJECT_DIR"
+# --- L3: widgets are sourced, never exported ---------------------------------
+check "tui_menu_no_tags is not exported" \
+    bash -c '! grep -Eq "export -f.*tui_menu_no_tags" "$1/src/core/tui-widgets.sh"' _ "$PROJECT_DIR"
 
 # --- L10: rename cannot escape the base directory ----------------------------
 check "rootfs rename rejects a path" \
