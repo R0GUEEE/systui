@@ -3,17 +3,19 @@
 # iSH-AOK — offline systemd service-manager compatibility
 ###############################################################################
 
-# iSH can execute systemd binaries but does not provide all kernel/runtime
-# facilities needed by a normal systemd manager. When systemctl reports
-# "offline", treat the system as a compatibility environment rather than a
-# fully usable systemd host.
-
+# Startup detection must never contact the systemd manager. On iSH-AOK a
+# systemctl/D-Bus request can block indefinitely before the first TUI frame.
+# Determine compatibility mode from platform/provider state only; live probing
+# is deferred to the dedicated Systemd Manager.
 sysconfig_ish_systemd_offline() {
     declare -F sysconfig_is_ish >/dev/null 2>&1 && sysconfig_is_ish || return 1
-    command -v systemctl >/dev/null 2>&1 || return 1
-    local state
-    state=$(systemctl is-system-running 2>/dev/null || true)
-    [ "$state" = offline ] || [ "$state" = unknown ] || [ -z "$state" ]
+    case "${SYSTUI_INIT_PROVIDER:-${INIT_PROVIDER:-${INIT:-}}}" in
+        systemd|ish-systemd-compat|systemd-offline) return 0 ;;
+    esac
+    local pid1 init_target
+    pid1=$(cat /proc/1/comm 2>/dev/null || true)
+    init_target=$(readlink -f /sbin/init 2>/dev/null || true)
+    [ "$pid1" = systemd ] || [[ "$init_target" == */systemd ]]
 }
 
 if declare -F detect_init >/dev/null 2>&1 && ! declare -F _systui_detect_init_before_ish_offline >/dev/null 2>&1; then
@@ -56,8 +58,6 @@ svc() { # <enable|disable|start|stop|restart|status> <service>
     script=$(sysconfig_ish_service_script "$s" 2>/dev/null || true)
     case "$action" in
         enable)
-            # `systemctl enable` only edits unit-file symlinks and works even
-            # when no manager is online. Prefer it for packaged systemd units.
             if sysconfig_ish_unit_exists "$s"; then
                 SYSTEMD_OFFLINE=1 systemctl enable "$s" 2>/dev/null && return 0
             fi
@@ -114,8 +114,6 @@ sysconfig_ish_service_inventory() {
     tui_text "Services — iSH-AOK compatibility" "$SYSTUI_TMP/init-list"
 }
 
-# Override the generic listing function so Services > Manage remains useful in
-# compatibility mode instead of falling into the unknown-init branch.
 if declare -F sysconfig_init_service_list >/dev/null 2>&1 && ! declare -F _systui_init_service_list_before_ish_offline >/dev/null 2>&1; then
     eval "$(declare -f sysconfig_init_service_list | sed '1s/^sysconfig_init_service_list[[:space:]]*()/_systui_init_service_list_before_ish_offline ()/')"
 fi
@@ -127,7 +125,6 @@ sysconfig_init_service_list() {
     fi
 }
 
-# Replace the status summary with explicit manager capability information.
 if declare -F sysconfig_init_summary >/dev/null 2>&1 && ! declare -F _systui_init_summary_before_ish_offline >/dev/null 2>&1; then
     eval "$(declare -f sysconfig_init_summary | sed '1s/^sysconfig_init_summary[[:space:]]*()/_systui_init_summary_before_ish_offline ()/')"
 fi
@@ -146,17 +143,13 @@ sysconfig_init_summary() {
         echo "Runtime mode  : init-script compatibility"
         echo "Unit files    : systemctl offline enable/disable supported"
         echo
-        echo "Real systemd is installed, but its manager is not usable as a normal"
-        echo "Linux system manager in this iSH-AOK environment. Systui therefore"
-        echo "uses init scripts for runtime service control and systemd only for"
-        echo "offline unit-file configuration."
+        echo "Real systemd is installed, but its live manager is probed only on demand."
+        echo "Startup detection remains filesystem/PID based so a wedged D-Bus cannot"
+        echo "prevent Systui from opening."
     } > "$SYSTUI_TMP/init-summary"
     tui_text "Init system" "$SYSTUI_TMP/init-summary"
 }
 
-# The advanced systemd menu should not imply runtime operations work while the
-# manager is offline. Keep safe unit-file inspection and enable/disable in the
-# main service utility; block manager-only controls with a precise message.
 if declare -F sysconfig_systemd_usable >/dev/null 2>&1 && ! declare -F _systui_systemd_usable_before_ish_offline >/dev/null 2>&1; then
     eval "$(declare -f sysconfig_systemd_usable | sed '1s/^sysconfig_systemd_usable[[:space:]]*()/_systui_systemd_usable_before_ish_offline ()/')"
 fi
@@ -167,3 +160,4 @@ sysconfig_systemd_usable() {
 
 # Do not export these functions. iSH has a small ARG_MAX and exported Bash
 # function bodies can make child execs fail with "Argument list too long".
+return 0 2>/dev/null || true
