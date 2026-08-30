@@ -42,7 +42,7 @@ systui_bedrock_stratum_has_cmd() { # <stratum> <command>
 }
 
 systui_bedrock_stratum_pm() { # <stratum>
-    local st="$1" row rst rpm class cfg pm
+    local st="$1" rst rpm class cfg pm
     # Prefer the capability scanner's system-manager classification.
     if declare -F bedrock_systui_capability_rows >/dev/null 2>&1; then
         while IFS='|' read -r rst rpm class cfg; do
@@ -84,8 +84,7 @@ systui_bedrock_pkg_name() { # <pm> <canonical>
     case "$pm:$canonical" in
         apt:go) printf 'golang-go\n' ;;
         apt:node) printf 'nodejs\n' ;;
-        apt:pip) printf 'python3-pip\n' ;;
-        apt:pip3) printf 'python3-pip\n' ;;
+        apt:pip|apt:pip3) printf 'python3-pip\n' ;;
         apt:gem) printf 'ruby\n' ;;
         apt:docker) printf 'docker.io\n' ;;
         apt:snap) printf 'snapd\n' ;;
@@ -208,10 +207,10 @@ systui_bedrock_wrap_install_menu() { # <function>
 # current and future shell/editor/tool/package-manager installers without a
 # manually-maintained list. Rootfs and Bedrock installation workflows are
 # explicitly excluded because their target is structural, not a package root.
-while read -r _ _systui_install_fn; do
+while read -r _ _flag _systui_install_fn; do
     case "$_systui_install_fn" in menu_*_install) systui_bedrock_wrap_install_menu "$_systui_install_fn" ;; esac
 done < <(declare -F)
-unset _systui_install_fn
+unset _flag _systui_install_fn
 
 # The multi-package-manager installer is not named menu_*_install. Give it the
 # same host/stratum target behavior while retaining its native host workflow.
