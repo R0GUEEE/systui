@@ -1,27 +1,66 @@
 # shellcheck shell=bash
 # PHASE 67 — direct Systui resolver for Bedrock-AOK LXC-backed strata.
 #
-# Avoids fragile upstream resolver/update-urls pipelines (including SIGPIPE 141)
-# by resolving LinuxContainers image URLs directly. Once resolved, use brl's
-# fetch-url command so Bedrock's extraction/integrity code is retained without
-# re-entering its broken lookup_url()/resolve_url() path.
+# This module is deliberately self-contained. It does not depend on private
+# shell functions inside the external brl executable.
 
 bedrock_aok_host_arch() {
     local a
-    a=$(uname -m 2>/dev/null || printf 'aarch64\n')
+    a=$(uname -m 2>/dev/null || true)
     case "$a" in
         aarch64|arm64) printf 'arm64\n' ;;
         x86_64|amd64) printf 'amd64\n' ;;
         riscv64) printf 'riscv64\n' ;;
-        *) printf 'arm64\n' ;;
+        armv7l|armhf) printf 'armhf\n' ;;
+        *) return 1 ;;
     esac
+}
+
+# Systui-owned copy of the upstream Bedrock-AOK catalog. Keeping the mapping in
+# this process avoids the former test-only dependency on `catalog_recipe`, which
+# normally exists only inside /bedrock/bin/brl.
+bedrock_aok_catalog_recipe() { # <stratum>
+    case "$1" in
+        alpine)      printf 'lxc:alpine:edge\n' ;;
+        debian)      printf 'lxc:debian:bookworm\n' ;;
+        ubuntu)      printf 'lxc:ubuntu:noble\n' ;;
+        devuan)      printf 'lxc:devuan:daedalus\n' ;;
+        kali)        printf 'lxc:kali:current\n' ;;
+        parrot)      printf 'fixed:https://raw.githubusercontent.com/EXALAB/AnLinux-Resources/master/Rootfs/Parrot/arm64/parrot-rootfs-arm64.tar.xz\n' ;;
+        fedora)      printf 'lxc:fedora:44\n' ;;
+        rockylinux)  printf 'lxc:rockylinux:9\n' ;;
+        almalinux)   printf 'lxc:almalinux:9\n' ;;
+        oracle)      printf 'lxc:oracle:9\n' ;;
+        centos)      printf 'lxc:centos:9-Stream\n' ;;
+        openeuler)   printf 'lxc:openeuler:24.03\n' ;;
+        opensuse)    printf 'lxc:opensuse:tumbleweed\n' ;;
+        archlinux)   printf 'lxc:archlinux:current\n' ;;
+        arch)        printf 'fixed:http://os.archlinuxarm.org/os/ArchLinuxARM-aarch64-latest.tar.gz\n' ;;
+        void)        printf 'lxc:voidlinux:current\n' ;;
+        gentoo)      printf 'disc:gentoo\n' ;;
+        amazonlinux) printf 'lxc:amazonlinux:2023\n' ;;
+        openwrt)     printf 'lxc:openwrt:24.10\n' ;;
+        alt)         printf 'lxc:alt:Sisyphus\n' ;;
+        busybox)     printf 'disc:busybox\n' ;;
+        chimera)     printf 'disc:chimera\n' ;;
+        apertis)     printf 'lxc:apertis:v2024\n' ;;
+        springdale)  printf 'lxc:springdalelinux:9\n' ;;
+        funtoo)      printf 'lxc:funtoo:current\n' ;;
+        slackware)   printf 'lxc:slackware:current\n' ;;
+        mageia)      printf 'lxc:mageia:9\n' ;;
+        nixos)       printf 'lxc:nixos:unstable\n' ;;
+        manjaro)     printf 'lxc:manjaro:current\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+bedrock_aok_catalog_names() {
+    printf '%s\n' alpine debian ubuntu devuan kali parrot fedora rockylinux almalinux oracle centos openeuler opensuse archlinux arch void gentoo amazonlinux openwrt alt busybox chimera apertis springdale funtoo slackware mageia nixos manjaro
 }
 
 bedrock_aok_http_text() { # <url>
     local url="$1"
     if command -v curl >/dev/null 2>&1; then
-        # Do not force IPv4 here. iSH/AOK networking varies by host build; let
-        # curl select the working address family and follow redirects itself.
         curl -LfsS --connect-timeout 10 --max-time 90 "$url"
     elif command -v wget >/dev/null 2>&1; then
         wget -qO- -T 90 "$url"
@@ -31,9 +70,8 @@ bedrock_aok_http_text() { # <url>
 }
 
 bedrock_aok_lxc_recipe() { # <stratum> -> distro|release
-    local tag="$1" recipe rest
-    declare -F catalog_recipe >/dev/null 2>&1 || return 1
-    recipe=$(catalog_recipe "$tag" 2>/dev/null || true)
+    local recipe rest
+    recipe=$(bedrock_aok_catalog_recipe "$1" 2>/dev/null || true)
     case "$recipe" in
         lxc:*)
             rest=${recipe#lxc:}
@@ -53,16 +91,11 @@ bedrock_aok_lxc_newest_build() { # <base-dir-url>
                 href=${line#*href=}
                 href=${href#\"}; href=${href#\'}
                 href=${href%%\"*}; href=${href%%\'*}
+                href=${href%/}
                 case "$href" in
-                    ../|'') continue ;;
-                    */)
-                        href=${href%/}
-                        case "$href" in
-                            [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_*)
-                                [ -z "$newest" ] || [[ "$href" > "$newest" ]] || continue
-                                newest="$href"
-                                ;;
-                        esac
+                    [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]_[0-9][0-9]:[0-9][0-9])
+                        [ -z "$newest" ] || [[ "$href" > "$newest" ]] || continue
+                        newest="$href"
                         ;;
                 esac
                 ;;
@@ -97,7 +130,7 @@ bedrock_aok_resolve_lxc_direct() { # <stratum>
     pair=$(bedrock_aok_lxc_recipe "$tag" 2>/dev/null || true)
     [ -n "$pair" ] || return 1
     distro=${pair%%|*}; release=${pair#*|}
-    arch=$(bedrock_aok_host_arch)
+    arch=$(bedrock_aok_host_arch) || return 1
 
     for frontend in \
         https://images.linuxcontainers.org/images \
@@ -135,22 +168,22 @@ bedrock_aok_refresh_urls_resilient() {
     bedrock_aok_require || return 1
     brl=$(bedrock_aok_brl) || return 1
 
-    if declare -F catalog_names >/dev/null 2>&1; then
-        for tag in $(catalog_names); do
-            if bedrock_aok_lxc_recipe "$tag" >/dev/null 2>&1; then
-                url=$(bedrock_aok_refresh_one_url "$tag" 2>/dev/null || true)
-                if [ -n "$url" ]; then
-                    ok=$((ok + 1))
-                else
-                    fail=$((fail + 1))
-                fi
-            fi
-        done
-    fi
-
-    # Best-effort only for non-LXC recipes; never let SIGPIPE 141 determine the
-    # outcome of the Systui resolver.
+    # Upstream refresh first. It may fail with SIGPIPE 141, and it may write
+    # unresolved entries; Systui's verified LXC results are written afterward
+    # so upstream cannot overwrite them.
     "$brl" update-urls >/dev/null 2>&1 || true
+
+    while IFS= read -r tag; do
+        [ -n "$tag" ] || continue
+        bedrock_aok_lxc_recipe "$tag" >/dev/null 2>&1 || continue
+        url=$(bedrock_aok_refresh_one_url "$tag" 2>/dev/null || true)
+        if [ -n "$url" ]; then
+            ok=$((ok + 1))
+        else
+            fail=$((fail + 1))
+        fi
+    done <<< "$(bedrock_aok_catalog_names)"
+
     log "bedrock-aok: direct URL refresh complete (ok=$ok fail=$fail)"
     [ "$ok" -gt 0 ]
 }
@@ -160,13 +193,10 @@ bedrock_aok_fetch_stratum_resilient() { # <stratum>
     bedrock_aok_require || return 1
     brl=$(bedrock_aok_brl) || return 1
 
-    # Existing Bedrock resolver remains the cheapest fast path.
     if run_cmd "Fetching Bedrock-AOK stratum: $tag" "$brl" fetch "$tag"; then
         return 0
     fi
 
-    # Critical fix: once Systui has a URL, do NOT call `brl fetch` again.
-    # `brl fetch` re-enters lookup_url(), the path which failed for NixOS.
     url=$(bedrock_aok_resolve_lxc_direct "$tag" 2>/dev/null || true)
     if [ -n "$url" ]; then
         bedrock_aok_cache_set_url "$tag" "$url" || true
