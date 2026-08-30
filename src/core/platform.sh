@@ -86,10 +86,33 @@ systui_detect_distro() {
     export DISTRO DISTRO_ID_LIKE DISTRO_VERSION DISTRO_PRETTY_NAME
 }
 
+# Live manager probe. This is bounded so a wedged D-Bus/systemd connection can
+# never freeze the TUI. On platforms without timeout, use a short background
+# watchdog instead of an unbounded systemctl call.
 systui_systemd_state() {
     command -v systemctl >/dev/null 2>&1 || { printf 'absent\n'; return 1; }
-    local s
-    s=$(systemctl is-system-running 2>/dev/null || true)
+    local s='' probe_timeout=${SYSTUI_SYSTEMD_PROBE_TIMEOUT:-2}
+    case "$probe_timeout" in ''|*[!0-9]*) probe_timeout=2 ;; esac
+    if command -v timeout >/dev/null 2>&1; then
+        s=$(timeout "$probe_timeout" systemctl is-system-running 2>/dev/null || true)
+    else
+        local out="$SYSTUI_TMP/systemd-state.$$" pid i=0
+        : > "$out" 2>/dev/null || out="/tmp/systui-systemd-state.$$"
+        (systemctl is-system-running >"$out" 2>/dev/null || true) &
+        pid=$!
+        while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$probe_timeout" ]; do
+            sleep 1
+            i=$((i + 1))
+        done
+        if kill -0 "$pid" 2>/dev/null; then
+            kill "$pid" 2>/dev/null || true
+            wait "$pid" 2>/dev/null || true
+        else
+            wait "$pid" 2>/dev/null || true
+            s=$(cat "$out" 2>/dev/null || true)
+        fi
+        rm -f -- "$out" 2>/dev/null || true
+    fi
     [ -n "$s" ] || s=unknown
     printf '%s\n' "$s"
 }
@@ -137,24 +160,28 @@ systui_capability_summary() {
 }
 
 systui_detect_init() {
-    local pid1 init_target sd_state
+    local pid1 init_target sd_state='unknown'
     pid1=$(systui_pid1_name)
     init_target=$(readlink -f /sbin/init 2>/dev/null || true)
-    sd_state=$(systui_systemd_state 2>/dev/null || true)
 
     SYSTUI_ENVIRONMENT=$(systui_runtime_profile)
-    SYSTUI_SYSTEMD_STATE=${sd_state:-absent}
     SYSTUI_INIT_PROVIDER=''
     SYSTUI_SERVICE_RUNTIME=''
 
     if [ "$pid1" = systemd ] || [ -d /run/systemd/system ] || [[ "$init_target" == */systemd ]]; then
         SYSTUI_INIT_PROVIDER=systemd
-        if systui_systemd_online; then
-            INIT=systemd; SYSTUI_SERVICE_RUNTIME=systemd
-        elif systui_is_ish; then
-            INIT=ish-systemd-compat; SYSTUI_SERVICE_RUNTIME=init-script
+        # iSH startup must never block on systemctl/D-Bus. The live manager is
+        # probed on demand when Systemd Manager is opened.
+        if systui_is_ish; then
+            INIT=ish-systemd-compat
+            SYSTUI_SERVICE_RUNTIME=init-script
+            sd_state=offline
         else
-            INIT=systemd-offline; SYSTUI_SERVICE_RUNTIME=offline
+            sd_state=$(systui_systemd_state 2>/dev/null || true)
+            case "$sd_state" in
+                running|degraded|starting|maintenance) INIT=systemd; SYSTUI_SERVICE_RUNTIME=systemd ;;
+                *) INIT=systemd-offline; SYSTUI_SERVICE_RUNTIME=offline ;;
+            esac
         fi
     elif [ "$pid1" = runit ] || [[ "$init_target" == *runit* ]] || { command -v sv >/dev/null 2>&1 && { [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ]; }; }; then
         INIT=runit; SYSTUI_INIT_PROVIDER=runit; SYSTUI_SERVICE_RUNTIME=runit
@@ -164,8 +191,10 @@ systui_detect_init() {
         INIT=sysvinit; SYSTUI_INIT_PROVIDER=sysvinit; SYSTUI_SERVICE_RUNTIME=sysvinit
     else
         INIT=''; SYSTUI_INIT_PROVIDER=unknown; SYSTUI_SERVICE_RUNTIME=none
+        sd_state=absent
     fi
 
+    SYSTUI_SYSTEMD_STATE=${sd_state:-unknown}
     export INIT SYSTUI_ENVIRONMENT SYSTUI_SYSTEMD_STATE SYSTUI_INIT_PROVIDER SYSTUI_SERVICE_RUNTIME
 }
 
