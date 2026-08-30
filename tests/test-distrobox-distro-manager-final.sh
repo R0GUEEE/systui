@@ -34,7 +34,7 @@ chmod +x "$tmp/bin/distrobox"
 rootfs_dm_package(){ :; }
 rootfs_dm_installed_names(){ :; }
 rootfs_dm_install(){ :; }
-rootfs_dm_capture(){ command distrobox "$@"; }
+rootfs_dm_capture(){ shift; command distrobox "$@"; }
 tui_msg(){ :; }
 tui_yesno(){ return 1; }
 pm_install(){ :; }
