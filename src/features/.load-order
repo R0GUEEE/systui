@@ -1,3 +1,4 @@
+00-platform-bootstrap.sh
 health.sh
 rootfs.sh
 sysconfig.sh
