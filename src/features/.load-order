@@ -67,6 +67,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ish-systemd-offline-ma
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.sh
 50-sysconfig-repository-input.sh
 60-rootfs-docker-image-normalization.sh
+65-bedrock-aok-safe-update.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
