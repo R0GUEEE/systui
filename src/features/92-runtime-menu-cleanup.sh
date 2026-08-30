@@ -3,8 +3,6 @@
 # Consolidates late Bedrock integrations without removing compatibility helpers
 # that older feature layers may still call directly.
 
-SYSTUI_RUNTIME_CLEANUP_SCHEMA=1
-
 # The phase-85 host+Bedrock front door was superseded by phase 86. Keeping the
 # helper defined serves no runtime purpose and makes introspection report a
 # second package front door, so remove only that obsolete private entry point.
@@ -100,7 +98,7 @@ bedrock_systui_package_managers_menu() {
 # Multi-select already expresses consent to install the selected managers. Use
 # one confirmation for the whole batch instead of another yes/no per manager.
 systui_bedrock_stratum_multi_pm_install() { # <stratum>
-    local st="$1" selected tag cmd label pm pkg summary=''
+    local st="$1" selected tag label pm pkg summary=''
     local -a opts=() packages=()
 
     pm=$(systui_bedrock_stratum_pm "$st" 2>/dev/null || true)
@@ -109,7 +107,7 @@ systui_bedrock_stratum_multi_pm_install() { # <stratum>
         return 1
     }
 
-    while IFS='|' read -r tag cmd label; do
+    while IFS='|' read -r tag _ label; do
         [ -n "$tag" ] || continue
         pkg=$(systui_bedrock_pkg_name "$pm" "$tag" 2>/dev/null || true)
         [ -n "$pkg" ] || continue
