@@ -17,6 +17,7 @@ zzzzzzzz-bedrock-sysconfig-unified.sh
 zzzzzzzzz-bedrock-sysconfig-latest.sh
 zzzzzzzzzz-bedrock-strata-pm-menu.sh
 zzzzzzzzzzz-bedrock-bootstrap-detection.sh
+64-bedrock-aok-compatibility.sh
 zzzzzzzzzzzz-package-install-recovery.sh
 zzzzzzzzzzzzz-package-manager-multiselect.sh
 zzzzzzzzzzzzzz-multi-install-optimizer.sh
