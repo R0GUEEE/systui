@@ -36,9 +36,9 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-ubuntu-gnu-coreutils.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-systemd-osc-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-systemd-kernel-filter.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-runit-ubuntu-compat.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-readiness-repair.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-init-reinstall.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-init-manager.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-readiness-repair.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-init-reinstall.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-init-manager.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-bootstrap-recovery.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ultimate-provision-startup-fix.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-mmdebstrap-ish-exec.sh
@@ -56,3 +56,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-manage-integ
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-runtime-command.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-function-export-cleanup.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-install-execution-guard.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-systemd-init-config.sh
