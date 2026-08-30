@@ -4,14 +4,77 @@
 BEDROCK_AOK_CONFIG=/bedrock/etc/bedrock.conf
 BEDROCK_AOK_CONFIG_COMPAT=/bedrock/etc/brl
 
+bedrock_aok_config_init_provider() {
+    if declare -F systui_detect_init >/dev/null 2>&1; then
+        systui_detect_init >/dev/null 2>&1 || true
+    elif declare -F detect_init >/dev/null 2>&1; then
+        detect_init >/dev/null 2>&1 || true
+    fi
+    case "${SYSTUI_INIT_PROVIDER:-${INIT:-}}" in
+        systemd|ish-systemd-compat|systemd-offline) printf 'systemd\n' ;;
+        openrc) printf 'openrc\n' ;;
+        runit) printf 'runit\n' ;;
+        sysvinit) printf 'sysvinit\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+bedrock_aok_config_editor() {
+    local editor=${EDITOR:-}
+    if [ -n "$editor" ] && command -v "${editor%% *}" >/dev/null 2>&1; then
+        printf '%s\n' "$editor"
+    elif command -v nano >/dev/null 2>&1; then
+        printf 'nano\n'
+    elif command -v vi >/dev/null 2>&1; then
+        printf 'vi\n'
+    elif command -v vim >/dev/null 2>&1; then
+        printf 'vim\n'
+    else
+        return 1
+    fi
+}
+
+bedrock_aok_config_compat_state() {
+    if [ -L "$BEDROCK_AOK_CONFIG_COMPAT" ]; then
+        [ "$(readlink "$BEDROCK_AOK_CONFIG_COMPAT" 2>/dev/null || true)" = bedrock.conf ] && printf 'linked\n' || printf 'wrong-link\n'
+    elif [ -e "$BEDROCK_AOK_CONFIG_COMPAT" ]; then
+        printf 'regular-file\n'
+    else
+        printf 'missing\n'
+    fi
+}
+
+bedrock_aok_config_repair_compat() {
+    local state backup
+    mkdir -p /bedrock/etc || return 1
+    state=$(bedrock_aok_config_compat_state)
+    case "$state" in
+        linked) return 0 ;;
+        missing|wrong-link)
+            rm -f "$BEDROCK_AOK_CONFIG_COMPAT" 2>/dev/null || true
+            [ -e "$BEDROCK_AOK_CONFIG" ] || bedrock_aok_generate_config || return 1
+            ln -s bedrock.conf "$BEDROCK_AOK_CONFIG_COMPAT"
+            ;;
+        regular-file)
+            if [ ! -e "$BEDROCK_AOK_CONFIG" ]; then
+                mv "$BEDROCK_AOK_CONFIG_COMPAT" "$BEDROCK_AOK_CONFIG" || return 1
+            else
+                backup="${BEDROCK_AOK_CONFIG_COMPAT}.legacy.$(date +%Y%m%d%H%M%S)"
+                mv "$BEDROCK_AOK_CONFIG_COMPAT" "$backup" || return 1
+                log "bedrock-aok: preserved legacy /bedrock/etc/brl as $backup"
+            fi
+            ln -s bedrock.conf "$BEDROCK_AOK_CONFIG_COMPAT"
+            ;;
+    esac
+}
+
 bedrock_aok_generate_config() {
     local arch manager
     bedrock_aok_require || return 1
     mkdir -p /bedrock/etc || return 1
-    arch=$(uname -m 2>/dev/null || printf 'aarch64\n')
+    arch=$(uname -m 2>/dev/null || printf 'unknown\n')
     case "$arch" in aarch64|arm64) arch=aarch64 ;; x86_64|amd64) arch=x86_64 ;; esac
-    manager=systemd
-    case "${INIT:-}" in openrc) manager=openrc ;; runit) manager=runit ;; sysvinit) manager=sysvinit ;; esac
+    manager=$(bedrock_aok_config_init_provider)
 
     if [ -e "$BEDROCK_AOK_CONFIG" ]; then
         tui_msg "Bedrock config" "$BEDROCK_AOK_CONFIG already exists. Nothing was overwritten."
@@ -42,11 +105,7 @@ EOF
         tui_msg "Bedrock config generated" "Created $BEDROCK_AOK_CONFIG."
     fi
 
-    # Compatibility path requested by Systui users. Upstream brl itself reads
-    # /bedrock/etc/bedrock.conf; /bedrock/etc/brl points at the canonical file.
-    if [ ! -e "$BEDROCK_AOK_CONFIG_COMPAT" ] && [ ! -L "$BEDROCK_AOK_CONFIG_COMPAT" ]; then
-        ln -s bedrock.conf "$BEDROCK_AOK_CONFIG_COMPAT" 2>/dev/null || true
-    fi
+    bedrock_aok_config_repair_compat || true
 }
 
 bedrock_aok_config_view() {
@@ -60,9 +119,12 @@ bedrock_aok_config_view() {
 }
 
 bedrock_aok_config_edit() {
+    local editor
     bedrock_aok_require || return 1
     [ -e "$BEDROCK_AOK_CONFIG" ] || bedrock_aok_generate_config || return 1
-    "${EDITOR:-nano}" "$BEDROCK_AOK_CONFIG"
+    editor=$(bedrock_aok_config_editor) || { tui_msg "Editor missing" "Install nano, vi, or vim, or set EDITOR."; return 1; }
+    # shellcheck disable=SC2086
+    $editor "$BEDROCK_AOK_CONFIG"
 }
 
 bedrock_aok_config_get_key() {
@@ -84,34 +146,27 @@ bedrock_aok_config_set_key() {
 }
 
 bedrock_aok_config_menu() {
-    local c state
+    local c state compat
     bedrock_aok_require || return 0
     while true; do
         if [ -r "$BEDROCK_AOK_CONFIG" ]; then state=present; else state=missing; fi
+        compat=$(bedrock_aok_config_compat_state)
         c=$(tui_menu "Bedrock-AOK configuration  [$state]" \
-            "Canonical: $BEDROCK_AOK_CONFIG\nCompatibility: $BEDROCK_AOK_CONFIG_COMPAT" \
+            "Canonical: $BEDROCK_AOK_CONFIG\nCompatibility: $BEDROCK_AOK_CONFIG_COMPAT [$compat]" \
             generate "Generate config if missing" \
+            repair "Repair/migrate /bedrock/etc/brl compatibility path" \
             view "View configuration" \
             edit "Edit configuration" \
             get "Read one config key" \
             set "Set one config key" \
-            compat "Create /bedrock/etc/brl compatibility link" \
             back "Back") || return 0
         case "$c" in
             generate) bedrock_aok_generate_config ;;
+            repair) bedrock_aok_config_repair_compat && tui_msg "Bedrock config" "Compatibility path repaired." ;;
             view) bedrock_aok_config_view ;;
             edit) bedrock_aok_config_edit ;;
             get) bedrock_aok_config_get_key ;;
             set) bedrock_aok_config_set_key ;;
-            compat)
-                mkdir -p /bedrock/etc || continue
-                if [ -e "$BEDROCK_AOK_CONFIG_COMPAT" ] || [ -L "$BEDROCK_AOK_CONFIG_COMPAT" ]; then
-                    tui_msg "Bedrock compatibility config" "$BEDROCK_AOK_CONFIG_COMPAT already exists."
-                else
-                    [ -e "$BEDROCK_AOK_CONFIG" ] || bedrock_aok_generate_config || continue
-                    ln -s bedrock.conf "$BEDROCK_AOK_CONFIG_COMPAT" && tui_msg "Bedrock compatibility config" "Created $BEDROCK_AOK_CONFIG_COMPAT -> bedrock.conf"
-                fi
-                ;;
             back|"") return 0 ;;
         esac
     done
