@@ -87,6 +87,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 81-bedrock-additional-distro-sources.sh
 82-bedrock-web-source-discovery.sh
 83-bedrock-oci-fallback-sources.sh
+84-bedrock-nixos-direct-source.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
