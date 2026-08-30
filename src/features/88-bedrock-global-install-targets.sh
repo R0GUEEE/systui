@@ -42,10 +42,9 @@ systui_bedrock_stratum_has_cmd() { # <stratum> <command>
 }
 
 systui_bedrock_stratum_pm() { # <stratum>
-    local st="$1" rst rpm class cfg pm
-    # Prefer the capability scanner's system-manager classification.
+    local st="$1" rst rpm class pm
     if declare -F bedrock_systui_capability_rows >/dev/null 2>&1; then
-        while IFS='|' read -r rst rpm class cfg; do
+        while IFS='|' read -r rst rpm class _; do
             [ "$rst" = "$st" ] || continue
             [ "$class" = system ] || continue
             case "$rpm" in apt|apk|pacman|dnf|yum|zypper|xbps|emerge|opkg|nix)
@@ -203,17 +202,11 @@ systui_bedrock_wrap_install_menu() { # <function>
     eval "$fn() { local _target; if ! systui_bedrock_install_active; then $saved \"\$@\"; return; fi; _target=\$(systui_bedrock_install_target_menu '$canonical') || return 0; case \"\$_target\" in host|'') $saved \"\$@\" ;; stratum:*) systui_bedrock_install_canonical \"\${_target#stratum:}\" '$canonical' ;; esac; }"
 }
 
-# Wrap every loaded software menu_<thing>_install entry point.  This catches
-# current and future shell/editor/tool/package-manager installers without a
-# manually-maintained list. Rootfs and Bedrock installation workflows are
-# explicitly excluded because their target is structural, not a package root.
 while read -r _ _flag _systui_install_fn; do
     case "$_systui_install_fn" in menu_*_install) systui_bedrock_wrap_install_menu "$_systui_install_fn" ;; esac
 done < <(declare -F)
 unset _flag _systui_install_fn
 
-# The multi-package-manager installer is not named menu_*_install. Give it the
-# same host/stratum target behavior while retaining its native host workflow.
 if declare -F sysconfig_pm_multi_install >/dev/null 2>&1 \
     && ! declare -F _systui_bedrock_target_original_sysconfig_pm_multi_install >/dev/null 2>&1; then
     eval "$(declare -f sysconfig_pm_multi_install | sed '1s/^sysconfig_pm_multi_install[[:space:]]*()/_systui_bedrock_target_original_sysconfig_pm_multi_install ()/')"
