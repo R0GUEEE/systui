@@ -62,6 +62,7 @@ bedrock_aok_compat_probe_seccomp() {
 }
 
 bedrock_aok_compat_probe_cgroup() {
+    local f
     [ -r /proc/self/cgroup ] || return 1
     grep -q ':' /proc/self/cgroup 2>/dev/null || return 1
     if [ -r /sys/fs/cgroup/cgroup.controllers ]; then
@@ -69,7 +70,13 @@ bedrock_aok_compat_probe_cgroup() {
         return 0
     fi
     [ -d /sys/fs/cgroup ] || return 1
-    find /sys/fs/cgroup -maxdepth 2 -name tasks -writable -print -quit 2>/dev/null | grep -q .
+    # BusyBox find does not consistently support GNU's -writable predicate.
+    # Probe the small, conventional v1 task-file depth with shell tests instead.
+    for f in /sys/fs/cgroup/tasks /sys/fs/cgroup/*/tasks /sys/fs/cgroup/*/*/tasks; do
+        [ -e "$f" ] || continue
+        [ -w "$f" ] && return 0
+    done
+    return 1
 }
 
 bedrock_aok_compat_enable_userns() {
