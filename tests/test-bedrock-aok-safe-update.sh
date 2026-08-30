@@ -28,8 +28,10 @@ printf '#!/bin/sh\necho ok\n' > "$valid"
 printf '#!/bin/sh\ncase x in x) echo bad ;; ;; esac\n' > "$broken"
 chmod +x "$valid" "$broken"
 
+rejects_broken() { ! bedrock_aok_validate_script "$broken"; }
+
 check "validator accepts valid shell" bedrock_aok_validate_script "$valid"
-check "validator rejects malformed shell" bash -c '! bedrock_aok_validate_script "$1"' _ "$broken"
+check "validator rejects malformed shell" rejects_broken
 
 installed="$tmp/brl"
 printf '#!/bin/sh\ncase x in x) echo bad ;; ;; esac\n' > "$installed"
