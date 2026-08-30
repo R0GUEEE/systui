@@ -100,4 +100,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 94-universal-software-catalogue.sh
 95-software-catalogue-registry-final.sh
 96-menu-consolidation-final.sh
+97-software-catalogue-collections-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
