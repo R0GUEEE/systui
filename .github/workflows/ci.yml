@@ -42,6 +42,7 @@ jobs:
             install.sh update.sh \
             src/core/*.sh \
             src/rootfs/*.sh \
+            src/sysconfig/*.sh \
             src/features/00-platform-bootstrap.sh \
             src/features/20-rootfs-foundation.sh \
             src/features/21-rootfs-backends.sh \
@@ -72,16 +73,17 @@ jobs:
             src/rootfs/metadata.sh
             src/rootfs/filesystem.sh
             src/rootfs/backends.sh
+            src/sysconfig/repositories.sh
           )
           if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
-            echo 'Modern core/rootfs modules must not export Bash functions.' >&2
+            echo 'Modern core/rootfs/sysconfig modules must not export Bash functions.' >&2
             exit 1
           fi
           if grep -nE -- '--(menu|radiolist|checklist|textbox|msgbox|yesno|inputbox|passwordbox|gauge)[^#]*[[:space:]][0-9]+[[:space:]][0-9]+' src/core/tui-widgets.sh; then
             echo 'TUI widgets must use responsive geometry rather than fixed dimensions.' >&2
             exit 1
           fi
-          if grep -nE 'declare -f .*\|[[:space:]]*(sed|awk)' src/core/*.sh src/rootfs/*.sh src/features/[0-9][0-9]-*.sh; then
+          if grep -nE 'declare -f .*\|[[:space:]]*(sed|awk)' src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh src/features/[0-9][0-9]-*.sh; then
             echo 'Modern modules must preserve functions with Bash builtins, not external declare-f pipelines.' >&2
             exit 1
           fi
@@ -129,6 +131,7 @@ jobs:
             bash -n src/rootfs/metadata.sh
             bash -n src/rootfs/filesystem.sh
             bash -n src/rootfs/backends.sh
+            bash -n src/sysconfig/repositories.sh
             bash tests/test-core-polish.sh
             bash tests/test-package-map-data.sh
             bash tests/test-rootfs-filesystem-module.sh
