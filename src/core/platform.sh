@@ -33,16 +33,72 @@ systui_systemd_online() {
     return 1
 }
 
+systui_runtime_profile() {
+    if systui_is_ish; then printf 'ish-aok\n'
+    elif [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then printf 'wsl\n'
+    elif systui_is_container; then printf 'container\n'
+    elif [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then printf 'proot\n'
+    else printf 'native-linux\n'
+    fi
+}
+
+# Capability checks are deliberately conservative. A capability should only be
+# reported when Systui can reasonably attempt the operation on this runtime.
+systui_capability() { # <name>
+    local cap="${1:-}" profile
+    profile=$(systui_runtime_profile)
+    case "$cap" in
+        chroot)
+            command -v chroot >/dev/null 2>&1
+            ;;
+        mount)
+            command -v mount >/dev/null 2>&1 && [ "$profile" != proot ]
+            ;;
+        namespaces)
+            [ "$profile" != ish-aok ] && [ "$profile" != proot ] && command -v unshare >/dev/null 2>&1
+            ;;
+        proc)
+            [ -d /proc ] && [ -r /proc/1/stat ]
+            ;;
+        sysfs)
+            [ -d /sys ] && [ -r /sys/kernel/uevent_seqnum -o -d /sys/devices ]
+            ;;
+        systemd-runtime)
+            systui_systemd_online
+            ;;
+        fuse)
+            grep -qw fuse /proc/filesystems 2>/dev/null || [ -c /dev/fuse ]
+            ;;
+        binfmt)
+            [ -d /proc/sys/fs/binfmt_misc ]
+            ;;
+        qemu)
+            command -v qemu-aarch64-static >/dev/null 2>&1 || command -v qemu-x86_64-static >/dev/null 2>&1 || command -v qemu-arm-static >/dev/null 2>&1
+            ;;
+        netlink)
+            [ "$profile" != ish-aok ] && command -v ip >/dev/null 2>&1
+            ;;
+        argmax-constrained)
+            [ "$profile" = ish-aok ]
+            ;;
+        *) return 2 ;;
+    esac
+}
+
+systui_capability_summary() {
+    local cap
+    for cap in chroot mount namespaces proc sysfs systemd-runtime fuse binfmt qemu netlink argmax-constrained; do
+        if systui_capability "$cap"; then printf '%-20s yes\n' "$cap"; else printf '%-20s no\n' "$cap"; fi
+    done
+}
+
 systui_detect_init() {
     local pid1 init_target sd_state
     pid1=$(systui_pid1_name)
     init_target=$(readlink -f /sbin/init 2>/dev/null || true)
     sd_state=$(systui_systemd_state 2>/dev/null || true)
 
-    SYSTUI_ENVIRONMENT=normal
-    systui_is_ish && SYSTUI_ENVIRONMENT=ish-aok
-    if [ "$SYSTUI_ENVIRONMENT" = normal ] && systui_is_container; then SYSTUI_ENVIRONMENT=container; fi
-
+    SYSTUI_ENVIRONMENT=$(systui_runtime_profile)
     SYSTUI_SYSTEMD_STATE=${sd_state:-absent}
     SYSTUI_INIT_PROVIDER=''
     SYSTUI_SERVICE_RUNTIME=''
@@ -84,6 +140,12 @@ systui_rootfs_init_detect() {
         esac
     fi
 
+    if [ -r "$t/etc/systui/rootfs.conf" ]; then
+        while IFS='=' read -r _k _v; do
+            [ "$_k" = init ] || continue
+            case "$_v" in systemd|runit|openrc|sysvinit) printf '%s\n' "$_v"; return 0;; esac
+        done < "$t/etc/systui/rootfs.conf"
+    fi
     if [ -r "$t/etc/systui/init-selection.conf" ]; then
         selected=$(sed -n 's/^init=//p' "$t/etc/systui/init-selection.conf" | head -n1)
         case "$selected" in systemd|runit|openrc|sysvinit) printf '%s\n' "$selected"; return 0;; esac
