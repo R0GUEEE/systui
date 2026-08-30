@@ -178,8 +178,6 @@ menu_services_provider() { # <provider>
     done
 }
 
-# Final Services front door. Every supported init implementation gets a direct
-# management entry, independent of which provider currently owns PID 1.
 menu_services() {
     local c current label
     while true; do
@@ -212,9 +210,6 @@ menu_services() {
     done
 }
 
-# Selecting systemd for a rootfs always installs the iSH-aware compatibility
-# launcher. That launcher executes the real systemd binary on normal Linux, so
-# this does not degrade native/systemd hosts.
 rootfs_wb_init_wire() { # <target> <init>
     local t="$1" init="$2" link tmp
     mkdir -p "$t/sbin" || return 1
@@ -230,7 +225,8 @@ rootfs_wb_init_wire() { # <target> <init>
 }
 
 rootfs_wb_init_commit_metadata() { # <target> <new> <old>
-    local t="$1" new="$2" old="$3" runtime="$new"
+    local t="$1" new="$2" old="$3"
+    local runtime="$new"
     mkdir -p "$t/etc/systui" || return 1
     printf 'init=%s\nprevious=%s\n' "$new" "$old" > "$t/etc/systui/init-selection.conf" || return 1
     [ "$new" = systemd ] && runtime=ish-systemd-compat
@@ -241,9 +237,6 @@ rootfs_wb_init_commit_metadata() { # <target> <new> <old>
     fi
 }
 
-# Current-root state marker: whenever systemd is the selected provider, expose
-# that Systui is operating in auto compatibility mode. Live systemd is still
-# preferred when PID 1 is a usable systemd manager.
 sysconfig_refresh_init_state() {
     if declare -F systui_detect_init >/dev/null 2>&1; then systui_detect_init >/dev/null 2>&1 || true
     elif declare -F detect_init >/dev/null 2>&1; then detect_init >/dev/null 2>&1 || true
