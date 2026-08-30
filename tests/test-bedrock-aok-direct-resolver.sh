@@ -10,14 +10,17 @@ bedrock_aok_brl(){ printf '/tmp/fake-brl\n'; }
 bedrock_aok_cache_set_url(){ printf '%s %s\n' "$1" "$2" > "$TMPDIR/cache"; }
 bedrock_aok_cached_url(){ awk -v t="$1" '$1==t{$1=""; sub(/^ /,""); print; exit}' "$TMPDIR/cache" 2>/dev/null; }
 bedrock_aok_mirror_candidates(){ :; }
-catalog_recipe(){ [ "$1" = nixos ] && printf 'lxc:nixos:unstable\n'; }
-catalog_names(){ printf 'nixos\n'; }
 
 TMPDIR=$(mktemp -d); export TMPDIR
 trap 'rm -rf "$TMPDIR"' EXIT
 
 # shellcheck source=../src/features/67-bedrock-aok-direct-resolver.sh
 . "$ROOT/src/features/67-bedrock-aok-direct-resolver.sh"
+
+# The production resolver must own this mapping; no catalog_recipe test stub.
+[ "$(bedrock_aok_catalog_recipe nixos)" = 'lxc:nixos:unstable' ]
+[ "$(bedrock_aok_lxc_recipe nixos)" = 'nixos|unstable' ]
+printf 'ok - direct resolver owns the NixOS recipe\n'
 
 bedrock_aok_host_arch(){ printf 'arm64\n'; }
 bedrock_aok_http_text(){
@@ -39,9 +42,6 @@ refreshed=$(bedrock_aok_refresh_one_url nixos)
 grep -q "^nixos $expected$" "$TMPDIR/cache"
 printf 'ok - direct NixOS LXC resolver selects newest arm64 rootfs\n'
 
-# First normal `brl fetch` fails because its internal lookup_url resolver is
-# broken. The Systui path must then invoke `brl fetch-url nixos <resolved-url>`
-# directly rather than re-entering `brl fetch nixos`.
 : > "$TMPDIR/calls"
 run_cmd(){
     local desc="$1"; shift
