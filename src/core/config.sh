@@ -54,9 +54,6 @@ systui_pick_logfile() {
     for candidate in "${SYSTUI_LOGFILE:-}" /var/log/systui.log "$HOME/.local/state/systui.log"; do
         [ -n "$candidate" ] || continue
         mkdir -p "$(dirname "$candidate")" 2>/dev/null || continue
-        # The redirection must be inside the group: bash applies redirections
-        # left to right, so `: >> "$c" 2>/dev/null` still prints the "Permission
-        # denied" for the >> before the 2>/dev/null takes effect.
         if { : >> "$candidate"; } 2>/dev/null; then
             printf '%s\n' "$candidate"
             return 0
@@ -68,7 +65,6 @@ LOGFILE=$(systui_pick_logfile)
 WARNFILE="$SYSTUI_TMP/systui.warnings"
 chmod 0640 "$LOGFILE" 2>/dev/null || true
 log_rotate_if_large() {
-    # Keep one previous generation; the log is append-only across runs now.
     local max=$((5 * 1024 * 1024)) size
     size=$(wc -c < "$LOGFILE" 2>/dev/null || echo 0)
     [ "${size:-0}" -gt "$max" ] && mv -f "$LOGFILE" "$LOGFILE.1" 2>/dev/null && : > "$LOGFILE"
@@ -97,7 +93,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 export RED GREEN YELLOW BLUE CYAN NC
 
 ###############################################################################
@@ -120,27 +116,9 @@ die() {
 }
 
 ###############################################################################
-# STRICT EXECUTION (opt-in)
+# STRICT EXECUTION (legacy bootstrap; replaced by src/core/strict-exec.sh)
 ###############################################################################
 
-# run_strict <description> <function> [args...]
-#
-# Runs one routine with fail-fast semantics, so an unexpected failure aborts
-# that routine instead of continuing to configure a half-broken system -- and
-# without tearing down the TUI around it. Provisioning and rootfs build
-# routines use this; menu and widget code must not.
-#
-# This deliberately uses a child *process* rather than a subshell. Bash
-# suppresses `set -e` for the entire dynamic extent of any command that is part
-# of a `&&` or `||` list, and that suppression propagates through subshells and
-# command substitutions. So with a subshell implementation, a caller writing
-#
-#     provision_debian || tui_msg "Failed" "..."
-#
-# would silently get no fail-fast at all: the routine would run to completion
-# past its first error. A separate process does not inherit the suppression.
-#
-# Returns the routine's exit status; 1 if it tripped the ERR trap.
 run_strict() {
     local desc="$1" fn="$2"; shift 2
     if ! declare -F "$fn" >/dev/null; then
@@ -157,11 +135,6 @@ run_strict() {
         . "$SYSTUI_LIBDIR/src/core/config.sh"
         . "$SYSTUI_LIBDIR/src/core/tui-widgets.sh"
         . "$SYSTUI_LIBDIR/src/core/common.sh"
-        # Features only -- the same set the generated wrapper loads. Files under
-        # src/provision are NOT sourced here: provision-ultimate.sh is a
-        # standalone script that runs (and exits) at source time. The provision
-        # routines reach the child through `export -f` instead, which is why
-        # those files export themselves.
         _manifest="$SYSTUI_LIBDIR/src/features/.load-order"
         [ -r "$_manifest" ] || { echo "systui: missing feature load manifest" >&2; exit 1; }
         while IFS= read -r _rel || [ -n "$_rel" ]; do
@@ -181,57 +154,34 @@ run_strict() {
 ###############################################################################
 
 detect_pm() {
-    # Detect package manager
-    if command -v apt-get >/dev/null 2>&1; then
-        PM="apt"
-    elif command -v apk >/dev/null 2>&1; then
-        PM="apk"
-    elif command -v pacman >/dev/null 2>&1; then
-        PM="pacman"
-    elif command -v dnf >/dev/null 2>&1; then
-        PM="dnf"
-    elif command -v zypper >/dev/null 2>&1; then
-        PM="zypper"
-    elif command -v yum >/dev/null 2>&1; then
-        PM="yum"
-    elif command -v xbps-install >/dev/null 2>&1; then
-        PM="xbps"
-    elif command -v emerge >/dev/null 2>&1; then
-        PM="emerge"
-    else
-        PM=""
-    fi
+    if command -v apt-get >/dev/null 2>&1; then PM="apt"
+    elif command -v apk >/dev/null 2>&1; then PM="apk"
+    elif command -v pacman >/dev/null 2>&1; then PM="pacman"
+    elif command -v dnf >/dev/null 2>&1; then PM="dnf"
+    elif command -v zypper >/dev/null 2>&1; then PM="zypper"
+    elif command -v yum >/dev/null 2>&1; then PM="yum"
+    elif command -v xbps-install >/dev/null 2>&1; then PM="xbps"
+    elif command -v emerge >/dev/null 2>&1; then PM="emerge"
+    else PM=""; fi
     export PM
     log "Detected package manager: $PM"
 }
 
 detect_init() {
-    # Detect init system
-    if [ -d /run/systemd/system ]; then
-        INIT="systemd"
-    elif command -v rc-service >/dev/null 2>&1; then
-        INIT="openrc"
-    elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
-        INIT="sysvinit"
-    elif command -v sv >/dev/null 2>&1 && { [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ]; }; then
-        # `runit` itself is PID 1 and normally not on PATH; the service tool is
-        # `sv`, paired with one of the standard service directories.
-        INIT="runit"
-    else
-        INIT=""
-    fi
+    if [ -d /run/systemd/system ]; then INIT="systemd"
+    elif command -v rc-service >/dev/null 2>&1; then INIT="openrc"
+    elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then INIT="sysvinit"
+    elif command -v sv >/dev/null 2>&1 && { [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ]; }; then INIT="runit"
+    else INIT=""; fi
     export INIT
     log "Detected init system: $INIT"
 }
 
 detect_distro() {
-    # Detect Linux distribution without leaking variables from os-release.
     local os_release="" id="" id_like="" version_id="" pretty_name=""
 
-    if [ -r /etc/os-release ]; then
-        os_release=/etc/os-release
-    elif [ -r /usr/lib/os-release ]; then
-        os_release=/usr/lib/os-release
+    if [ -r /etc/os-release ]; then os_release=/etc/os-release
+    elif [ -r /usr/lib/os-release ]; then os_release=/usr/lib/os-release
     fi
 
     if [ -n "$os_release" ]; then
@@ -241,7 +191,6 @@ detect_distro() {
         pretty_name=$(sed -n 's/^PRETTY_NAME=//p' "$os_release" | head -n1 | sed 's/^"//;s/"$//')
     fi
 
-    # Fallbacks for stripped-down root filesystems lacking os-release.
     if [ -z "$id" ]; then
         if [ -r /etc/devuan_version ]; then id=devuan
         elif [ -r /etc/debian_version ]; then id=debian
@@ -259,74 +208,37 @@ detect_distro() {
     DISTRO_VERSION="${version_id:-unknown}"
     DISTRO_PRETTY_NAME="${pretty_name:-$id}"
     export DISTRO DISTRO_ID_LIKE DISTRO_VERSION DISTRO_PRETTY_NAME
-    log "Detected distro: $DISTRO_PRETTY_NAME (id=$DISTRO, like=${DISTRO_ID_LIKE:-none}, version=$DISTRO_VERSION)"
-}
-
-require_root() {
-    if [ "$(id -u)" -ne 0 ]; then
-        die "systui must run as root (rootfs builds and system config need it).\nTry: sudo $0"
-    fi
+    log "Detected distro: $DISTRO ($DISTRO_PRETTY_NAME), version=$DISTRO_VERSION, like=$DISTRO_ID_LIKE"
 }
 
 ###############################################################################
-# UTILITY FUNCTIONS
+# CONFIG STORAGE
 ###############################################################################
 
-show_warnings() {
-    if [ -s "$WARNFILE" ]; then
-        local text=""
-        while IFS= read -r w; do text+="* $w\n"; done < "$WARNFILE"
-        # Simple text display (for non-TUI environments)
-        echo -e "${YELLOW}Warnings:${NC}\n$text" >&2
-        : > "$WARNFILE"
-    fi
-}
-
-# Configuration lives in one place regardless of how root was obtained. Using
-# a bare ~ is ambiguous under sudo: whether HOME is reset to /root or kept as
-# the invoking user's home depends on the distribution's sudoers policy, so the
-# same install would read and write two different files.
 systui_config_dir() {
-    if [ -n "${SYSTUI_CONFIG_DIR:-}" ]; then
-        printf '%s\n' "$SYSTUI_CONFIG_DIR"
-    elif [ "$(id -u)" -eq 0 ]; then
-        printf '%s\n' /etc/systui
-    else
-        printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/systui"
-    fi
+    if [ "$(id -u)" -eq 0 ]; then printf '/etc/systui\n'; else printf '%s/.config/systui\n' "$HOME"; fi
 }
 
-systui_config_file() {
-    printf '%s/config\n' "$(systui_config_dir)"
-}
+systui_config_file() { printf '%s/config\n' "$(systui_config_dir)"; }
 
 get_config() {
-    local key="$1" default="${2:-}" file value
+    local key="$1" default="${2:-}" file line
     file=$(systui_config_file)
-    [ -f "$file" ] || { printf '%s\n' "$default"; return 0; }
-    # `grep ... | cut ...` cannot report "key absent": grep exits 1 but cut
-    # exits 0 with empty output, so the pipeline succeeds and a trailing
-    # `|| echo "$default"` never fires. Test the captured value instead.
-    value=$(grep -m1 "^$key=" "$file" 2>/dev/null) || value=""
-    if [ -z "$value" ]; then
-        printf '%s\n' "$default"
-    else
-        printf '%s\n' "${value#*=}"
-    fi
+    [ -r "$file" ] || { printf '%s\n' "$default"; return; }
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in "$key="*) printf '%s\n' "${line#*=}"; return;; esac
+    done < "$file"
+    printf '%s\n' "$default"
 }
 
 set_config() {
-    local key="$1" value="$2" file dir tmp
+    local key="$1" value="$2" dir file tmp
+    case "$key" in ''|*[!A-Za-z0-9_.-]*) return 2;; esac
+    [ "$value" != *$'\n'* ] && [ "$value" != *$'\r'* ] || return 2
     dir=$(systui_config_dir); file="$dir/config"
     mkdir -p "$dir" || return 1
     [ -f "$file" ] || : > "$file"
-    # Rewritten with awk rather than `sed s|...|$value|`: an unescaped value
-    # containing | & or \ either breaks the expression outright or silently
-    # expands (& is "the whole match" in a sed replacement).
     tmp=$(mktemp "$dir/.config.XXXXXX") || return 1
-    # Passed through the environment rather than -v: awk applies backslash
-    # escape processing to -v assignments, so -v val='a\c' would silently
-    # become 'ac'. ENVIRON[] is taken literally.
     SYSTUI_CFG_KEY="$key" SYSTUI_CFG_VAL="$value" awk '
         BEGIN { key = ENVIRON["SYSTUI_CFG_KEY"]; val = ENVIRON["SYSTUI_CFG_VAL"]; done = 0 }
         index($0, key "=") == 1 { if (!done) { print key "=" val; done = 1 } ; next }
@@ -337,4 +249,5 @@ set_config() {
     mv -f "$tmp" "$file"
 }
 
-export -f log warn die get_config set_config systui_config_dir systui_config_file run_strict
+# Core functions are sourced where needed. Do not export Bash function bodies:
+# serialized BASH_FUNC_* entries are a major ARG_MAX failure source on iSH-AOK.
