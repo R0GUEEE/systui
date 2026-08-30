@@ -14,7 +14,7 @@ grep -Fq 'managers   "Package managers (native, Flatpak, Snap, language)"' "$F"
 
 # Native package sections must remain at the Package Configuration front door.
 for tag in packages catalogue repos managers advanced; do
-    grep -Eq "^[[:space:]]*$tag[[:space:]]" "$F"
+    grep -Eq "^[[:space:]]*${tag}[[:space:]]" "$F"
 done
 
 # The old Bedrock-centric front-door title must not be reintroduced here.
