@@ -18,7 +18,7 @@ sysconfig_pm_bedrock_strata_for_cmd() { # <command>
 }
 
 sysconfig_pm_native_status() { # <tag> <command>
-    local tag="$1" cmd="$2" host strata base
+    local tag="$1" cmd="$2" host strata
     if command -v "$cmd" >/dev/null 2>&1; then
         host='installed'
     elif sysconfig_pm_multi_package "$tag" >/dev/null 2>&1; then
