@@ -8,7 +8,9 @@ set -Eeuo pipefail
 
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr}"
 STATE_DIR="${SYSTUI_STATE_DIR:-/etc/systui}"
-CACHE_DIR="${SYSTUI_UPDATE_CACHE:-/var/lib/systui/source}"
+# Security boundary: the update checkout is always owned/selected by systui.
+# Do not accept a caller-controlled recursive-deletion path through environment.
+CACHE_DIR="/var/lib/systui/source"
 LIB_DIR="$INSTALL_PREFIX/lib/systui"
 REPO_URL="https://github.com/R0GUEEE/systui.git"
 BRANCH="main"
@@ -26,6 +28,9 @@ Options:
 Every update is a clean replacement from:
   $REPO_URL
   branch: $BRANCH
+
+Update checkout:
+  $CACHE_DIR (fixed, root-owned)
 USAGE
 }
 
@@ -56,13 +61,12 @@ canonical_parent_child() { # <path>
 
 safe_remove_cache() {
     local p="$1"
+    [ "$p" = /var/lib/systui/source ] || die "Refusing unexpected update cache path: $p"
     [ ! -e "$p" ] && return 0
     [ -d "$p" ] || die "Refusing to replace non-directory update cache: $p"
-    # Never recursively remove an arbitrary caller-selected directory. An
-    # existing cache must either carry our marker or be the default checkout
-    # with the expected Git remote.
+    # An existing checkout must prove it is ours before recursive deletion.
     if [ -f "$p/.systui-update-cache" ]; then :
-    elif [ "$p" = /var/lib/systui/source ] && git -C "$p" remote get-url origin 2>/dev/null | grep -qxF "$REPO_URL"; then :
+    elif git -C "$p" remote get-url origin 2>/dev/null | grep -qxF "$REPO_URL"; then :
     else
         die "Refusing to recursively remove untrusted update cache: $p"
     fi
@@ -82,15 +86,16 @@ if [ "$(id -u)" -ne 0 ]; then
     args=("$0")
     [ "$NO_DEPS" -eq 1 ] && args+=(--no-deps)
     command -v sudo >/dev/null 2>&1 || die "Run this script as root."
-    # Deliberately do not preserve arbitrary update/deletion paths through sudo.
     exec sudo "${args[@]}"
 fi
 
 CACHE_DIR=$(canonical_parent_child "$CACHE_DIR") || die "Unsafe update cache path."
+[ "$CACHE_DIR" = /var/lib/systui/source ] || die "Update cache escaped fixed path."
 LIB_DIR=$(canonical_parent_child "$LIB_DIR") || die "Unsafe install prefix/library path."
 STATE_DIR=$(canonical_parent_child "$STATE_DIR") || die "Unsafe state directory path."
 
 mkdir -p -- "$STATE_DIR" "$(dirname -- "$CACHE_DIR")"
+chown root:root "$(dirname -- "$CACHE_DIR")" "$STATE_DIR" 2>/dev/null || true
 chmod 0755 "$STATE_DIR" "$(dirname -- "$CACHE_DIR")" 2>/dev/null || true
 
 info "Replacing update checkout with a fresh GitHub main clone..."
