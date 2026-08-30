@@ -18,6 +18,74 @@ systui_is_container() {
 
 systui_pid1_name() { cat /proc/1/comm 2>/dev/null || printf 'unknown\n'; }
 
+systui_detect_pm() {
+    if command -v apt-get >/dev/null 2>&1; then PM=apt
+    elif command -v apk >/dev/null 2>&1; then PM=apk
+    elif command -v pacman >/dev/null 2>&1; then PM=pacman
+    elif command -v dnf >/dev/null 2>&1; then PM=dnf
+    elif command -v zypper >/dev/null 2>&1; then PM=zypper
+    elif command -v yum >/dev/null 2>&1; then PM=yum
+    elif command -v xbps-install >/dev/null 2>&1; then PM=xbps
+    elif command -v emerge >/dev/null 2>&1; then PM=emerge
+    else PM=''; fi
+    export PM
+}
+
+systui_os_release_value() { # <KEY> [file]
+    local wanted="$1" file="${2:-}" line key value
+    if [ -z "$file" ]; then
+        if [ -r /etc/os-release ]; then file=/etc/os-release
+        elif [ -r /usr/lib/os-release ]; then file=/usr/lib/os-release
+        else return 1; fi
+    fi
+    while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in ''|'#'*) continue;; esac
+        key=${line%%=*}
+        [ "$key" = "$wanted" ] || continue
+        value=${line#*=}
+        case "$value" in
+            \"*\") value=${value#\"}; value=${value%\"} ;;
+            \'*\') value=${value#\'}; value=${value%\'} ;;
+        esac
+        printf '%s\n' "$value"
+        return 0
+    done < "$file"
+    return 1
+}
+
+systui_detect_distro() {
+    local file='' id='' id_like='' version_id='' pretty_name=''
+    if [ -r /etc/os-release ]; then file=/etc/os-release
+    elif [ -r /usr/lib/os-release ]; then file=/usr/lib/os-release
+    fi
+
+    if [ -n "$file" ]; then
+        id=$(systui_os_release_value ID "$file" 2>/dev/null || true)
+        id_like=$(systui_os_release_value ID_LIKE "$file" 2>/dev/null || true)
+        version_id=$(systui_os_release_value VERSION_ID "$file" 2>/dev/null || true)
+        pretty_name=$(systui_os_release_value PRETTY_NAME "$file" 2>/dev/null || true)
+        id=${id,,}
+        id_like=${id_like,,}
+    fi
+
+    if [ -z "$id" ]; then
+        if [ -r /etc/devuan_version ]; then id=devuan
+        elif [ -r /etc/debian_version ]; then id=debian
+        elif [ -r /etc/alpine-release ]; then id=alpine
+        elif [ -r /etc/arch-release ]; then id=archlinux
+        elif [ -r /etc/fedora-release ]; then id=fedora
+        elif [ -r /etc/gentoo-release ]; then id=gentoo
+        elif command -v xbps-install >/dev/null 2>&1; then id=void
+        else id=unknown; fi
+    fi
+
+    DISTRO="$id"
+    DISTRO_ID_LIKE="$id_like"
+    DISTRO_VERSION="${version_id:-unknown}"
+    DISTRO_PRETTY_NAME="${pretty_name:-$id}"
+    export DISTRO DISTRO_ID_LIKE DISTRO_VERSION DISTRO_PRETTY_NAME
+}
+
 systui_systemd_state() {
     command -v systemctl >/dev/null 2>&1 || { printf 'absent\n'; return 1; }
     local s
