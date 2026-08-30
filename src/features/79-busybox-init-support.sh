@@ -24,7 +24,7 @@ systui_busybox_pid1() {
 }
 
 systui_detect_init() {
-    _systui_detect_init_before_busybox "$@" 2>/dev/null || true
+    _systui_detect_init_before_busybox 2>/dev/null || true
     if systui_busybox_pid1; then
         INIT=busybox
         SYSTUI_INIT_PROVIDER=busybox
