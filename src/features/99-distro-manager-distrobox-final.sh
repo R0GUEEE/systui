@@ -40,6 +40,14 @@ rootfs_dm_package() {
     _systui_rootfs_dm_package_before_distrobox_final "$@"
 }
 
+rootfs_dm_distrobox_host_supported() {
+    if declare -F sysconfig_is_ish >/dev/null 2>&1 && sysconfig_is_ish; then
+        return 1
+    fi
+    case "$(uname -r 2>/dev/null)" in *-ish*|*ish_aok*) return 1 ;; esac
+    return 0
+}
+
 rootfs_dm_distrobox_engine() {
     local e
     for e in podman docker lilipod; do
@@ -58,6 +66,12 @@ rootfs_dm_distrobox_engine_package() {
 
 rootfs_dm_distrobox_ensure_engine() {
     local engine pkg
+    if ! rootfs_dm_distrobox_host_supported; then
+        tui_msg "Distrobox unavailable" \
+"This host does not provide the container runtime/kernel features Distrobox requires.\n\nDistrobox needs Podman, Docker or Lilipod and their Linux namespace/mount support. iSH-AOK cannot provide that runtime, so installing the Distrobox frontend here would still leave create/enter unusable."
+        return 1
+    fi
+
     engine=$(rootfs_dm_distrobox_engine 2>/dev/null || true)
     [ -n "$engine" ] && return 0
 
@@ -136,16 +150,21 @@ rootfs_dm_install() {
         return $?
     fi
 
+    if ! rootfs_dm_distrobox_host_supported; then
+        rootfs_dm_distrobox_ensure_engine
+        return 0
+    fi
     _systui_rootfs_dm_install_before_distrobox_final distrobox || return $?
     rootfs_dm_distrobox_ensure_engine || true
 }
 
 rootfs_dm_menu_distrobox() {
-    local c d engine
+    local c d engine host_state
     while true; do
+        if rootfs_dm_distrobox_host_supported; then host_state='supported'; else host_state='unsupported'; fi
         engine=$(rootfs_dm_distrobox_engine 2>/dev/null || printf 'missing')
         c=$(tui_menu_no_tags "$(rootfs_dm_label distrobox)" \
-            "Container engine: $engine. Distrobox requires Podman, Docker or Lilipod." \
+            "Host: $host_state | container engine: $engine" \
             install   "Install or update Distrobox" \
             engine    "Check/install container engine" \
             browse    "Browse/select/create compatible Distroboxes" \
