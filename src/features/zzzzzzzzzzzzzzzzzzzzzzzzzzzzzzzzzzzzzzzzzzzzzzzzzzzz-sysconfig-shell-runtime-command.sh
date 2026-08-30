@@ -165,8 +165,15 @@ menu_shell_runtime_commands() {
     done
 }
 
+# Preserve the previous implementation without spawning sed/awk/etc. Bash's
+# own parameter substitution is critical here: on iSH-AOK, exported function
+# state can already approach execve ARG_MAX before the final cleanup feature is
+# sourced, so even a tiny external sed can fail with E2BIG during startup.
 if declare -F menu_shell_hierarchy >/dev/null 2>&1 && ! declare -F _systui_base_menu_shell_hierarchy_runtime >/dev/null 2>&1; then
-    eval "$(declare -f menu_shell_hierarchy | sed '1s/^menu_shell_hierarchy[[:space:]]*()/_systui_base_menu_shell_hierarchy_runtime ()/')"
+    _systui_runtime_fn_def=$(declare -f menu_shell_hierarchy)
+    _systui_runtime_fn_def=${_systui_runtime_fn_def/#menu_shell_hierarchy ()/_systui_base_menu_shell_hierarchy_runtime ()}
+    eval "$_systui_runtime_fn_def"
+    unset _systui_runtime_fn_def
 fi
 
 menu_shell_hierarchy() {
