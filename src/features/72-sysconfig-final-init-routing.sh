@@ -1,64 +1,94 @@
 # shellcheck shell=bash
 # PHASE 72 — final init-manager routing and iSH systemd config compatibility.
 
-# Treat the iSH compatibility runtime as a systemd provider for configuration
-# paths. Runtime control may be offline, but unit files are still systemd files.
+sysconfig_refresh_init_state() {
+    if declare -F systui_detect_init >/dev/null 2>&1; then
+        systui_detect_init >/dev/null 2>&1 || true
+    elif declare -F detect_init >/dev/null 2>&1; then
+        detect_init >/dev/null 2>&1 || true
+    fi
+}
+
+# Treat all centralized systemd provider states as systemd configuration paths.
 sysconfig_service_config_path() { # <service>
-    local s="$1"
-    case "${INIT:-}" in
-        systemd|ish-systemd-compat)
+    local s="$1" provider
+    sysconfig_refresh_init_state
+    provider=${SYSTUI_INIT_PROVIDER:-${INIT_PROVIDER:-${INIT:-}}}
+    case "$provider" in
+        systemd|ish-systemd-compat|systemd-offline)
             case "$s" in *.service) ;; *) s="$s.service" ;; esac
-            if [ -f "/etc/systemd/system/$s" ]; then printf '%s\n' "/etc/systemd/system/$s"
-            elif [ -f "/usr/local/lib/systemd/system/$s" ]; then printf '%s\n' "/usr/local/lib/systemd/system/$s"
-            elif [ -f "/usr/lib/systemd/system/$s" ]; then printf '%s\n' "/usr/lib/systemd/system/$s"
-            elif [ -f "/lib/systemd/system/$s" ]; then printf '%s\n' "/lib/systemd/system/$s"
-            else printf '%s\n' "/etc/systemd/system/$s.d/override.conf"; fi
+            # Never edit package-owned unit files for ordinary configuration.
+            # Existing /etc units are user-owned; packaged units get a drop-in.
+            if [ -f "/etc/systemd/system/$s" ]; then
+                printf '%s\n' "/etc/systemd/system/$s"
+            else
+                printf '%s\n' "/etc/systemd/system/$s.d/override.conf"
+            fi
             ;;
         openrc) printf '%s\n' "/etc/conf.d/${s%.service}" ;;
         runit)
             s=${s%.service}
             if [ -d "/etc/sv/$s" ]; then printf '%s\n' "/etc/sv/$s/run"
             elif [ -d "/etc/runit/sv/$s" ]; then printf '%s\n' "/etc/runit/sv/$s/run"
-            else printf '%s\n' "/etc/sv/$s/run"; fi
+            else return 1; fi
             ;;
-        sysvinit) printf '%s\n' "/etc/init.d/${s%.service}" ;;
+        sysvinit)
+            s=${s%.service}
+            if [ -f "/etc/default/$s" ]; then printf '%s\n' "/etc/default/$s"
+            elif [ -f "/etc/sysconfig/$s" ]; then printf '%s\n' "/etc/sysconfig/$s"
+            elif [ -f "/etc/init.d/$s" ]; then printf '%s\n' "/etc/init.d/$s"
+            else return 1; fi
+            ;;
         *) return 1 ;;
     esac
 }
 
 sysconfig_systemd_provider_present() {
-    case "${INIT:-}" in systemd|ish-systemd-compat) return 0 ;; esac
-    command -v systemctl >/dev/null 2>&1 || return 1
-    [ "$(cat /proc/1/comm 2>/dev/null || true)" = systemd ] || [ -x /usr/lib/systemd/systemd ] || [ -x /lib/systemd/systemd ]
+    sysconfig_refresh_init_state
+    [ "${SYSTUI_INIT_PROVIDER:-${INIT_PROVIDER:-}}" = systemd ]
 }
 
-# This is intentionally the final definition. The systemd entry is shown when
-# systemd is the provider even if systemctl reports "offline".
+sysconfig_final_systemd_state() {
+    local s
+    if ! sysconfig_systemd_provider_present; then
+        printf 'absent\n'
+        return 1
+    fi
+    if declare -F systui_systemd_online >/dev/null 2>&1 && systui_systemd_online; then
+        s=$(systui_systemd_state 2>/dev/null || printf 'online\n')
+        printf '%s\n' "$s"
+    else
+        printf 'offline\n'
+    fi
+}
+
 menu_init_manager() {
     local c provider state
+    local -a opts
     while true; do
-        detect_init 2>/dev/null || true
-        provider=${INIT_PROVIDER:-}
-        [ -n "$provider" ] || case "${INIT:-}" in systemd|ish-systemd-compat) provider=systemd ;; *) provider=${INIT:-unknown} ;; esac
-        state=unavailable
-        if declare -F sysconfig_systemd_manager_state >/dev/null 2>&1 && sysconfig_systemd_provider_present; then
-            state=$(sysconfig_systemd_manager_state 2>/dev/null || printf 'offline\n')
+        sysconfig_refresh_init_state
+        provider=${SYSTUI_INIT_PROVIDER:-${INIT_PROVIDER:-unknown}}
+        opts=(status "Show detected init / PID 1 / runtime state")
+        if [ "$provider" = systemd ]; then
+            state=$(sysconfig_final_systemd_state 2>/dev/null || printf 'offline\n')
+            opts+=(systemd "Systemd Manager [$state]")
         fi
+        opts+=(
+            services "Services manager"
+            switch "Switch init provider"
+            runtime "Launch / boot command configuration"
+            back "Back"
+        )
         c=$(tui_menu "Init Manager  [provider: $provider]" \
-            "Init/provider configuration. Systemd unit management remains available in offline iSH-AOK mode." \
-            status "Show detected init / PID 1 / runtime state" \
-            systemd "Systemd Manager [$state]" \
-            services "Services manager" \
-            switch "Switch init provider" \
-            runtime "Launch / boot command configuration" \
-            back "Back") || return 0
+            "Init/provider configuration. Offline providers retain safe configuration operations." \
+            "${opts[@]}") || return 0
         case "$c" in
             status) sysconfig_init_summary ;;
             systemd)
-                if sysconfig_systemd_provider_present && declare -F menu_systemd_manager >/dev/null 2>&1; then
+                if [ "$provider" = systemd ] && declare -F menu_systemd_manager >/dev/null 2>&1; then
                     menu_systemd_manager
                 else
-                    tui_msg "Systemd Manager" "Systemd tools/provider were not detected."
+                    tui_msg "Systemd Manager" "Systemd is not the configured provider."
                 fi
                 ;;
             services) menu_services ;;
@@ -69,11 +99,10 @@ menu_init_manager() {
     done
 }
 
-# Final Shells > Managers route. Do not rely on preserved legacy definitions.
 menu_shell_hierarchy() {
     local c
     while true; do
-        detect_init 2>/dev/null || true
+        sysconfig_refresh_init_state
         c=$(tui_menu "Shell Managers" "Shell, login and init management. Current init: ${INIT:-unknown}" \
             shells "Install/remove/configure shell managers and frameworks" \
             initmgr "Init Manager" \
