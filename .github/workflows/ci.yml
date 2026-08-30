@@ -8,7 +8,7 @@ permissions:
   contents: read
 
 jobs:
-  shell-tests:
+  shell-static:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -34,28 +34,17 @@ jobs:
           shellcheck -S error -x "${files[@]}"
           shellcheck -S error -e SC2081 -x "$legacy"
 
-      - name: ShellCheck critical runtime paths for warnings
+      - name: ShellCheck modern runtime paths for warnings
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -d '' modern_features < <(find src/features -maxdepth 1 -type f -regextype posix-extended -regex '.*/[0-9]{2}-.*\.sh' -print0)
           shellcheck -S warning -x \
             install.sh update.sh \
             src/core/*.sh \
             src/rootfs/*.sh \
             src/sysconfig/*.sh \
-            src/features/00-platform-bootstrap.sh \
-            src/features/20-rootfs-foundation.sh \
-            src/features/21-rootfs-backends.sh \
-            src/features/30-health-runtime-capabilities.sh \
-            src/features/40-rootfs-init-manager.sh \
-            src/features/50-sysconfig-repository-input.sh \
-            src/features/60-rootfs-docker-image-normalization.sh \
-            src/features/64-bedrock-aok-compatibility.sh \
-            src/features/65-bedrock-aok-safe-update.sh \
-            src/features/66-bedrock-aok-strata-fallbacks.sh \
-            src/features/67-bedrock-aok-direct-resolver.sh \
-            src/features/90-install-guard-final.sh \
-            src/features/91-rootfs-exec-final.sh \
+            "${modern_features[@]}" \
             src/features/health.sh \
             src/features/zz-rootfs-distro-managers.sh \
             src/features/*platform-final.sh \
@@ -67,6 +56,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -d '' modern_features < <(find src/features -maxdepth 1 -type f -regextype posix-extended -regex '.*/[0-9]{2}-.*\.sh' -print0)
           modern=(
             src/core/tui-widgets.sh
             src/core/platform.sh
@@ -78,12 +68,10 @@ jobs:
             src/rootfs/filesystem.sh
             src/rootfs/backends.sh
             src/sysconfig/repositories.sh
-            src/features/64-bedrock-aok-compatibility.sh
-            src/features/66-bedrock-aok-strata-fallbacks.sh
-            src/features/67-bedrock-aok-direct-resolver.sh
+            "${modern_features[@]}"
           )
           if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
-            echo 'Modern core/rootfs/sysconfig/compat modules must not export Bash functions.' >&2
+            echo 'Modern core/rootfs/sysconfig modules must not export Bash functions.' >&2
             exit 1
           fi
           if grep -nE -- '--(menu|radiolist|checklist|textbox|msgbox|yesno|inputbox|passwordbox|gauge)[^#]*[[:space:]][0-9]+[[:space:]][0-9]+' src/core/tui-widgets.sh; then
@@ -108,7 +96,19 @@ jobs:
           done < "$manifest"
           last=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)
           case "$last" in *-rootfs-ish-argmax-cleanup.sh) ;; *) echo "ARG_MAX cleanup must load last; found: $last" >&2; exit 1;; esac
+          # Numeric final phases must appear in ascending order even though
+          # legacy compatibility files remain earlier in the manifest.
+          numeric=$(grep -E '^[0-9]{2}-' "$manifest" | tail -n +1)
+          test "$numeric" = "$(printf '%s\n' "$numeric" | sort -n)" || {
+            echo 'numeric feature phases are out of order' >&2
+            exit 1
+          }
 
+  regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
       - name: Regression and integration tests
         shell: bash
         run: |
@@ -120,7 +120,7 @@ jobs:
 
   busybox-portability:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: Alpine / BusyBox syntax and focused tests
@@ -129,20 +129,9 @@ jobs:
           set -euo pipefail
           docker run --rm -v "$PWD:/repo" -w /repo alpine:3.22 sh -ec '
             apk add --no-cache bash coreutils ncurses shellcheck >/dev/null
-            bash -n src/core/platform.sh
-            bash -n src/core/tui-widgets.sh
-            bash -n src/core/loader.sh
-            bash -n src/core/strict-exec.sh
-            bash -n src/core/package-map-data.sh
-            bash -n src/rootfs/api.sh
-            bash -n src/rootfs/metadata.sh
-            bash -n src/rootfs/filesystem.sh
-            bash -n src/rootfs/backends.sh
-            bash -n src/sysconfig/repositories.sh
-            bash -n src/features/64-bedrock-aok-compatibility.sh
-            bash -n src/features/65-bedrock-aok-safe-update.sh
-            bash -n src/features/66-bedrock-aok-strata-fallbacks.sh
-            bash -n src/features/67-bedrock-aok-direct-resolver.sh
+            for f in src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh src/features/[0-9][0-9]-*.sh; do
+              bash -n "$f"
+            done
             bash tests/test-core-polish.sh
             bash tests/test-package-map-data.sh
             bash tests/test-rootfs-filesystem-module.sh
@@ -152,4 +141,5 @@ jobs:
             bash tests/test-bedrock-aok-safe-update.sh
             bash tests/test-bedrock-aok-strata-fallbacks.sh
             bash tests/test-bedrock-aok-direct-resolver.sh
+            [ ! -f tests/test-rootfs-final-hardening.sh ] || bash tests/test-rootfs-final-hardening.sh
           '
