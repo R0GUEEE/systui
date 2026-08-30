@@ -41,13 +41,28 @@ jobs:
           shellcheck -S warning -x \
             install.sh update.sh \
             src/core/*.sh \
+            src/rootfs/*.sh \
             src/features/health.sh \
+            src/features/00-platform-bootstrap.sh \
             src/features/zz-rootfs-distro-managers.sh \
             src/features/*platform-final.sh \
             src/features/*input-validation-final.sh \
             src/features/*argmax-cleanup.sh \
             share/homebrew/install-homebrew-root.sh
           shellcheck -S warning -e SC1090 -x src/provision/runtime.sh
+
+      - name: Core runtime invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' src/core src/rootfs; then
+            echo 'Core/rootfs modules must not export Bash functions; source them instead.' >&2
+            exit 1
+          fi
+          if grep -nE -- '--(menu|radiolist|checklist|textbox|msgbox|yesno|inputbox|passwordbox|gauge)[^#]*[[:space:]][0-9]+[[:space:]][0-9]+' src/core/tui-widgets.sh; then
+            echo 'TUI widgets must use responsive geometry rather than fixed dimensions.' >&2
+            exit 1
+          fi
 
       - name: Feature manifest integrity
         shell: bash
@@ -71,3 +86,21 @@ jobs:
             echo "===== $t ====="
             bash "$t"
           done
+
+  busybox-portability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Alpine / BusyBox syntax and focused tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm -v "$PWD:/repo" -w /repo alpine:3.22 sh -ec '
+            apk add --no-cache bash coreutils ncurses shellcheck >/dev/null
+            bash -n src/core/platform.sh
+            bash -n src/core/tui-widgets.sh
+            bash -n src/rootfs/api.sh
+            bash -n src/rootfs/metadata.sh
+            bash tests/test-core-polish.sh
+          '
