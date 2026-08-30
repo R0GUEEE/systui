@@ -10,11 +10,13 @@ permissions:
 jobs:
   shell-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
       - name: Verify ShellCheck is available
         run: command -v shellcheck >/dev/null
+
       - name: Bash syntax
         shell: bash
         run: |
@@ -22,17 +24,43 @@ jobs:
           while IFS= read -r -d '' f; do
             bash -n "$f"
           done < <(find . -type f -name '*.sh' -print0)
-      - name: ShellCheck core and changed-risk paths
+
+      - name: ShellCheck every shell script for errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -d '' files < <(find . -type f -name '*.sh' -print0)
+          shellcheck -S error -x "${files[@]}"
+
+      - name: ShellCheck critical runtime paths for warnings
         shell: bash
         run: |
           set -euo pipefail
           shellcheck -S warning -x \
             install.sh update.sh \
             src/core/*.sh \
+            src/provision/runtime.sh \
             src/features/health.sh \
             src/features/zz-rootfs-distro-managers.sh \
+            src/features/*platform-final.sh \
+            src/features/*argmax-cleanup.sh \
             share/homebrew/install-homebrew-root.sh
-      - name: Regression tests
+
+      - name: Feature manifest integrity
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest=src/features/.load-order
+          test -s "$manifest"
+          test -z "$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | sort | uniq -d)"
+          while IFS= read -r rel || [ -n "$rel" ]; do
+            case "$rel" in ''|'#'*) continue;; esac
+            test -f "src/features/$rel" || { echo "missing manifest feature: $rel" >&2; exit 1; }
+          done < "$manifest"
+          test "$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)" = \
+            zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
+
+      - name: Regression and integration tests
         shell: bash
         run: |
           set -euo pipefail
