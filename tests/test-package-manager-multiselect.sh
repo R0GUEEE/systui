@@ -13,7 +13,7 @@ check() {
 }
 
 check "feature is present exactly once" bash -c '[ "$(grep -Fxc "$2" "$1")" = 1 ]' _ "$LOAD" "$NAME"
-check "package manager menu exposes multi install" grep -Fq 'Install multiple managers (SPACE to select)' "$FILE"
+check "package manager menu exposes multi install" grep -Fq 'Install package managers (SPACE to select)' "$FILE"
 check "multi install uses checklist" grep -Fq 'tui_check "Install package managers"' "$FILE"
 check "selected native packages install in one batch" grep -Fq 'pm_install "${dedup[@]}"' "$FILE"
 check "pnpm and yarn share one npm command" grep -Fq 'npm install -g "${npm_globals[@]}"' "$FILE"
