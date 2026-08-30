@@ -31,12 +31,6 @@ export SYSTUI_TITLE BACKTITLE
 SYSTUI_TMP_ROOT="${SYSTUI_TMP_ROOT:-${TMPDIR:-/tmp}}"
 [ -d "$SYSTUI_TMP_ROOT" ] || { echo "Temporary directory does not exist: $SYSTUI_TMP_ROOT" >&2; exit 1; }
 SYSTUI_TMP_ROOT=$(cd -- "$SYSTUI_TMP_ROOT" && pwd -P)
-# A run_strict child re-sources this file. It must reuse the workspace that the
-# parent created and own neither its creation nor its removal -- otherwise each
-# strict routine would leak a directory, and the child's EXIT would delete a
-# workspace the parent is still using. Note this is keyed off an internal flag,
-# not off SYSTUI_TMP itself: a caller-provided SYSTUI_TMP is still never
-# adopted (see tests/test-regressions.sh).
 if [ "${SYSTUI_STRICT_CHILD:-0}" = 1 ] && [ -n "${SYSTUI_TMP:-}" ] && [ -f "${SYSTUI_TMP}/.systui-owned" ]; then
     SYSTUI_TMP_INHERITED=1
 else
@@ -46,9 +40,7 @@ else
     : > "$SYSTUI_TMP/.systui-owned"
 fi
 export SYSTUI_TMP
-# The log must outlive the workspace: the EXIT trap removes $SYSTUI_TMP, and
-# run_cmd tells the user to go read $LOGFILE after a failure. Prefer a durable
-# location, fall back to the workspace only if that is not writable.
+
 systui_pick_logfile() {
     local candidate
     for candidate in "${SYSTUI_LOGFILE:-}" /var/log/systui.log "$HOME/.local/state/systui.log"; do
@@ -64,6 +56,7 @@ systui_pick_logfile() {
 LOGFILE=$(systui_pick_logfile)
 WARNFILE="$SYSTUI_TMP/systui.warnings"
 chmod 0640 "$LOGFILE" 2>/dev/null || true
+
 log_rotate_if_large() {
     local max=$((5 * 1024 * 1024)) size
     size=$(wc -c < "$LOGFILE" 2>/dev/null || echo 0)
@@ -72,6 +65,7 @@ log_rotate_if_large() {
 }
 log_rotate_if_large
 : > "$WARNFILE"
+
 cleanup_systui_tmp() {
     [ "${SYSTUI_TMP_INHERITED:-0}" = 1 ] && return 0
     case "${SYSTUI_TMP:-}" in
@@ -84,10 +78,8 @@ trap cleanup_systui_tmp EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-# Dialog
 export DIALOG="${DIALOG:-dialog}"
 
-# Colors (for manual terminal output)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -116,7 +108,7 @@ die() {
 }
 
 ###############################################################################
-# STRICT EXECUTION (legacy bootstrap; replaced by src/core/strict-exec.sh)
+# STRICT EXECUTION (opt-in)
 ###############################################################################
 
 run_strict() {
@@ -154,25 +146,41 @@ run_strict() {
 ###############################################################################
 
 detect_pm() {
-    if command -v apt-get >/dev/null 2>&1; then PM="apt"
-    elif command -v apk >/dev/null 2>&1; then PM="apk"
-    elif command -v pacman >/dev/null 2>&1; then PM="pacman"
-    elif command -v dnf >/dev/null 2>&1; then PM="dnf"
-    elif command -v zypper >/dev/null 2>&1; then PM="zypper"
-    elif command -v yum >/dev/null 2>&1; then PM="yum"
-    elif command -v xbps-install >/dev/null 2>&1; then PM="xbps"
-    elif command -v emerge >/dev/null 2>&1; then PM="emerge"
-    else PM=""; fi
+    if command -v apt-get >/dev/null 2>&1; then
+        PM="apt"
+    elif command -v apk >/dev/null 2>&1; then
+        PM="apk"
+    elif command -v pacman >/dev/null 2>&1; then
+        PM="pacman"
+    elif command -v dnf >/dev/null 2>&1; then
+        PM="dnf"
+    elif command -v zypper >/dev/null 2>&1; then
+        PM="zypper"
+    elif command -v yum >/dev/null 2>&1; then
+        PM="yum"
+    elif command -v xbps-install >/dev/null 2>&1; then
+        PM="xbps"
+    elif command -v emerge >/dev/null 2>&1; then
+        PM="emerge"
+    else
+        PM=""
+    fi
     export PM
     log "Detected package manager: $PM"
 }
 
 detect_init() {
-    if [ -d /run/systemd/system ]; then INIT="systemd"
-    elif command -v rc-service >/dev/null 2>&1; then INIT="openrc"
-    elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then INIT="sysvinit"
-    elif command -v sv >/dev/null 2>&1 && { [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ]; }; then INIT="runit"
-    else INIT=""; fi
+    if [ -d /run/systemd/system ]; then
+        INIT="systemd"
+    elif command -v rc-service >/dev/null 2>&1; then
+        INIT="openrc"
+    elif command -v service >/dev/null 2>&1 && [ -d /etc/init.d ]; then
+        INIT="sysvinit"
+    elif command -v sv >/dev/null 2>&1 && { [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ]; }; then
+        INIT="runit"
+    else
+        INIT=""
+    fi
     export INIT
     log "Detected init system: $INIT"
 }
@@ -180,8 +188,10 @@ detect_init() {
 detect_distro() {
     local os_release="" id="" id_like="" version_id="" pretty_name=""
 
-    if [ -r /etc/os-release ]; then os_release=/etc/os-release
-    elif [ -r /usr/lib/os-release ]; then os_release=/usr/lib/os-release
+    if [ -r /etc/os-release ]; then
+        os_release=/etc/os-release
+    elif [ -r /usr/lib/os-release ]; then
+        os_release=/usr/lib/os-release
     fi
 
     if [ -n "$os_release" ]; then
@@ -208,33 +218,56 @@ detect_distro() {
     DISTRO_VERSION="${version_id:-unknown}"
     DISTRO_PRETTY_NAME="${pretty_name:-$id}"
     export DISTRO DISTRO_ID_LIKE DISTRO_VERSION DISTRO_PRETTY_NAME
-    log "Detected distro: $DISTRO ($DISTRO_PRETTY_NAME), version=$DISTRO_VERSION, like=$DISTRO_ID_LIKE"
+    log "Detected distro: $DISTRO_PRETTY_NAME (id=$DISTRO, like=${DISTRO_ID_LIKE:-none}, version=$DISTRO_VERSION)"
+}
+
+require_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        die "systui must run as root (rootfs builds and system config need it).\nTry: sudo $0"
+    fi
 }
 
 ###############################################################################
-# CONFIG STORAGE
+# UTILITY FUNCTIONS
 ###############################################################################
+
+show_warnings() {
+    if [ -s "$WARNFILE" ]; then
+        local text=""
+        while IFS= read -r w; do text+="* $w\n"; done < "$WARNFILE"
+        echo -e "${YELLOW}Warnings:${NC}\n$text" >&2
+        : > "$WARNFILE"
+    fi
+}
 
 systui_config_dir() {
-    if [ "$(id -u)" -eq 0 ]; then printf '/etc/systui\n'; else printf '%s/.config/systui\n' "$HOME"; fi
+    if [ -n "${SYSTUI_CONFIG_DIR:-}" ]; then
+        printf '%s\n' "$SYSTUI_CONFIG_DIR"
+    elif [ "$(id -u)" -eq 0 ]; then
+        printf '%s\n' /etc/systui
+    else
+        printf '%s\n' "${XDG_CONFIG_HOME:-$HOME/.config}/systui"
+    fi
 }
 
-systui_config_file() { printf '%s/config\n' "$(systui_config_dir)"; }
+systui_config_file() {
+    printf '%s/config\n' "$(systui_config_dir)"
+}
 
 get_config() {
-    local key="$1" default="${2:-}" file line
+    local key="$1" default="${2:-}" file value
     file=$(systui_config_file)
-    [ -r "$file" ] || { printf '%s\n' "$default"; return; }
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in "$key="*) printf '%s\n' "${line#*=}"; return;; esac
-    done < "$file"
-    printf '%s\n' "$default"
+    [ -f "$file" ] || { printf '%s\n' "$default"; return 0; }
+    value=$(grep -m1 "^$key=" "$file" 2>/dev/null) || value=""
+    if [ -z "$value" ]; then
+        printf '%s\n' "$default"
+    else
+        printf '%s\n' "${value#*=}"
+    fi
 }
 
 set_config() {
-    local key="$1" value="$2" dir file tmp
-    case "$key" in ''|*[!A-Za-z0-9_.-]*) return 2;; esac
-    [ "$value" != *$'\n'* ] && [ "$value" != *$'\r'* ] || return 2
+    local key="$1" value="$2" file dir tmp
     dir=$(systui_config_dir); file="$dir/config"
     mkdir -p "$dir" || return 1
     [ -f "$file" ] || : > "$file"
@@ -249,5 +282,7 @@ set_config() {
     mv -f "$tmp" "$file"
 }
 
-# Core functions are sourced where needed. Do not export Bash function bodies:
-# serialized BASH_FUNC_* entries are a major ARG_MAX failure source on iSH-AOK.
+# Legacy export remains for compatibility on native Linux. The central loader
+# scrubs exported functions after each feature on iSH, and new core modules do
+# not export functions.
+export -f log warn die get_config set_config systui_config_dir systui_config_file run_strict
