@@ -27,8 +27,70 @@ systui_guard_timeout_seconds() {
     printf '%s\n' "$v"
 }
 
+systui_guard_export_noninteractive() {
+    export CI=1
+    export NONINTERACTIVE=1
+    export DEBIAN_FRONTEND=noninteractive
+    export DEBCONF_NONINTERACTIVE_SEEN=true
+    export NEEDRESTART_MODE=a
+    export APT_LISTCHANGES_FRONTEND=none
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_ASKPASS=/bin/false
+    export SSH_ASKPASS=/bin/false
+    export GIT_HTTP_LOW_SPEED_LIMIT="${GIT_HTTP_LOW_SPEED_LIMIT:-1024}"
+    export GIT_HTTP_LOW_SPEED_TIME="${GIT_HTTP_LOW_SPEED_TIME:-60}"
+    export HOMEBREW_NO_ENV_HINTS=1
+}
+
+systui_guard_exec_function() { # <timeout-seconds> <function> [args...]
+    local seconds="$1" fn="$2" pid watcher rc=0
+    shift 2
+
+    # A Bash function cannot be exec(2)'d by coreutils timeout. Re-exporting
+    # every Systui function is also not acceptable on iSH because BASH_FUNC_*
+    # quickly exhausts its small ARG_MAX. Run the function in a forked Bash
+    # subshell instead; fork preserves the current function table without
+    # placing function bodies in the environment.
+    (
+        systui_guard_export_noninteractive
+        "$fn" "$@"
+    ) &
+    pid=$!
+
+    # Watch the child from another lightweight process. The parent remains able
+    # to collect the real function exit status. On expiry, terminate the shell
+    # function process and then force-kill it if it did not exit promptly.
+    (
+        sleep "$seconds"
+        if kill -0 "$pid" 2>/dev/null; then
+            kill -TERM "$pid" 2>/dev/null || true
+            sleep 2
+            kill -KILL "$pid" 2>/dev/null || true
+        fi
+    ) &
+    watcher=$!
+
+    wait "$pid" || rc=$?
+    kill "$watcher" 2>/dev/null || true
+    wait "$watcher" 2>/dev/null || true
+
+    # Match coreutils timeout's conventional status for a TERM watchdog expiry.
+    if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
+        return 124
+    fi
+    return "$rc"
+}
+
 systui_guard_exec() { # <timeout-seconds> <argv...>
-    local seconds="$1"; shift
+    local seconds="$1" cmd="${2:-}"
+    shift
+    [ -n "$cmd" ] || return 127
+
+    if declare -F "$cmd" >/dev/null 2>&1; then
+        systui_guard_exec_function "$seconds" "$cmd" "$@"
+        return $?
+    fi
+
     local -a prefix=(env
         CI=1
         NONINTERACTIVE=1
@@ -47,12 +109,12 @@ systui_guard_exec() { # <timeout-seconds> <argv...>
         # GNU coreutils supports --kill-after/--foreground; BusyBox commonly
         # supports only the simple form. Probe without assuming either.
         if timeout --help 2>&1 | grep -q -- '--kill-after'; then
-            "${prefix[@]}" timeout --foreground --signal=TERM --kill-after=15s "${seconds}s" "$@"
+            "${prefix[@]}" timeout --foreground --signal=TERM --kill-after=15s "${seconds}s" "$cmd" "$@"
         else
-            "${prefix[@]}" timeout "$seconds" "$@"
+            "${prefix[@]}" timeout "$seconds" "$cmd" "$@"
         fi
     else
-        "${prefix[@]}" "$@"
+        "${prefix[@]}" "$cmd" "$@"
     fi
 }
 
@@ -100,4 +162,4 @@ run_cmd() {
 # Keep these functions local to the Systui process. Exporting run_cmd or the
 # guard helpers would unnecessarily enlarge every child environment.
 export -n -f run_cmd 2>/dev/null || true
-export -n -f systui_installish_run systui_guard_timeout_seconds systui_guard_exec 2>/dev/null || true
+export -n -f systui_installish_run systui_guard_timeout_seconds systui_guard_export_noninteractive systui_guard_exec_function systui_guard_exec 2>/dev/null || true
