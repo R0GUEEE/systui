@@ -1,10 +1,8 @@
 # shellcheck shell=bash
 # PHASE 73 — final Debian-family rootfs package install path.
 #
-# The legacy helper always ran dpkg --configure -a and apt-get -f install after
-# a successful apt transaction. In iSH-AOK/chroot builds those redundant repair
-# passes can leave the guarded command apparently hung even though APT already
-# reported "0 upgraded, 0 newly installed". Only repair after a failed install.
+# Successful installs return immediately. Repair is attempted only after a real
+# apt failure, and the original apt status is preserved across the repair pass.
 
 rootfs_install_deb_packages() { # target "space separated packages"
     local target pkgs script rc pkg
@@ -63,11 +61,11 @@ printf '%s\n' ">>> rootfs packages: installing:$available"
 if apt-get $apt_common --no-install-recommends install -y $available </dev/null; then
     printf '%s\n' '>>> rootfs packages: install complete'
     exit 0
+else
+    rc=$?
 fi
 
-rc=$?
 printf '%s\n' ">>> rootfs packages: apt install failed ($rc); attempting one bounded repair pass" >&2
-# Repair only because the normal install failed. Never run these after success.
 dpkg --configure -a </dev/null || true
 # shellcheck disable=SC2086
 apt-get $apt_common -f install -y </dev/null || true
