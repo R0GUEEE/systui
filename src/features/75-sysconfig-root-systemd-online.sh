@@ -1,10 +1,9 @@
 # shellcheck shell=bash
 # PHASE 75 — root-system systemd runtime enforcement.
 #
-# When systemd is the configured root init provider, prefer the live PID 1
-# manager for runtime operations. Never launch a second system manager as a
-# child process; if PID 1 is not systemd, only static/offline configuration is
-# safe until the system is actually booted with systemd.
+# Runtime recovery is deliberately lazy: loading Systui must never block on
+# systemctl, D-Bus, or a degraded PID 1. The live-manager check runs only when
+# the user enters Systemd Manager or requests an online-only operation.
 
 sysconfig_root_systemd_pid1() {
     cat /proc/1/comm 2>/dev/null || printf 'unknown\n'
@@ -15,7 +14,7 @@ sysconfig_root_systemd_online() {
 }
 
 sysconfig_root_systemd_ensure_online() {
-    local pid1 i
+    local pid1
     sysconfig_systemd_provider_active || return 1
     sysconfig_root_systemd_online && return 0
 
@@ -23,19 +22,17 @@ sysconfig_root_systemd_ensure_online() {
     [ "$pid1" = systemd ] || return 1
     command -v systemctl >/dev/null 2>&1 || return 1
 
-    # PID 1 is already systemd. Ask that manager to re-exec/reload rather than
-    # spawning another systemd process, which would not own the root cgroup or
-    # system bus correctly.
-    systemctl daemon-reexec >/dev/null 2>&1 || true
-    systemctl daemon-reload >/dev/null 2>&1 || true
+    # Never spawn another systemd --system. If PID 1 already is systemd, ask
+    # that manager to refresh itself. Keep this bounded and non-interactive.
+    if command -v timeout >/dev/null 2>&1; then
+        timeout 5 systemctl daemon-reexec >/dev/null 2>&1 || true
+        timeout 5 systemctl daemon-reload >/dev/null 2>&1 || true
+    else
+        systemctl --no-ask-password daemon-reexec >/dev/null 2>&1 || true
+        systemctl --no-ask-password daemon-reload >/dev/null 2>&1 || true
+    fi
 
-    i=0
-    while [ "$i" -lt 5 ]; do
-        sysconfig_root_systemd_online && return 0
-        sleep 1
-        i=$((i + 1))
-    done
-    return 1
+    sysconfig_root_systemd_online
 }
 
 sysconfig_root_systemd_status_report() {
@@ -49,17 +46,17 @@ sysconfig_root_systemd_status_report() {
         printf 'PID 1              : %s\n' "$pid1"
         printf '/sbin/init          : %s\n' "${init_target:-unknown}"
         printf 'Systemd manager    : %s\n' "$state"
-        printf 'Runtime            : %s\n' "${SYSTUI_ENVIRONMENT:-unknown}"
+        printf 'Environment        : %s\n' "${SYSTUI_ENVIRONMENT:-unknown}"
         if [ "$provider" = systemd ] && [ "$pid1" != systemd ]; then
-            printf '\nSystemd is configured on disk, but the root system is not currently booted with systemd as PID 1.\n'
-            printf 'Systui will not start a second system manager as a child process.\n'
+            printf '\nSystemd is configured on disk, but PID 1 is not systemd.\n'
+            printf 'Runtime systemd operations remain unavailable until this root is booted with systemd.\n'
         fi
     } > "$SYSTUI_TMP/root-systemd-status"
     tui_text "Root systemd status" "$SYSTUI_TMP/root-systemd-status"
 }
 
-# Prefer the live root manager when available. Static/offline mode remains a
-# fallback for iSH-AOK and other constrained runtimes.
+# Prefer the live manager. Static unit-file operations remain available when
+# the environment cannot provide a working systemd runtime.
 sysconfig_systemd_unit_file_action() { # <enable|disable|mask|unmask|preset> <unit>
     local action="$1" unit="$2"
     unit=$(sysconfig_systemd_unit_name "$unit")
@@ -79,14 +76,14 @@ menu_systemd_manager() {
         return 0
     }
 
-    # Root-system systemd should have a live manager whenever the current PID 1
-    # is systemd. Attempt recovery before presenting runtime controls.
+    # Lazy recovery: this happens only after the user explicitly opens the
+    # Systemd Manager, never while Systui itself is starting.
     sysconfig_root_systemd_ensure_online || true
 
     while true; do
         state=$(sysconfig_systemd_manager_state)
         c=$(tui_menu "Systemd Manager — root system [$state]" \
-            "Systui uses the live PID 1 systemd manager when available. Offline unit-file operations remain available when this runtime cannot host a live manager." \
+            "Uses the live PID 1 manager when available; otherwise safe static unit-file operations remain available." \
             status "Root systemd/provider status" \
             online "Bring manager online / recheck" \
             units "List unit files" \
@@ -107,7 +104,7 @@ menu_systemd_manager() {
                 if sysconfig_root_systemd_ensure_online; then
                     tui_msg "Systemd Manager" "The root systemd manager is online."
                 else
-                    tui_msg "Systemd Manager" "Could not bring the root manager online. If PID 1 is not systemd, boot this root system with systemd; Systui will not launch a second system manager as a child."
+                    tui_msg "Systemd Manager" "The live root systemd manager is unavailable. If PID 1 is not systemd, boot this root with systemd."
                 fi
                 ;;
             units) sysconfig_systemd_show_units ;;
@@ -138,27 +135,7 @@ menu_systemd_manager() {
     done
 }
 
-# Final init routing: entering the root Init Manager proactively checks the live
-# manager when systemd is the selected provider.
-if declare -F menu_init_manager >/dev/null 2>&1 && ! declare -F _systui_base_menu_init_manager_root_systemd >/dev/null 2>&1; then
-    _systui_init_menu_def=$(declare -f menu_init_manager)
-    _systui_init_menu_def=${_systui_init_menu_def/#menu_init_manager ()/_systui_base_menu_init_manager_root_systemd ()}
-    eval "$_systui_init_menu_def"
-    unset _systui_init_menu_def
-fi
-
-menu_init_manager() {
-    if declare -F sysconfig_refresh_init_state >/dev/null 2>&1; then
-        sysconfig_refresh_init_state
-    fi
-    if [ "${SYSTUI_INIT_PROVIDER:-${INIT_PROVIDER:-}}" = systemd ]; then
-        sysconfig_root_systemd_ensure_online || true
-    fi
-    _systui_base_menu_init_manager_root_systemd "$@"
-}
-
 export -n -f sysconfig_root_systemd_pid1 sysconfig_root_systemd_online \
     sysconfig_root_systemd_ensure_online sysconfig_root_systemd_status_report \
-    sysconfig_systemd_unit_file_action menu_systemd_manager menu_init_manager \
-    _systui_base_menu_init_manager_root_systemd 2>/dev/null || true
+    sysconfig_systemd_unit_file_action menu_systemd_manager 2>/dev/null || true
 return 0 2>/dev/null || true
