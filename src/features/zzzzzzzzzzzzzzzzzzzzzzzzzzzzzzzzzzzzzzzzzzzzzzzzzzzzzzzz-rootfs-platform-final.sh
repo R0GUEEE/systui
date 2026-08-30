@@ -27,7 +27,10 @@ sysconfig_systemd_usable() { [ "${SYSTUI_SERVICE_RUNTIME:-}" = systemd ] && syst
 rootfs_wb_init_detect() { systui_rootfs_init_detect "$1"; }
 
 svc() { # <action> <service>
-    local action="$1" name="$2" bare=${2%.service}
+    local action="${1:-}" name="${2:-}" bare
+    case "$action" in enable|disable|start|stop|restart|status) ;; *) return 2;; esac
+    [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._@:+-]{0,127}$ ]] || { echo "Invalid service name: $name" >&2; return 2; }
+    bare=${name%.service}
     detect_init 2>/dev/null || true
     case "${SYSTUI_SERVICE_RUNTIME:-}" in
         systemd)
@@ -54,15 +57,10 @@ svc() { # <action> <service>
                         return 1
                     fi
                     ;;
-                *) return 2 ;;
             esac
             ;;
         openrc)
-            case "$action" in
-                enable) rc-update add "$bare" default ;;
-                disable) rc-update del "$bare" default ;;
-                *) rc-service "$bare" "$action" ;;
-            esac
+            case "$action" in enable) rc-update add "$bare" default ;; disable) rc-update del "$bare" default ;; *) rc-service "$bare" "$action" ;; esac
             ;;
         runit)
             case "$action" in
@@ -72,15 +70,10 @@ svc() { # <action> <service>
                 stop) sv down "$bare" ;;
                 restart) sv restart "$bare" ;;
                 status) sv status "$bare" ;;
-                *) return 2 ;;
             esac
             ;;
         sysvinit)
-            case "$action" in
-                enable) update-rc.d "$bare" defaults ;;
-                disable) update-rc.d -f "$bare" remove ;;
-                *) service "$bare" "$action" ;;
-            esac
+            case "$action" in enable) update-rc.d "$bare" defaults ;; disable) update-rc.d -f "$bare" remove ;; *) service "$bare" "$action" ;; esac
             ;;
         *) return 1 ;;
     esac
