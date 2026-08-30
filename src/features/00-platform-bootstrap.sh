@@ -20,9 +20,25 @@ do
 done
 unset _systui_core_module
 
+detect_pm() {
+    systui_detect_pm
+    log "Detected package manager: ${PM:-unknown}"
+}
+
 detect_init() {
     systui_detect_init
     log "Detected init: ${INIT:-unknown} (provider=${SYSTUI_INIT_PROVIDER:-unknown}, runtime=${SYSTUI_SERVICE_RUNTIME:-unknown}, env=${SYSTUI_ENVIRONMENT:-unknown})"
 }
 
+detect_distro() {
+    systui_detect_distro
+    log "Detected distro: ${DISTRO_PRETTY_NAME:-unknown} (id=${DISTRO:-unknown}, like=${DISTRO_ID_LIKE:-none}, version=${DISTRO_VERSION:-unknown})"
+}
+
+detect_pm 2>/dev/null || true
 detect_init 2>/dev/null || true
+detect_distro 2>/dev/null || true
+
+# Do not brand non-iSH hosts as iSH-AOK in the dialog backtitle.
+BACKTITLE="${SYSTUI_ENVIRONMENT:-linux} · systui v${SYSTUI_VERSION:-dev}"
+export BACKTITLE
