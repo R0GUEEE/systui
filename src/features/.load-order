@@ -95,4 +95,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 89-bedrock-pm-install-routing.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
+92-runtime-menu-cleanup.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
