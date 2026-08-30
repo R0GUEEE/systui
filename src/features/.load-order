@@ -39,7 +39,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-systemd-kernel-filter.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-runit-ubuntu-compat.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-readiness-repair.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-init-reinstall.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-init-manager.sh
+40-rootfs-init-manager.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-bootstrap-recovery.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ultimate-provision-startup-fix.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-mmdebstrap-ish-exec.sh
