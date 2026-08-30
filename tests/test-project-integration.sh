@@ -11,6 +11,7 @@ export SYSTUI_LIBDIR="$PROJECT_DIR"
 . "$PROJECT_DIR/src/core/config.sh"
 . "$PROJECT_DIR/src/core/tui-widgets.sh"
 . "$PROJECT_DIR/src/core/common.sh"
+. "$PROJECT_DIR/src/core/loader.sh"
 
 manifest="$PROJECT_DIR/src/features/.load-order"
 [ -r "$manifest" ]
@@ -20,17 +21,16 @@ duplicates=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | sort | uniq -d)
 last=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)
 [[ "$last" == *rootfs-ish-argmax-cleanup.sh ]]
 
-while IFS= read -r rel || [ -n "$rel" ]; do
-    case "$rel" in ''|'#'*) continue;; esac
-    [ -f "$PROJECT_DIR/src/features/$rel" ] || { echo "missing manifest feature: $rel" >&2; exit 1; }
-    . "$PROJECT_DIR/src/features/$rel"
-done < "$manifest"
+systui_load_features "$manifest"
 
 declare -F systui_detect_init >/dev/null
 declare -F systui_rootfs_init_detect >/dev/null
 declare -F detect_init >/dev/null
 declare -F rootfs_wb_init_detect >/dev/null
 declare -F svc >/dev/null
+declare -F systui_rootfs_exec >/dev/null
+declare -F systui_rootfs_metadata_set >/dev/null
+declare -F systui_capability >/dev/null
 declare -f detect_init | grep -q 'systui_detect_init'
 declare -f rootfs_wb_init_detect | grep -q 'systui_rootfs_init_detect'
 declare -f svc | grep -q 'SYSTUI_SERVICE_RUNTIME'
@@ -44,11 +44,15 @@ svc bogus sshd >/dev/null 2>&1 && { echo 'unsafe service action accepted' >&2; e
 
 # Rootfs detection must honor the wired PID1 even when systemd packages coexist.
 r="$tmpdir/root"
-mkdir -p "$r/sbin" "$r/usr/sbin" "$r/usr/lib/systemd"
+mkdir -p "$r/sbin" "$r/usr/sbin" "$r/usr/lib/systemd" "$r/etc" "$r/bin"
 : > "$r/usr/sbin/runit"; chmod +x "$r/usr/sbin/runit"
 : > "$r/usr/lib/systemd/systemd"; chmod +x "$r/usr/lib/systemd/systemd"
 ln -s ../usr/sbin/runit "$r/sbin/init"
 [ "$(systui_rootfs_init_detect "$r")" = runit ]
+
+# Stable rootfs API must not duplicate its own function name in argv.
+rootfs_exec_raw() { printf '%s|%s\n' "$1" "$2"; }
+[ "$(systui_rootfs_exec "$r" /bin/sh)" = "$r|/bin/sh" ]
 
 # Provision configuration parsing must never execute shell syntax.
 pwn="$tmpdir/pwned"
