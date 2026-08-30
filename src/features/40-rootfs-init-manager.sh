@@ -61,8 +61,6 @@ rootfs_wb_init_wire() { # <target> <init>
     local t="$1" init="$2" link tmp
     mkdir -p "$t/sbin" || return 1
 
-    # iSH systemd needs its compatibility wrapper rather than a direct systemd
-    # symlink. Package availability was already verified before this point.
     if [ "$init" = systemd ] && declare -F rootfs_install_ish_systemd_compat >/dev/null 2>&1 && systui_is_ish; then
         SYSTUI_ISH_COMPAT_SKIP_COREUTILS_MIGRATION=1 rootfs_install_ish_systemd_compat "$t"
         return $?
@@ -72,7 +70,6 @@ rootfs_wb_init_wire() { # <target> <init>
     tmp="$t/sbin/.init.systui-new.$$"
     rm -f "$tmp"
     ln -s "$link" "$tmp" || return 1
-    # Same-filesystem rename makes the visible /sbin/init switch atomic.
     mv -f "$tmp" "$t/sbin/init" || { rm -f "$tmp"; return 1; }
 }
 
@@ -98,7 +95,8 @@ rootfs_wb_init_restore() { # <target> <backup|none>
 }
 
 rootfs_wb_init_commit_metadata() { # <target> <new> <old>
-    local t="$1" new="$2" old="$3" runtime="$new"
+    local t="$1" new="$2" old="$3" runtime
+    runtime="$new"
     mkdir -p "$t/etc/systui" || return 1
     printf 'init=%s\nprevious=%s\n' "$new" "$old" > "$t/etc/systui/init-selection.conf" || return 1
     if [ "$new" = systemd ] && systui_is_ish; then runtime=ish-systemd-compat; fi
@@ -132,7 +130,6 @@ rootfs_wb_init_replace() { # <target> <new-init>
         return 1
     }
 
-    # Do not touch the active init until the requested package is installed.
     rootfs_wb_init_install_apt "$t" "$new" || {
         tui_msg "Init replacement failed" "Could not install $new. The existing /sbin/init was left unchanged."
         return 1
@@ -187,8 +184,6 @@ rootfs_wb_init_manager() { # <target>
     done
 }
 
-# Preserve the existing configuration menu using Bash builtins only; do not
-# exec sed while the feature stack is still being loaded on constrained iSH.
 if declare -F rootfs_cfg_menu >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_cfg_menu_initmgr >/dev/null 2>&1; then
     _systui_cfg_def=$(declare -f rootfs_cfg_menu)
     _systui_cfg_def=${_systui_cfg_def/#rootfs_cfg_menu ()/_systui_base_rootfs_cfg_menu_initmgr ()}
