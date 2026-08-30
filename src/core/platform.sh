@@ -42,45 +42,21 @@ systui_runtime_profile() {
     fi
 }
 
-# Capability checks are deliberately conservative. A capability should only be
-# reported when Systui can reasonably attempt the operation on this runtime.
 systui_capability() { # <name>
     local cap="${1:-}" profile
     profile=$(systui_runtime_profile)
     case "$cap" in
-        chroot)
-            command -v chroot >/dev/null 2>&1
-            ;;
-        mount)
-            command -v mount >/dev/null 2>&1 && [ "$profile" != proot ]
-            ;;
-        namespaces)
-            [ "$profile" != ish-aok ] && [ "$profile" != proot ] && command -v unshare >/dev/null 2>&1
-            ;;
-        proc)
-            [ -d /proc ] && [ -r /proc/1/stat ]
-            ;;
-        sysfs)
-            [ -d /sys ] && [ -r /sys/kernel/uevent_seqnum -o -d /sys/devices ]
-            ;;
-        systemd-runtime)
-            systui_systemd_online
-            ;;
-        fuse)
-            grep -qw fuse /proc/filesystems 2>/dev/null || [ -c /dev/fuse ]
-            ;;
-        binfmt)
-            [ -d /proc/sys/fs/binfmt_misc ]
-            ;;
-        qemu)
-            command -v qemu-aarch64-static >/dev/null 2>&1 || command -v qemu-x86_64-static >/dev/null 2>&1 || command -v qemu-arm-static >/dev/null 2>&1
-            ;;
-        netlink)
-            [ "$profile" != ish-aok ] && command -v ip >/dev/null 2>&1
-            ;;
-        argmax-constrained)
-            [ "$profile" = ish-aok ]
-            ;;
+        chroot) command -v chroot >/dev/null 2>&1 ;;
+        mount) command -v mount >/dev/null 2>&1 && [ "$profile" != proot ] ;;
+        namespaces) [ "$profile" != ish-aok ] && [ "$profile" != proot ] && command -v unshare >/dev/null 2>&1 ;;
+        proc) [ -d /proc ] && [ -r /proc/1/stat ] ;;
+        sysfs) [ -d /sys ] && { [ -r /sys/kernel/uevent_seqnum ] || [ -d /sys/devices ]; } ;;
+        systemd-runtime) systui_systemd_online ;;
+        fuse) grep -qw fuse /proc/filesystems 2>/dev/null || [ -c /dev/fuse ] ;;
+        binfmt) [ -d /proc/sys/fs/binfmt_misc ] ;;
+        qemu) command -v qemu-aarch64-static >/dev/null 2>&1 || command -v qemu-x86_64-static >/dev/null 2>&1 || command -v qemu-arm-static >/dev/null 2>&1 ;;
+        netlink) [ "$profile" != ish-aok ] && command -v ip >/dev/null 2>&1 ;;
+        argmax-constrained) [ "$profile" = ish-aok ] ;;
         *) return 2 ;;
     esac
 }
@@ -126,7 +102,7 @@ systui_detect_init() {
 }
 
 systui_rootfs_init_detect() {
-    local t="$1" target base selected
+    local t="$1" target base selected line
     [ -d "$t" ] || { printf 'unknown\n'; return 1; }
 
     target=$(readlink -f "$t/sbin/init" 2>/dev/null || true)
@@ -147,7 +123,9 @@ systui_rootfs_init_detect() {
         done < "$t/etc/systui/rootfs.conf"
     fi
     if [ -r "$t/etc/systui/init-selection.conf" ]; then
-        selected=$(sed -n 's/^init=//p' "$t/etc/systui/init-selection.conf" | head -n1)
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in init=*) selected=${line#init=}; break;; esac
+        done < "$t/etc/systui/init-selection.conf"
         case "$selected" in systemd|runit|openrc|sysvinit) printf '%s\n' "$selected"; return 0;; esac
     fi
     if [ -x "$t/usr/local/sbin/systui-ish-init" ]; then printf 'systemd\n'; return 0; fi
