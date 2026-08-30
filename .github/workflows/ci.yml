@@ -52,6 +52,7 @@ jobs:
             src/features/60-rootfs-docker-image-normalization.sh \
             src/features/64-bedrock-aok-compatibility.sh \
             src/features/65-bedrock-aok-safe-update.sh \
+            src/features/66-bedrock-aok-strata-fallbacks.sh \
             src/features/90-install-guard-final.sh \
             src/features/91-rootfs-exec-final.sh \
             src/features/health.sh \
@@ -77,6 +78,7 @@ jobs:
             src/rootfs/backends.sh
             src/sysconfig/repositories.sh
             src/features/64-bedrock-aok-compatibility.sh
+            src/features/66-bedrock-aok-strata-fallbacks.sh
           )
           if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
             echo 'Modern core/rootfs/sysconfig/compat modules must not export Bash functions.' >&2
@@ -137,6 +139,7 @@ jobs:
             bash -n src/sysconfig/repositories.sh
             bash -n src/features/64-bedrock-aok-compatibility.sh
             bash -n src/features/65-bedrock-aok-safe-update.sh
+            bash -n src/features/66-bedrock-aok-strata-fallbacks.sh
             bash tests/test-core-polish.sh
             bash tests/test-package-map-data.sh
             bash tests/test-rootfs-filesystem-module.sh
@@ -144,4 +147,5 @@ jobs:
             bash tests/test-rootfs-init-transaction.sh
             bash tests/test-bedrock-aok-compatibility.sh
             bash tests/test-bedrock-aok-safe-update.sh
+            bash tests/test-bedrock-aok-strata-fallbacks.sh
           '
