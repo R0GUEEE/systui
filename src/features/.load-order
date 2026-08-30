@@ -102,4 +102,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 96-menu-consolidation-final.sh
 97-software-catalogue-collections-final.sh
 98-storage-local-files-final.sh
+99-distro-manager-distrobox-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
