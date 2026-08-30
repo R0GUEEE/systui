@@ -185,7 +185,6 @@ main_menu() {
             rootfs "Root Filesystems — build, enter and manage" \
             config "System Configuration" \
             performance "Performance tuning" \
-            awesome "Software catalogue" \
             quit "Quit") || return 0
         case "$choice" in
             health) menu_health ;;
@@ -193,7 +192,6 @@ main_menu() {
             rootfs) menu_rootfs ;;
             config) menu_sysconfig ;;
             performance) menu_performance ;;
-            awesome) menu_awesome_linux ;;
             quit) return ;;
         esac
     done
