@@ -122,7 +122,8 @@ provision_add_packages_available() {
 
 provision_configure_sshd() {
     local port="$1" root_login="$2" x11="${3:-no}" cfg=/etc/ssh/sshd_config
-    local dropin_dir=/etc/ssh/sshd_config.d dropin="$dropin_dir/20-systui.conf" root_policy backup
+    local dropin_dir=/etc/ssh/sshd_config.d root_policy backup
+    local dropin="$dropin_dir/20-systui.conf"
     case "$port" in ''|*[!0-9]*) log "ERROR: refusing invalid sshd port: $port"; return 1;; esac
     [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || return 1
     [ -f "$cfg" ] || { log "ERROR: $cfg does not exist"; return 1; }
