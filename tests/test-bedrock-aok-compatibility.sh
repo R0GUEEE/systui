@@ -11,7 +11,6 @@ check() {
     if "$@"; then printf 'ok - %s\n' "$name"; else printf 'not ok - %s\n' "$name"; fail=1; fi
 }
 
-# Provide the install function that the phase hook preserves.
 bedrock_aok_install() { printf 'base\n' >> "$tmp/order"; }
 warn() { :; }
 log() { :; }
@@ -28,8 +27,6 @@ check "fallback for mount namespaces is explicit" \
 check "fallback for seccomp never claims filtering" \
     test "$(bedrock_aok_compat_fallback seccomp)" = no-seccomp-filter
 
-# Force an incapable host and verify state reporting does not fake native
-# support for namespace/bind/seccomp features.
 bedrock_aok_compat_probe_bind_mount() { return 1; }
 bedrock_aok_compat_probe_namespace() { return 1; }
 bedrock_aok_compat_probe_seccomp() { return 1; }
@@ -43,15 +40,14 @@ check "missing cgroup namespace reports fallback" test "$(bedrock_aok_compat_cap
 check "missing seccomp reports unsupported" test "$(bedrock_aok_compat_capability_state seccomp)" = unsupported
 
 profile="$tmp/bedrock-capabilities.conf"
-SYSTUI_ENVIRONMENT=ish bedrock_aok_compat_write_config "$profile"
+export BEDROCK_AOK_COMPAT_CONFIG="$profile"
+SYSTUI_ENVIRONMENT=ish bedrock_aok_compat_write_config
 check "profile records schema" grep -qx 'schema=1' "$profile"
 check "profile records runtime" grep -qx 'runtime=ish' "$profile"
 check "profile records bind fallback state" grep -qx 'bind_mount=fallback' "$profile"
 check "profile records bind fallback mode" grep -qx 'bind_mount_fallback=symlink-crossfs' "$profile"
 check "profile records seccomp unsupported" grep -qx 'seccomp=unsupported' "$profile"
 
-# Verify installation ordering: compatibility preparation must happen before the
-# preserved installer and finalization after it.
 : > "$tmp/order"
 bedrock_aok_compat_prepare() { printf 'prepare\n' >> "$tmp/order"; }
 bedrock_aok_compat_finalize() { printf 'finalize\n' >> "$tmp/order"; }
