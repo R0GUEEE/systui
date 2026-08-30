@@ -2,7 +2,9 @@
 # PHASE 67 — direct Systui resolver for Bedrock-AOK LXC-backed strata.
 #
 # Avoids fragile upstream resolver/update-urls pipelines (including SIGPIPE 141)
-# by resolving LinuxContainers image URLs directly and writing urls.cache.
+# by resolving LinuxContainers image URLs directly. Once resolved, use brl's
+# fetch-url command so Bedrock's extraction/integrity code is retained without
+# re-entering its broken lookup_url()/resolve_url() path.
 
 bedrock_aok_host_arch() {
     local a
@@ -18,9 +20,11 @@ bedrock_aok_host_arch() {
 bedrock_aok_http_text() { # <url>
     local url="$1"
     if command -v curl >/dev/null 2>&1; then
-        curl -4 -LfsS --connect-timeout 10 --max-time 60 "$url"
+        # Do not force IPv4 here. iSH/AOK networking varies by host build; let
+        # curl select the working address family and follow redirects itself.
+        curl -LfsS --connect-timeout 10 --max-time 90 "$url"
     elif command -v wget >/dev/null 2>&1; then
-        wget -4 -qO- -T 60 "$url"
+        wget -qO- -T 90 "$url"
     else
         return 127
     fi
@@ -50,7 +54,7 @@ bedrock_aok_lxc_newest_build() { # <base-dir-url>
                 href=${href#\"}; href=${href#\'}
                 href=${href%%\"*}; href=${href%%\'*}
                 case "$href" in
-                    ../|'' ) continue ;;
+                    ../|'') continue ;;
                     */)
                         href=${href%/}
                         case "$href" in
@@ -72,11 +76,9 @@ bedrock_aok_lxc_pick_rootfs() { # <build-url>
     local url="$1" html line href
     html=$(bedrock_aok_http_text "$url" 2>/dev/null || true)
     [ -n "$html" ] || return 1
-    # Prefer the standard LXC rootfs names in order.
     for href in rootfs.tar.xz rootfs.tar.gz rootfs.tar.zst rootfs.tar; do
         case "$html" in *"$href"*) printf '%s/%s\n' "${url%/}" "$href"; return 0 ;; esac
     done
-    # Fallback: first rootfs.tar.* link found.
     while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in
             *rootfs.tar.*)
@@ -119,18 +121,25 @@ bedrock_aok_refresh_one_url() { # <stratum>
     [ -n "$url" ] || return 1
     bedrock_aok_cache_set_url "$tag" "$url"
     log "bedrock-aok: resolved $tag directly to $url"
+    printf '%s\n' "$url"
+}
+
+bedrock_aok_fetch_url_direct() { # <stratum> <url>
+    local tag="$1" url="$2" brl
+    brl=$(bedrock_aok_brl) || return 1
+    run_cmd "Fetching Bedrock-AOK stratum directly: $tag" "$brl" fetch-url "$tag" "$url"
 }
 
 bedrock_aok_refresh_urls_resilient() {
-    local brl tag ok=0 fail=0
+    local brl tag ok=0 fail=0 url
     bedrock_aok_require || return 1
     brl=$(bedrock_aok_brl) || return 1
 
-    # Prefer Systui direct resolution for every LXC-backed catalog entry.
     if declare -F catalog_names >/dev/null 2>&1; then
         for tag in $(catalog_names); do
             if bedrock_aok_lxc_recipe "$tag" >/dev/null 2>&1; then
-                if bedrock_aok_refresh_one_url "$tag"; then
+                url=$(bedrock_aok_refresh_one_url "$tag" 2>/dev/null || true)
+                if [ -n "$url" ]; then
                     ok=$((ok + 1))
                 else
                     fail=$((fail + 1))
@@ -139,31 +148,35 @@ bedrock_aok_refresh_urls_resilient() {
         done
     fi
 
-    # Do not treat upstream SIGPIPE 141 as authoritative failure. Run it only
-    # as a secondary refresh for non-LXC/fixed/discovery-backed entries.
+    # Best-effort only for non-LXC recipes; never let SIGPIPE 141 determine the
+    # outcome of the Systui resolver.
     "$brl" update-urls >/dev/null 2>&1 || true
     log "bedrock-aok: direct URL refresh complete (ok=$ok fail=$fail)"
     [ "$ok" -gt 0 ]
 }
 
-# Override the resilient fetch front door so an unresolved LXC stratum gets a
-# direct Systui URL before invoking brl again.
 bedrock_aok_fetch_stratum_resilient() { # <stratum>
-    local tag="$1" brl current candidate
+    local tag="$1" brl url current candidate
     bedrock_aok_require || return 1
     brl=$(bedrock_aok_brl) || return 1
 
+    # Existing Bedrock resolver remains the cheapest fast path.
     if run_cmd "Fetching Bedrock-AOK stratum: $tag" "$brl" fetch "$tag"; then
         return 0
     fi
 
-    if bedrock_aok_refresh_one_url "$tag"; then
-        if run_cmd "Retrying Bedrock-AOK stratum: $tag" "$brl" fetch "$tag"; then
+    # Critical fix: once Systui has a URL, do NOT call `brl fetch` again.
+    # `brl fetch` re-enters lookup_url(), the path which failed for NixOS.
+    url=$(bedrock_aok_resolve_lxc_direct "$tag" 2>/dev/null || true)
+    if [ -n "$url" ]; then
+        bedrock_aok_cache_set_url "$tag" "$url" || true
+        log "bedrock-aok: bypassing resolver for $tag with $url"
+        if bedrock_aok_fetch_url_direct "$tag" "$url"; then
             return 0
         fi
     fi
 
-    current=$(bedrock_aok_cached_url "$tag" 2>/dev/null || true)
+    current=${url:-$(bedrock_aok_cached_url "$tag" 2>/dev/null || true)}
     [ -n "$current" ] || {
         tui_msg "Stratum download failed" "No working source could be resolved for '$tag'."
         return 1
@@ -172,9 +185,9 @@ bedrock_aok_fetch_stratum_resilient() { # <stratum>
     while IFS= read -r candidate; do
         [ -n "$candidate" ] || continue
         [ "$candidate" != "$current" ] || continue
-        bedrock_aok_cache_set_url "$tag" "$candidate" || continue
-        if run_cmd "Trying alternate mirror for $tag" "$brl" fetch "$tag"; then
-            log "bedrock-aok: $tag fetched from alternate mirror $candidate"
+        bedrock_aok_cache_set_url "$tag" "$candidate" || true
+        if bedrock_aok_fetch_url_direct "$tag" "$candidate"; then
+            log "bedrock-aok: $tag fetched directly from alternate mirror $candidate"
             return 0
         fi
     done <<< "$(bedrock_aok_mirror_candidates "$current")"
