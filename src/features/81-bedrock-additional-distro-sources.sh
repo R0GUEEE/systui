@@ -40,8 +40,6 @@ bedrock_aok_extra_builtin_urls() { # <tag>
             ;;
         ubuntu)
             a=$(bedrock_aok_extra_arch ubuntu) || return 1
-            # Ubuntu Base is an official minimal rootfs and is independent of
-            # LinuxContainers/LXD image availability.
             printf 'https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04-base-%s.tar.gz\n' "$a"
             ;;
         void)
@@ -93,12 +91,9 @@ bedrock_aok_extra_expand_url() { # <url-template>
 }
 
 bedrock_aok_extra_source_urls() { # <tag>
-    local tag="$1" row rtag label url built
-    # Distro-maintained built-ins first.
+    local tag="$1" rtag label url built
     built=$(bedrock_aok_extra_builtin_urls "$tag" 2>/dev/null || true)
     [ -n "$built" ] && printf '%s\n' "$built"
-    # Administrator-defined fixed rootfs URLs follow. Multiple rows for the
-    # same tag are allowed and are attempted in file order.
     while IFS='|' read -r rtag label url; do
         [ "$rtag" = "$tag" ] || continue
         bedrock_aok_extra_expand_url "$url"
@@ -118,8 +113,6 @@ bedrock_aok_extra_catalog_rows() {
     done <<< "$(bedrock_aok_extra_user_rows)"
 }
 
-# Merge upstream catalog entries with Systui fallback-only entries. This lets a
-# distro remain selectable even when `brl fetch --list` does not advertise it.
 if declare -F bedrock_aok_available_strata >/dev/null 2>&1 && ! declare -F _bedrock_aok_available_strata_before_extra_sources >/dev/null 2>&1; then
     eval "$(declare -f bedrock_aok_available_strata | sed '1s/^bedrock_aok_available_strata[[:space:]]*()/_bedrock_aok_available_strata_before_extra_sources ()/')"
 fi
@@ -135,7 +128,6 @@ if declare -F bedrock_aok_fetch_stratum_resilient >/dev/null 2>&1 && ! declare -
 fi
 bedrock_aok_fetch_stratum_resilient() { # <stratum>
     local tag="$1" url brl tried=0
-    # Preserve upstream -> direct LXC -> mirror behavior as the preferred path.
     _bedrock_aok_fetch_stratum_before_extra_sources "$tag" && return 0
     brl=$(bedrock_aok_brl) || return 1
     while IFS= read -r url; do
@@ -180,8 +172,6 @@ EOF
     tui_text "Bedrock additional sources" "$out"
 }
 
-# Add source visibility/configuration to the Bedrock update menu without making
-# custom-source editing mandatory.
 bedrock_aok_extra_sources_edit() {
     mkdir -p "${BEDROCK_AOK_EXTRA_SOURCES%/*}" || return 1
     [ -e "$BEDROCK_AOK_EXTRA_SOURCES" ] || {
