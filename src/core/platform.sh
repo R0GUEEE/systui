@@ -16,9 +16,7 @@ systui_is_container() {
         grep -qaE '(docker|containerd|lxc|podman|kubepods)' /proc/1/cgroup 2>/dev/null
 }
 
-systui_pid1_name() {
-    cat /proc/1/comm 2>/dev/null || printf 'unknown\n'
-}
+systui_pid1_name() { cat /proc/1/comm 2>/dev/null || printf 'unknown\n'; }
 
 systui_systemd_state() {
     command -v systemctl >/dev/null 2>&1 || { printf 'absent\n'; return 1; }
@@ -52,14 +50,11 @@ systui_detect_init() {
     if [ "$pid1" = systemd ] || [ -d /run/systemd/system ] || [[ "$init_target" == */systemd ]]; then
         SYSTUI_INIT_PROVIDER=systemd
         if systui_systemd_online; then
-            INIT=systemd
-            SYSTUI_SERVICE_RUNTIME=systemd
+            INIT=systemd; SYSTUI_SERVICE_RUNTIME=systemd
         elif systui_is_ish; then
-            INIT=ish-systemd-compat
-            SYSTUI_SERVICE_RUNTIME=init-script
+            INIT=ish-systemd-compat; SYSTUI_SERVICE_RUNTIME=init-script
         else
-            INIT=systemd-offline
-            SYSTUI_SERVICE_RUNTIME=offline
+            INIT=systemd-offline; SYSTUI_SERVICE_RUNTIME=offline
         fi
     elif [ "$pid1" = runit ] || [[ "$init_target" == *runit* ]] || { command -v sv >/dev/null 2>&1 && { [ -d /etc/sv ] || [ -d /var/service ] || [ -d /service ]; }; }; then
         INIT=runit; SYSTUI_INIT_PROVIDER=runit; SYSTUI_SERVICE_RUNTIME=runit
@@ -74,8 +69,8 @@ systui_detect_init() {
     export INIT SYSTUI_ENVIRONMENT SYSTUI_SYSTEMD_STATE SYSTUI_INIT_PROVIDER SYSTUI_SERVICE_RUNTIME
 }
 
-systui_rootfs_init_detect() { # <target>
-    local t="$1" target base
+systui_rootfs_init_detect() {
+    local t="$1" target base selected
     [ -d "$t" ] || { printf 'unknown\n'; return 1; }
 
     target=$(readlink -f "$t/sbin/init" 2>/dev/null || true)
@@ -85,19 +80,15 @@ systui_rootfs_init_detect() { # <target>
             */systui-ish-init|*/systemd) printf 'systemd\n'; return 0 ;;
             *runit*) printf 'runit\n'; return 0 ;;
             *openrc*) printf 'openrc\n'; return 0 ;;
-            *sysvinit*|*/lib/sysvinit/init|*/usr/lib/sysvinit/init) printf 'sysvinit\n'; return 0 ;;
+            *sysv*) printf 'sysvinit\n'; return 0 ;;
         esac
     fi
 
-    # Compatibility metadata is stronger evidence than merely having a package installed.
     if [ -r "$t/etc/systui/init-selection.conf" ]; then
-        local selected
         selected=$(sed -n 's/^init=//p' "$t/etc/systui/init-selection.conf" | head -n1)
         case "$selected" in systemd|runit|openrc|sysvinit) printf '%s\n' "$selected"; return 0;; esac
     fi
     if [ -x "$t/usr/local/sbin/systui-ish-init" ]; then printf 'systemd\n'; return 0; fi
-
-    # Last-resort inventory fallback only when /sbin/init does not identify anything.
     if [ -x "$t/usr/sbin/runit" ]; then printf 'runit\n'; return 0; fi
     if [ -x "$t/sbin/openrc-init" ] || [ -x "$t/bin/openrc-init" ]; then printf 'openrc\n'; return 0; fi
     if [ -x "$t/lib/sysvinit/init" ] || [ -x "$t/usr/lib/sysvinit/init" ]; then printf 'sysvinit\n'; return 0; fi
