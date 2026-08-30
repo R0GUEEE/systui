@@ -4,71 +4,115 @@
 ###############################################################################
 
 ###############################################################################
+# RESPONSIVE TERMINAL GEOMETRY
+###############################################################################
+
+# The TUI must remain usable on narrow iSH/iPhone terminals as well as normal
+# desktop terminals. Prefer terminal-reported geometry but always keep safe
+# fallbacks. Geometry helpers print plain integers and have no side effects.
+tui_rows() {
+    local rows=""
+    if command -v tput >/dev/null 2>&1; then rows=$(tput lines 2>/dev/null || true); fi
+    if [[ ! "$rows" =~ ^[0-9]+$ ]] && command -v stty >/dev/null 2>&1; then
+        rows=$(stty size 2>/dev/null | { read -r r _; printf '%s' "$r"; } || true)
+    fi
+    [[ "$rows" =~ ^[0-9]+$ ]] || rows=24
+    [ "$rows" -ge 12 ] || rows=12
+    printf '%s\n' "$rows"
+}
+
+tui_cols() {
+    local cols=""
+    if command -v tput >/dev/null 2>&1; then cols=$(tput cols 2>/dev/null || true); fi
+    if [[ ! "$cols" =~ ^[0-9]+$ ]] && command -v stty >/dev/null 2>&1; then
+        cols=$(stty size 2>/dev/null | { read -r _ c; printf '%s' "$c"; } || true)
+    fi
+    [[ "$cols" =~ ^[0-9]+$ ]] || cols=80
+    [ "$cols" -ge 40 ] || cols=40
+    printf '%s\n' "$cols"
+}
+
+tui_geometry() { # <kind> -> "height width list-height"
+    local kind="${1:-menu}" rows cols h w list
+    rows=$(tui_rows); cols=$(tui_cols)
+    h=$((rows - 2)); [ "$h" -gt 22 ] && h=22; [ "$h" -lt 10 ] && h=10
+    w=$((cols - 4)); [ "$w" -gt 90 ] && w=90; [ "$w" -lt 38 ] && w=38
+    list=$((h - 8)); [ "$list" -gt 14 ] && list=14; [ "$list" -lt 4 ] && list=4
+    case "$kind" in
+        msg|input|password|yesno|progress)
+            [ "$h" -gt 12 ] && h=12
+            [ "$w" -gt 70 ] && w=70
+            list=0
+            ;;
+        text)
+            h=$((rows - 2)); [ "$h" -gt 24 ] && h=24; [ "$h" -lt 10 ] && h=10
+            w=$((cols - 2)); [ "$w" -gt 100 ] && w=100; [ "$w" -lt 38 ] && w=38
+            list=0
+            ;;
+    esac
+    printf '%s %s %s\n' "$h" "$w" "$list"
+}
+
+###############################################################################
 # DIALOG WRAPPERS
 ###############################################################################
 
 tui_msg() {
-    # Simple message dialog: tui_msg <title> <message>
-    $DIALOG --backtitle "$BACKTITLE" --title "$1" --msgbox "$2" 10 60
+    local h w _; read -r h w _ < <(tui_geometry msg)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --msgbox "$2" "$h" "$w"
 }
 
 tui_yesno() {
-    # Yes/No dialog: tui_yesno <title> <question>
-    # Returns: 0 (yes) or 1 (no)
-    $DIALOG --backtitle "$BACKTITLE" --title "$1" --yesno "$2" 8 60
+    local h w _; read -r h w _ < <(tui_geometry yesno)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --yesno "$2" "$h" "$w"
 }
 
 tui_input() {
-    # Input dialog: tui_input <title> <prompt> [default]
-    # Returns: input text or empty
-    $DIALOG --backtitle "$BACKTITLE" --title "$1" --inputbox "$2" 10 60 "${3:-}" 3>&1 1>&2 2>&3
+    local h w _; read -r h w _ < <(tui_geometry input)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --inputbox "$2" "$h" "$w" "${3:-}" 3>&1 1>&2 2>&3
 }
 
 tui_password() {
-    # Password input (masked): tui_password <title> <prompt>
-    $DIALOG --backtitle "$BACKTITLE" --title "$1" --passwordbox "$2" 10 60 3>&1 1>&2 2>&3
+    local h w _; read -r h w _ < <(tui_geometry password)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --passwordbox "$2" "$h" "$w" 3>&1 1>&2 2>&3
 }
 
 tui_menu() {
-    # Menu selection: tui_menu <title> <text> <tag1> <desc1> [...]
-    # Returns: selected tag
-    local title="$1" text="$2"; shift 2
-    $DIALOG --backtitle "$BACKTITLE" --title "$title" \
-        --menu "$text" 22 74 14 "$@" 3>&1 1>&2 2>&3
+    local title="$1" text="$2" h w list; shift 2
+    read -r h w list < <(tui_geometry menu)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" \
+        --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
-# Menu that hides internal selection tags and displays only descriptions.
-# Useful when tags are generated IDs that should not appear in the UI.
 tui_menu_no_tags() {
-    local title="$1" text="$2"; shift 2
-    $DIALOG --backtitle "$BACKTITLE" --title "$title" --no-tags \
-        --menu "$text" 22 90 14 "$@" 3>&1 1>&2 2>&3
+    local title="$1" text="$2" h w list; shift 2
+    read -r h w list < <(tui_geometry menu)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --no-tags \
+        --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_radio() {
-    # Radio list (single choice): tui_radio <title> <text> <tag1> <desc1> <on|off> [...]
-    # Returns: selected tag
-    local title="$1" text="$2"; shift 2
-    $DIALOG --backtitle "$BACKTITLE" --title "$title" \
-        --radiolist "$text" 22 74 14 "$@" 3>&1 1>&2 2>&3
+    local title="$1" text="$2" h w list; shift 2
+    read -r h w list < <(tui_geometry menu)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" \
+        --radiolist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_check() {
-    # Checkbox list (multiple choice): tui_check <title> <text> <tag1> <desc1> <on|off> [...]
-    # Returns: space-separated selected tags
-    local title="$1" text="$2"; shift 2
-    $DIALOG --backtitle "$BACKTITLE" --title "$title" \
-        --checklist "$text" 22 74 14 "$@" 3>&1 1>&2 2>&3
+    local title="$1" text="$2" h w list; shift 2
+    read -r h w list < <(tui_geometry menu)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" \
+        --checklist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_text() {
-    # Text viewer (scrollable): tui_text <title> <file>
-    $DIALOG --backtitle "$BACKTITLE" --title "$1" --textbox "$2" 22 76
+    local h w _; read -r h w _ < <(tui_geometry text)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --textbox "$2" "$h" "$w"
 }
 
 tui_progress() {
-    # Progress gauge: tui_progress <title> <text> [percent]
-    $DIALOG --backtitle "$BACKTITLE" --title "$1" --gauge "$2" 10 60 "${3:-0}"
+    local h w _; read -r h w _ < <(tui_geometry progress)
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --gauge "$2" "$h" "$w" "${3:-0}"
 }
 
 ###############################################################################
@@ -76,10 +120,6 @@ tui_progress() {
 ###############################################################################
 
 run_cmd() {
-    # run_cmd <description> <cmd...>
-    # Executes command with visual output, logs it, reports success/failure.
-    # Preserve the caller's errexit state: the interactive TUI deliberately
-    # runs without `set -e`, while run_strict children deliberately enable it.
     local desc="$1"; shift
     local rc=0 had_errexit=0
     case $- in *e*) had_errexit=1 ;; esac
@@ -90,16 +130,10 @@ run_cmd() {
     echo ">>> $*"
     echo "================================================================="
 
-    # Keep the pipeline out of errexit handling and capture the command's
-    # status rather than tee's. Restore exactly the shell state we inherited.
     set +e
     "$@" 2>&1 | tee -a "$LOGFILE"
     rc=${PIPESTATUS[0]}
-    if [ "$had_errexit" -eq 1 ]; then
-        set -e
-    else
-        set +e
-    fi
+    if [ "$had_errexit" -eq 1 ]; then set -e; else set +e; fi
 
     if [ "$rc" -eq 0 ]; then
         echo "================================================================="
@@ -116,20 +150,13 @@ run_cmd() {
 # CONFIRMATION DIALOGS
 ###############################################################################
 
-tui_confirm() {
-    # Confirm with description: tui_confirm <title> <message>
-    # Returns: 0 (confirmed) or 1 (cancelled)
-    if tui_yesno "$1" "$2"; then
-        return 0
-    else
-        return 1
-    fi
-}
+tui_confirm() { tui_yesno "$1" "$2"; }
 
 tui_wait() {
-    # Show a wait message and wait for user to press Enter
     local msg="${1:-Press Enter to continue...}"
     read -rp "$msg" _ 2>/dev/null || true
 }
 
-export -f tui_msg tui_yesno tui_input tui_password tui_menu tui_menu_no_tags tui_radio tui_check tui_text tui_progress run_cmd tui_confirm tui_wait
+# These functions are intentionally NOT exported. Feature files are sourced in
+# the same Bash process, so child processes do not need serialized BASH_FUNC_*
+# copies. Avoiding export at the source prevents ARG_MAX failures on iSH-AOK.
