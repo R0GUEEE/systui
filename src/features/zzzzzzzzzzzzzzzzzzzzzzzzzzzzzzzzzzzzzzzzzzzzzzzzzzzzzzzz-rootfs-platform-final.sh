@@ -3,7 +3,10 @@
 # feature stack so older compatibility layers cannot leave conflicting init
 # semantics behind.
 
-[ -r "$SYSTUI_LIBDIR/src/core/platform.sh" ] && . "$SYSTUI_LIBDIR/src/core/platform.sh"
+if [ -r "$SYSTUI_LIBDIR/src/core/platform.sh" ]; then
+    # shellcheck source=../core/platform.sh
+    . "$SYSTUI_LIBDIR/src/core/platform.sh"
+fi
 
 # Cross-distribution package rescue is intentionally opt-in. Installing foreign
 # distro packages as an automatic fallback can corrupt the native package DB or
