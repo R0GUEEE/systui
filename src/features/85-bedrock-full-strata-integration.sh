@@ -189,7 +189,7 @@ bedrock_systui_manager_menu() { # <stratum> <manager> <class> <config>
 }
 
 bedrock_systui_integrated_packages_menu() {
-    local c row st pm class cfg key
+    local c st pm class cfg key
     local -a opts=()
     bedrock_systui_scan_capabilities >/dev/null 2>&1 || true
     opts+=(native "Host package/config menus [${PM:-unknown}]")
@@ -221,8 +221,6 @@ bedrock_systui_integrated_packages_menu() {
     done
 }
 
-# Final Packages front door: Bedrock integration is automatic only when Bedrock
-# is actually installed; otherwise retain the native Systui package UI exactly.
 if declare -F menu_packages >/dev/null 2>&1 && ! declare -F _systui_packages_before_bedrock_full_integration >/dev/null 2>&1; then
     eval "$(declare -f menu_packages | sed '1s/^menu_packages[[:space:]]*()/_systui_packages_before_bedrock_full_integration ()/')"
 fi
@@ -234,7 +232,6 @@ menu_packages() {
     fi
 }
 
-# Rebuild capability cache after Bedrock finalization/install when possible.
 if declare -F bedrock_aok_compat_finalize >/dev/null 2>&1 && ! declare -F _bedrock_aok_compat_finalize_before_full_integration >/dev/null 2>&1; then
     eval "$(declare -f bedrock_aok_compat_finalize | sed '1s/^bedrock_aok_compat_finalize[[:space:]]*()/_bedrock_aok_compat_finalize_before_full_integration ()/')"
     bedrock_aok_compat_finalize() {
