@@ -32,10 +32,6 @@ jobs:
           legacy='src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-audit-fixes.sh'
           mapfile -d '' files < <(find . -type f -name '*.sh' ! -path "./$legacy" -print0)
           shellcheck -S error -x "${files[@]}"
-          # This historical bundle contains three SC2081 patterns. Their active
-          # repository-input path is replaced by input-validation-final.sh, and
-          # the remaining label value is passed as a quoted argv value. Keep all
-          # other ShellCheck errors fatal while the monolith is decomposed.
           shellcheck -S error -e SC2081 -x "$legacy"
 
       - name: ShellCheck critical runtime paths for warnings
@@ -51,8 +47,6 @@ jobs:
             src/features/*input-validation-final.sh \
             src/features/*argmax-cleanup.sh \
             share/homebrew/install-homebrew-root.sh
-          # runtime.sh has a dynamic but repository-local source path; all other
-          # warnings still fail CI.
           shellcheck -S warning -e SC1090 -x src/provision/runtime.sh
 
       - name: Feature manifest integrity
@@ -66,8 +60,8 @@ jobs:
             case "$rel" in ''|'#'*) continue;; esac
             test -f "src/features/$rel" || { echo "missing manifest feature: $rel" >&2; exit 1; }
           done < "$manifest"
-          test "$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)" = \
-            zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
+          last=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)
+          case "$last" in *-rootfs-ish-argmax-cleanup.sh) ;; *) echo "ARG_MAX cleanup must load last; found: $last" >&2; exit 1;; esac
 
       - name: Regression and integration tests
         shell: bash
