@@ -96,13 +96,15 @@ jobs:
           done < "$manifest"
           last=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)
           case "$last" in *-rootfs-ish-argmax-cleanup.sh) ;; *) echo "ARG_MAX cleanup must load last; found: $last" >&2; exit 1;; esac
-          # Numeric final phases must appear in ascending order even though
-          # legacy compatibility files remain earlier in the manifest.
-          numeric=$(grep -E '^[0-9]{2}-' "$manifest" | tail -n +1)
-          test "$numeric" = "$(printf '%s\n' "$numeric" | sort -n)" || {
-            echo 'numeric feature phases are out of order' >&2
-            exit 1
-          }
+          # Assert the authoritative final hardening chain remains ordered.
+          final='65-bedrock-aok-safe-update.sh 66-bedrock-aok-strata-fallbacks.sh 67-bedrock-aok-direct-resolver.sh 68-bedrock-aok-catalog-patch.sh 69-sysconfig-init-service-manager.sh 70-sysconfig-systemd-manager.sh 71-bedrock-config-final.sh 72-sysconfig-final-init-routing.sh 73-rootfs-deb-install-final.sh 74-rootfs-guarded-chroot-final.sh 90-install-guard-final.sh 91-rootfs-exec-final.sh'
+          prev=0
+          for rel in $final; do
+            line=$(grep -nFx "$rel" "$manifest" | cut -d: -f1)
+            test -n "$line" || { echo "missing final phase: $rel" >&2; exit 1; }
+            test "$line" -gt "$prev" || { echo "final phase order broken at $rel" >&2; exit 1; }
+            prev=$line
+          done
 
   regression:
     runs-on: ubuntu-latest
