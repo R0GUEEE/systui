@@ -28,8 +28,17 @@ read -r h w list < <(tui_geometry menu)
 [ "$list" -ge 4 ]
 export -n -f tput
 
-# Stable rootfs execution API must preserve argv exactly.
+# Data-backed package mapping must preserve the historical column contract:
+# Alpine, Arch, Fedora, Void.
+declare -A PKG_MAP=([build-essential]='old old old old')
+SYSTUI_LIBDIR="$ROOT"
 warn() { :; }
+# shellcheck source=../src/core/package-map-data.sh
+. "$ROOT/src/core/package-map-data.sh"
+[ "${PKG_MAP[build-essential]}" = 'build-base base-devel gcc base-devel' ]
+[ "${PKG_MAP[fish]}" = 'fish fish fish fish-shell' ]
+
+# Stable rootfs execution API must preserve argv exactly.
 # shellcheck source=../src/rootfs/api.sh
 . "$ROOT/src/rootfs/api.sh"
 tmp=$(mktemp -d)
