@@ -35,7 +35,7 @@ grep -q 'skipped: \$p (unavailable or timed out)' \
     "$PROJECT_DIR/src/provision/provision-ultimate.sh"
 
 # Ultimate Provision is a first-class main-menu option.
-grep -q 'provision "Ultimate Provision (quick system setup)"' "$PROJECT_DIR/install.sh"
+grep -q 'provision "Ultimate Provision — quick system setup"' "$PROJECT_DIR/install.sh"
 grep -q 'provision)' "$PROJECT_DIR/install.sh"
 grep -q 'menu_ultimate_provision' "$PROJECT_DIR/install.sh"
 grep -q 'quick "Quick setup (install/update, configure, and run)"' \
