@@ -44,6 +44,7 @@ jobs:
             src/rootfs/*.sh \
             src/features/00-platform-bootstrap.sh \
             src/features/20-rootfs-foundation.sh \
+            src/features/21-rootfs-backends.sh \
             src/features/30-health-runtime-capabilities.sh \
             src/features/40-rootfs-init-manager.sh \
             src/features/50-sysconfig-repository-input.sh \
@@ -70,6 +71,7 @@ jobs:
             src/rootfs/api.sh
             src/rootfs/metadata.sh
             src/rootfs/filesystem.sh
+            src/rootfs/backends.sh
           )
           if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
             echo 'Modern core/rootfs modules must not export Bash functions.' >&2
@@ -126,8 +128,10 @@ jobs:
             bash -n src/rootfs/api.sh
             bash -n src/rootfs/metadata.sh
             bash -n src/rootfs/filesystem.sh
+            bash -n src/rootfs/backends.sh
             bash tests/test-core-polish.sh
             bash tests/test-package-map-data.sh
             bash tests/test-rootfs-filesystem-module.sh
+            bash tests/test-rootfs-backends-module.sh
             bash tests/test-rootfs-init-transaction.sh
           '
