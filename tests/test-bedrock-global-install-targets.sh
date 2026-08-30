@@ -22,17 +22,18 @@ p90=$(grep -n '^90-install-guard-final\.sh$' "$order" | cut -d: -f1)
 [ "$p87" -lt "$p88" ] && [ "$p88" -lt "$p90" ]
 
 # Functional wrapper test: ordinary menu_*_install functions gain a target
-# picker, while structural rootfs installers remain untouched.
+# picker, while structural rootfs installers remain untouched. Override the
+# picker after sourcing so this unit test does not depend on a real /bedrock tree.
 bash -c '
 set -e
 menu_demo_install() { echo HOST; }
 menu_rootfs_demo_install() { echo ROOTFS; }
-tui_radio() { echo stratum:test; }
 tui_yesno() { return 0; }
 tui_msg() { :; }
 run_cmd() { shift; "$@"; }
 source "$1"
 systui_bedrock_install_active() { return 0; }
+systui_bedrock_install_target_menu() { echo stratum:test; }
 systui_bedrock_install_canonical() { echo "STRATUM:$1:$2"; }
 out=$(menu_demo_install)
 [ "$out" = "STRATUM:test:demo" ]
