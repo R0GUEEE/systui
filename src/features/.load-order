@@ -92,6 +92,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 86-bedrock-packages-native-nesting.sh
 87-bedrock-native-pm-status.sh
 88-bedrock-global-install-targets.sh
+89-bedrock-pm-install-routing.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
