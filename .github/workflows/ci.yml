@@ -50,6 +50,7 @@ jobs:
             src/features/40-rootfs-init-manager.sh \
             src/features/50-sysconfig-repository-input.sh \
             src/features/60-rootfs-docker-image-normalization.sh \
+            src/features/64-bedrock-aok-compatibility.sh \
             src/features/65-bedrock-aok-safe-update.sh \
             src/features/90-install-guard-final.sh \
             src/features/91-rootfs-exec-final.sh \
@@ -75,9 +76,10 @@ jobs:
             src/rootfs/filesystem.sh
             src/rootfs/backends.sh
             src/sysconfig/repositories.sh
+            src/features/64-bedrock-aok-compatibility.sh
           )
           if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
-            echo 'Modern core/rootfs/sysconfig modules must not export Bash functions.' >&2
+            echo 'Modern core/rootfs/sysconfig/compat modules must not export Bash functions.' >&2
             exit 1
           fi
           if grep -nE -- '--(menu|radiolist|checklist|textbox|msgbox|yesno|inputbox|passwordbox|gauge)[^#]*[[:space:]][0-9]+[[:space:]][0-9]+' src/core/tui-widgets.sh; then
@@ -133,11 +135,13 @@ jobs:
             bash -n src/rootfs/filesystem.sh
             bash -n src/rootfs/backends.sh
             bash -n src/sysconfig/repositories.sh
+            bash -n src/features/64-bedrock-aok-compatibility.sh
             bash -n src/features/65-bedrock-aok-safe-update.sh
             bash tests/test-core-polish.sh
             bash tests/test-package-map-data.sh
             bash tests/test-rootfs-filesystem-module.sh
             bash tests/test-rootfs-backends-module.sh
             bash tests/test-rootfs-init-transaction.sh
+            bash tests/test-bedrock-aok-compatibility.sh
             bash tests/test-bedrock-aok-safe-update.sh
           '
