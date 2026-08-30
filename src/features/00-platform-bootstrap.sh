@@ -5,6 +5,7 @@
 
 for _systui_core_module in \
     "$SYSTUI_LIBDIR/src/core/platform.sh" \
+    "$SYSTUI_LIBDIR/src/core/package-map-data.sh" \
     "$SYSTUI_LIBDIR/src/rootfs/metadata.sh" \
     "$SYSTUI_LIBDIR/src/rootfs/api.sh"
 do
