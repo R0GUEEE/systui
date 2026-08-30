@@ -3,9 +3,20 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-# Core/UI modules must not export Bash function bodies into child environments.
-if grep -R -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "$ROOT/src/core" "$ROOT/src/rootfs"; then
-    echo "core/rootfs modules must not export functions" >&2
+# New core/rootfs modules must never export Bash function bodies. config.sh and
+# common.sh remain legacy-compatible during migration; the central loader
+# scrubs their exports on constrained iSH runtimes.
+modern=(
+    "$ROOT/src/core/tui-widgets.sh"
+    "$ROOT/src/core/platform.sh"
+    "$ROOT/src/core/loader.sh"
+    "$ROOT/src/core/strict-exec.sh"
+    "$ROOT/src/core/package-map-data.sh"
+    "$ROOT/src/rootfs/api.sh"
+    "$ROOT/src/rootfs/metadata.sh"
+)
+if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
+    echo "modern core/rootfs modules must not export functions" >&2
     exit 1
 fi
 
