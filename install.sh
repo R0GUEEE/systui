@@ -166,18 +166,67 @@ create_executable() {
 LIBDIR="__SYSTUI_LIBDIR__"
 SYSTUI_LIBDIR="$LIBDIR"
 export SYSTUI_LIBDIR
-. "$LIBDIR/src/core/config.sh" || exit 1
-. "$LIBDIR/src/core/tui-widgets.sh" || exit 1
-. "$LIBDIR/src/core/common.sh" || exit 1
-. "$LIBDIR/src/core/loader.sh" || exit 1
-systui_load_features || exit 1
-detect_pm
-detect_init
-detect_distro
-require_root
+
+startup_die() {
+    printf 'systui: startup failed: %s\n' "$*" >&2
+    exit 1
+}
+startup_stage() {
+    [ "${SYSTUI_DEBUG_STARTUP:-0}" = 1 ] && printf 'systui: startup: %s\n' "$*" >&2 || true
+}
+
+startup_stage "loading config"
+. "$LIBDIR/src/core/config.sh" || startup_die "could not load core/config.sh"
+startup_stage "loading TUI widgets"
+. "$LIBDIR/src/core/tui-widgets.sh" || startup_die "could not load core/tui-widgets.sh"
+startup_stage "loading common helpers"
+. "$LIBDIR/src/core/common.sh" || startup_die "could not load core/common.sh"
+startup_stage "loading feature loader"
+. "$LIBDIR/src/core/loader.sh" || startup_die "could not load core/loader.sh"
+startup_stage "loading features"
+systui_load_features || startup_die "feature loading failed"
+startup_stage "detecting platform"
+detect_pm || startup_die "package manager detection failed"
+detect_init || startup_die "init detection failed"
+detect_distro || startup_die "distribution detection failed"
+require_root || startup_die "root privileges are required"
+
+systui_startup_check() {
+    command -v "$DIALOG" >/dev/null 2>&1 || startup_die "dialog executable not found: $DIALOG"
+    [ -t 0 ] || startup_die "stdin is not a terminal"
+    [ -t 1 ] || startup_die "stdout is not a terminal"
+    [ -t 2 ] || startup_die "stderr is not a terminal"
+    [ -n "${TERM:-}" ] || startup_die "TERM is not set"
+    if command -v tput >/dev/null 2>&1 && ! tput cols >/dev/null 2>&1; then
+        startup_die "terminal type '$TERM' has no usable terminfo entry"
+    fi
+}
+
+systui_diagnose() {
+    printf 'systui diagnostics\n'
+    printf '  library: %s\n' "$LIBDIR"
+    printf '  version: %s\n' "${SYSTUI_VERSION:-unknown}"
+    printf '  uid: %s\n' "$(id -u 2>/dev/null || echo unknown)"
+    printf '  TERM: %s\n' "${TERM:-unset}"
+    printf '  tty stdin/stdout/stderr: %s/%s/%s\n' "$([ -t 0 ] && echo yes || echo no)" "$([ -t 1 ] && echo yes || echo no)" "$([ -t 2 ] && echo yes || echo no)"
+    printf '  dialog: %s\n' "$(command -v "$DIALOG" 2>/dev/null || echo missing)"
+    printf '  runtime: %s\n' "${SYSTUI_ENVIRONMENT:-unknown}"
+    printf '  init: %s\n' "${INIT:-unknown}"
+    printf '  init provider: %s\n' "${SYSTUI_INIT_PROVIDER:-unknown}"
+    printf '  package manager: %s\n' "${PM:-unknown}"
+    printf '  distro: %s\n' "${DISTRO:-unknown}"
+    printf '  logfile: %s\n' "${LOGFILE:-unknown}"
+}
+
+case "${1:-}" in
+    --diagnose|--doctor) systui_diagnose; exit 0 ;;
+esac
+
+systui_startup_check
+startup_stage "opening main menu"
 main_menu() {
     while true; do
-        local choice runtime
+        local choice runtime rc
         runtime="${SYSTUI_ENVIRONMENT:-unknown}"
         choice=$(tui_menu "Main Menu" "Runtime: $runtime  ·  Init: ${INIT:-unknown}  ·  Packages: ${PM:-unknown}\n\nsystui — choose a section:" \
             health "System Health & diagnostics" \
@@ -185,7 +234,17 @@ main_menu() {
             rootfs "Root Filesystems — build, enter and manage" \
             config "System Configuration" \
             performance "Performance tuning" \
-            quit "Quit") || return 0
+            quit "Quit")
+        rc=$?
+        case "$rc" in
+            0) ;;
+            1|255) return 0 ;;
+            *)
+                printf 'systui: dialog failed to open the main menu (exit %s)\n' "$rc" >&2
+                [ -n "$choice" ] && printf '%s\n' "$choice" >&2
+                return "$rc"
+                ;;
+        esac
         case "$choice" in
             health) menu_health ;;
             provision) menu_ultimate_provision ;;
@@ -193,6 +252,7 @@ main_menu() {
             config) menu_sysconfig ;;
             performance) menu_performance ;;
             quit) return ;;
+            *) printf 'systui: unexpected main-menu selection: %s\n' "$choice" >&2; return 1 ;;
         esac
     done
 }
