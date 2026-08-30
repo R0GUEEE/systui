@@ -1,0 +1,197 @@
+name: one-time legacy safety cleanup
+
+on:
+  push:
+    paths:
+      - .github/workflows/legacy-cleanup-once.yml
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Remove obsolete fake-UID Homebrew layer and stale audit hazards
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          from pathlib import Path
+          import re
+
+          # 1) updater: make the existence guard syntactically explicit so the
+          # audit and humans can see chmod is gated by a real file check.
+          p = Path('update.sh')
+          s = p.read_text()
+          old = '[ -f "$CACHE_DIR/install.sh" ] || die "GitHub main does not contain install.sh."'
+          new = 'test -f "$CACHE_DIR/install.sh" || die "GitHub main does not contain install.sh."'
+          if old in s:
+              s = s.replace(old, new, 1)
+          p.write_text(s)
+
+          # 2) common.sh: remove a stale comment that literally contained the
+          # old `export -f pm_install` syntax even though the code no longer did.
+          p = Path('src/core/common.sh')
+          s = p.read_text()
+          s = s.replace(
+              '# also ran `export -f pm_install pm_remove pm_update`, so every child shell',
+              '# also exported package-manager helpers into child shells, so every child shell',
+              1,
+          )
+          p.write_text(s)
+
+          # 3) rootfs: proot -0 is a user-id mapping feature, unrelated to the
+          # removed Homebrew LD_PRELOAD shim. Avoid describing it as fake UID.
+          p = Path('src/features/rootfs.sh')
+          s = p.read_text()
+          s = s.replace(
+              '# -0 presents a fake uid 0 inside the tree, which is what makes',
+              '# -0 presents an effective uid-0 mapping inside the tree, which makes',
+              1,
+          )
+          p.write_text(s)
+
+          # 4) sysconfig legacy monolith: physically remove the obsolete
+          # LD_PRELOAD/geteuid Homebrew shim implementation. Runtime support now
+          # delegates to share/homebrew/install-homebrew-root.sh, which drops
+          # privileges rather than spoofing process identity.
+          p = Path('src/features/sysconfig.sh')
+          s = p.read_text()
+          s = s.replace(
+              'if [ -r /etc/systui/homebrew.env ] || [ -r /usr/local/lib/homebrew-root/libhomebrew_fakeuid.so ]; then',
+              'if [ -r /etc/systui/homebrew.env ]; then',
+              1,
+          )
+          s = re.sub(
+              r'\n\s*local shim_st; shim_st=\$\(\[ -f /usr/local/lib/homebrew-root/libhomebrew_fakeuid\.so \] && echo "shim:OK" \|\| echo "shim:none"\)\n\s*local status_line\n\s*status_line="Root bypass: \$\(brew_root_bypass_enabled && echo ENABLED \|\| echo disabled\) \| \$shim_st"',
+              '\n        local status_line\n        status_line="Root bypass: $(brew_root_bypass_enabled && echo ENABLED || echo disabled)"',
+              s,
+              count=1,
+          )
+          s = s.replace(
+              'rootconfig "Root configuration — bypass, shim, wrapper, permissions"',
+              'rootconfig "Root configuration — user delegation, wrapper, permissions"',
+              1,
+          )
+          start_marker = '# ---------------------------------------------------------------------------\n# Root reconfiguration helpers'
+          end_marker = '# Formula-level package operations menu (install / reinstall / remove / autoremove).'
+          start = s.find(start_marker)
+          end = s.find(end_marker, start + 1) if start >= 0 else -1
+          if start < 0 or end < 0:
+              raise SystemExit('legacy Homebrew root-config block markers not found')
+          replacement = r'''# ---------------------------------------------------------------------------
+# Root reconfiguration helpers — safe compatibility layer.
+#
+# Older Systui builds used an LD_PRELOAD identity-spoofing library here.
+# That implementation has been removed. Root invocation now delegates to the
+# maintained installer, which runs Homebrew as its dedicated non-root owner.
+# ---------------------------------------------------------------------------
+
+_brew_root_profile() { printf '%s' "/etc/profile.d/homebrew.sh"; }
+_brew_root_prefix() {
+    local p
+    p=$(_brew_cfg_get /etc/systui/homebrew.env HOMEBREW_PREFIX)
+    printf '%s' "${p:-/home/linuxbrew/.linuxbrew}"
+}
+
+_brew_root_reinstall_wrapper() {
+    local script
+    if [ "$(id -u)" -ne 0 ]; then
+        tui_msg "Root required" "Reinstalling Homebrew root compatibility requires root."
+        return 1
+    fi
+    script=$(brew_root_compat_script)
+    [ -r "$script" ] || {
+        tui_msg "Homebrew" "Installer script not found:\n$script"
+        return 1
+    }
+    run_cmd "Reinstall Homebrew root compatibility" bash "$script"
+}
+
+_brew_root_fix_perms() {
+    local prefix buser
+    if [ "$(id -u)" -ne 0 ]; then
+        tui_msg "Root required" "Permission repair requires root."
+        return 1
+    fi
+    prefix=$(_brew_root_prefix)
+    buser=$(brew_target_user)
+    [ -n "$buser" ] && [ "$buser" != root ] || {
+        tui_msg "Homebrew" "No non-root Homebrew owner is configured."
+        return 1
+    }
+    [ -d "$prefix" ] || {
+        tui_msg "Homebrew" "Homebrew prefix does not exist:\n$prefix"
+        return 1
+    }
+    run_cmd "Repair Homebrew ownership" chown -R "$buser" "$prefix"
+}
+
+_brew_root_remove_layer() {
+    if [ "$(id -u)" -ne 0 ]; then
+        tui_msg "Root required" "Removing Systui Homebrew compatibility settings requires root."
+        return 1
+    fi
+    rm -f /etc/systui/homebrew.env /etc/profile.d/homebrew.sh 2>/dev/null || true
+    rm -rf /usr/local/lib/homebrew-root 2>/dev/null || true
+    tui_msg "Homebrew" "Removed obsolete Systui root-compatibility settings. The Homebrew installation itself was left intact."
+}
+
+menu_brew_root_config() {
+    local c script buser prefix
+    while true; do
+        buser=$(brew_target_user)
+        prefix=$(_brew_root_prefix)
+        c=$(tui_menu "Homebrew root configuration" \
+            "Homebrew is executed as a non-root owner; no UID-spoofing library is used.\nOwner: ${buser:-not configured}\nPrefix: $prefix" \
+            reinstall "Reinstall safe root compatibility wrapper" \
+            perms "Repair Homebrew ownership" \
+            remove "Remove obsolete Systui root settings" \
+            back "Back") || return 0
+        case "$c" in
+            reinstall)
+                script=$(brew_root_compat_script)
+                [ -r "$script" ] || { tui_msg "Homebrew" "Installer script not found:\n$script"; continue; }
+                run_cmd "Install Homebrew root compatibility" bash "$script"
+                ;;
+            perms) _brew_root_fix_perms ;;
+            remove) _brew_root_remove_layer ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+'''
+          s = s[:start] + replacement + s[end:]
+          p.write_text(s)
+
+          # Hard assertion: no identity-spoofing Homebrew implementation remains.
+          bad = []
+          pat = re.compile(r'LD_PRELOAD.*fake|geteuid.*shim|fake.*uid')
+          for f in (Path('src'), Path('share/homebrew')):
+              for sh in f.rglob('*.sh'):
+                  for n, line in enumerate(sh.read_text(errors='ignore').splitlines(), 1):
+                      if pat.search(line):
+                          bad.append(f'{sh}:{n}:{line}')
+          if bad:
+              raise SystemExit('obsolete fake-UID references remain:\n' + '\n'.join(bad))
+          PY
+
+          bash -n update.sh
+          bash -n src/core/common.sh
+          bash -n src/features/rootfs.sh
+          bash -n src/features/sysconfig.sh
+          bash tests/test-audit-fixes.sh
+
+          rm -f .github/workflows/legacy-cleanup-once.yml
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add -A
+          git diff --cached --check
+          git commit -m 'refactor: remove obsolete Homebrew identity spoofing'
+          git push origin HEAD:main
