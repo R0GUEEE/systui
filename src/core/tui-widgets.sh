@@ -7,9 +7,6 @@
 # RESPONSIVE TERMINAL GEOMETRY
 ###############################################################################
 
-# The TUI must remain usable on narrow iSH/iPhone terminals as well as normal
-# desktop terminals. Prefer terminal-reported geometry but always keep safe
-# fallbacks. Geometry helpers print plain integers and have no side effects.
 tui_rows() {
     local rows=""
     if command -v tput >/dev/null 2>&1; then rows=$(tput lines 2>/dev/null || true); fi
@@ -80,29 +77,25 @@ tui_password() {
 tui_menu() {
     local title="$1" text="$2" h w list; shift 2
     read -r h w list < <(tui_geometry menu)
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" \
-        --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_menu_no_tags() {
     local title="$1" text="$2" h w list; shift 2
     read -r h w list < <(tui_geometry menu)
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --no-tags \
-        --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --no-tags --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_radio() {
     local title="$1" text="$2" h w list; shift 2
     read -r h w list < <(tui_geometry menu)
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" \
-        --radiolist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --radiolist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_check() {
     local title="$1" text="$2" h w list; shift 2
     read -r h w list < <(tui_geometry menu)
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" \
-        --checklist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --checklist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
 }
 
 tui_text() {
@@ -125,7 +118,11 @@ run_cmd() {
     case $- in *e*) had_errexit=1 ;; esac
 
     log "RUN: $desc :: $*"
-    clear
+    # Do not require TERM/terminfo when commands are run from CI, pipes, or
+    # noninteractive provisioning. Clearing is cosmetic and only useful on a TTY.
+    if [ -t 1 ] && [ -n "${TERM:-}" ] && command -v clear >/dev/null 2>&1; then
+        clear 2>/dev/null || true
+    fi
     echo ">>> $desc"
     echo ">>> $*"
     echo "================================================================="
@@ -142,7 +139,11 @@ run_cmd() {
     fi
     echo "================================================================="
     log "FAILED ($rc): $desc"
-    read -rp "FAILED ($rc): $desc — see $LOGFILE  (press Enter)" _ || true
+    if [ -t 0 ]; then
+        read -rp "FAILED ($rc): $desc — see $LOGFILE  (press Enter)" _ || true
+    else
+        echo "FAILED ($rc): $desc — see $LOGFILE" >&2
+    fi
     return "$rc"
 }
 
