@@ -13,9 +13,11 @@ grep -Fq 'bedrock "Bedrock strata package managers"' "$F"
 grep -Fq 'managers   "Package managers (native, Flatpak, Snap, language)"' "$F"
 
 # Native package sections must remain at the Package Configuration front door.
-for tag in packages catalogue repos managers advanced; do
-    grep -Eq "^[[:space:]]*${tag}[[:space:]]" "$F"
-done
+grep -Fq 'packages  "Install, remove, search and update packages"' "$F"
+grep -Fq 'catalogue "Browse the application catalogue"' "$F"
+grep -Fq 'repos      "Repositories and keys"' "$F"
+grep -Fq 'managers   "Package managers (native, Flatpak, Snap, language)"' "$F"
+grep -Fq 'tags+=(advanced "Advanced package management" back "Back")' "$F"
 
 # The old Bedrock-centric front-door title must not be reintroduced here.
 if grep -Fq 'Packages — host + Bedrock' "$F"; then
