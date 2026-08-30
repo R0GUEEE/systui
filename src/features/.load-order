@@ -89,6 +89,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 83-bedrock-oci-fallback-sources.sh
 84-bedrock-nixos-direct-source.sh
 85-bedrock-full-strata-integration.sh
+86-bedrock-packages-native-nesting.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
