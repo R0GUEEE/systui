@@ -5,22 +5,24 @@
 
 [ -r "$SYSTUI_LIBDIR/src/core/platform.sh" ] && . "$SYSTUI_LIBDIR/src/core/platform.sh"
 
+# Cross-distribution package rescue is intentionally opt-in. Installing foreign
+# distro packages as an automatic fallback can corrupt the native package DB or
+# introduce ABI conflicts. Set SYSTUI_ENABLE_FOREIGN_PACKAGE_RESCUE=1 only for
+# an explicit advanced recovery operation.
+if [ "${SYSTUI_ENABLE_FOREIGN_PACKAGE_RESCUE:-0}" != 1 ]; then
+    SYSTUI_PM_NO_WEB_FALLBACK=1
+    export SYSTUI_PM_NO_WEB_FALLBACK
+fi
+
 detect_init() {
     systui_detect_init
     log "Detected init: ${INIT:-unknown} (provider=${SYSTUI_INIT_PROVIDER:-unknown}, runtime=${SYSTUI_SERVICE_RUNTIME:-unknown}, systemd=${SYSTUI_SYSTEMD_STATE:-unknown}, env=${SYSTUI_ENVIRONMENT:-unknown})"
 }
 
-# Preserve the public helper name already used by sysconfig modules.
 sysconfig_is_ish() { systui_is_ish; }
 sysconfig_systemd_usable() { [ "${SYSTUI_SERVICE_RUNTIME:-}" = systemd ] && systui_systemd_online; }
-
-# Detect the rootfs init by its selected/wired PID1, not by whichever init
-# packages happen to coexist in the image.
 rootfs_wb_init_detect() { systui_rootfs_init_detect "$1"; }
 
-# Central service dispatcher. systemd-offline/iSH images may still manage unit
-# enablement through systemctl --root, but runtime service actions must not be
-# sent to an offline system manager.
 svc() { # <action> <service>
     local action="$1" name="$2" bare=${2%.service}
     detect_init 2>/dev/null || true
@@ -81,7 +83,6 @@ svc() { # <action> <service>
     esac
 }
 
-# Keep runtime status reporting consistent everywhere the TUI calls it.
 sysconfig_init_summary() {
     detect_init 2>/dev/null || true
     {
@@ -92,6 +93,7 @@ sysconfig_init_summary() {
         echo "/sbin/init    : $(readlink -f /sbin/init 2>/dev/null || echo unavailable)"
         echo "Environment   : ${SYSTUI_ENVIRONMENT:-unknown}"
         echo "Manager state : ${SYSTUI_SYSTEMD_STATE:-n/a}"
+        echo "Foreign pkg rescue: $([ "${SYSTUI_PM_NO_WEB_FALLBACK:-1}" = 1 ] && echo disabled || echo ENABLED)"
     } > "$SYSTUI_TMP/init-summary"
     tui_text "Init system" "$SYSTUI_TMP/init-summary"
 }
