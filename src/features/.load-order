@@ -77,6 +77,7 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 71-bedrock-config-final.sh
 72-sysconfig-final-init-routing.sh
 73-rootfs-deb-install-final.sh
+74-rootfs-guarded-chroot-final.sh
 90-install-guard-final.sh
 91-rootfs-exec-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
