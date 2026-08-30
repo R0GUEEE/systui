@@ -285,9 +285,8 @@ menu_shell_hierarchy() {
     done
 }
 
-export -f sysconfig_runtime_one_line sysconfig_runtime_first_word sysconfig_runtime_cmd_valid \
-    sysconfig_runtime_read sysconfig_runtime_write sysconfig_runtime_install_helpers \
-    sysconfig_launch_cmd_current sysconfig_boot_cmd_current sysconfig_launch_cmd_set \
-    sysconfig_launch_cmd_test sysconfig_boot_candidates sysconfig_boot_cmd_set \
-    sysconfig_boot_apply_init sysconfig_boot_restore_init sysconfig_runtime_summary \
-    menu_shell_runtime_commands menu_shell_hierarchy
+# Deliberately do not export these functions. Systui sources all feature files
+# into one Bash process, so exporting them only serializes their full bodies
+# into the environment of every child command. On systems with a small ARG_MAX
+# (notably iSH/chroot-style environments), that can make even /usr/bin/date fail
+# with E2BIG / "Argument list too long".
