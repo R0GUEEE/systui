@@ -3,6 +3,7 @@ health.sh
 30-health-runtime-capabilities.sh
 rootfs.sh
 20-rootfs-foundation.sh
+21-rootfs-backends.sh
 sysconfig.sh
 ultimate-provision.sh
 zz-rootfs-distro-managers.sh
