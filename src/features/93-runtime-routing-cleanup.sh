@@ -45,6 +45,42 @@ systui_bedrock_pm_install_raw() { # <stratum> <packages...>
     _systui_bedrock_pm_install_raw_before_alias_cleanup "$st" "${normalized[@]}"
 }
 
+# Ensure the init utility installer feature is available even in builds where
+# phase 80 was omitted from the generated/source list. This keeps the final
+# Services menu from calling an undefined function.
+systui_ensure_init_installer_loaded() {
+    declare -F sysconfig_install_init_provider >/dev/null 2>&1 \
+        && declare -F sysconfig_remove_init_provider >/dev/null 2>&1 \
+        && return 0
+
+    local f base
+    for f in \
+        "${SYSTUI_ROOT:-}/src/features/80-sysconfig-init-utility-installer.sh" \
+        "${SCRIPT_DIR:-}/features/80-sysconfig-init-utility-installer.sh" \
+        "${BASE_DIR:-}/src/features/80-sysconfig-init-utility-installer.sh"; do
+        [ -n "$f" ] || continue
+        [ -r "$f" ] || continue
+        # shellcheck disable=SC1090
+        . "$f"
+        declare -F sysconfig_install_init_provider >/dev/null 2>&1 && return 0
+    done
+
+    # Resolve relative to this feature file when BASH_SOURCE is available.
+    base=${BASH_SOURCE[0]%/*}
+    f="$base/80-sysconfig-init-utility-installer.sh"
+    if [ -r "$f" ]; then
+        # shellcheck disable=SC1090
+        . "$f"
+    fi
+
+    if ! declare -F sysconfig_install_init_provider >/dev/null 2>&1; then
+        tui_msg "Init installer unavailable" \
+            "SystUI could not load src/features/80-sysconfig-init-utility-installer.sh. Update/reinstall SystUI so the init installer feature is included."
+        return 1
+    fi
+    return 0
+}
+
 # Keep every provider directly addressable from System Config > Services.
 # The active/install state is shown in-place instead of duplicating a separate
 # "Manage current provider" action.
@@ -73,7 +109,18 @@ systui_service_provider_menu() { # <provider>
     while true; do
         sysconfig_refresh_init_state 2>/dev/null || true
         current=${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}
-        label=$(sysconfig_init_display_name "$provider" 2>/dev/null || printf '%s\n' "$provider")
+        if declare -F sysconfig_init_display_name >/dev/null 2>&1; then
+            label=$(sysconfig_init_display_name "$provider")
+        else
+            case "$provider" in
+                systemd) label=systemd ;;
+                openrc) label=OpenRC ;;
+                runit) label=runit ;;
+                sysvinit) label=SysVinit ;;
+                busybox) label='BusyBox init' ;;
+                *) label="$provider" ;;
+            esac
+        fi
         if [ "$provider" = "$current" ]; then
             state=active
         elif sysconfig_init_provider_available "$provider" 2>/dev/null; then
@@ -95,18 +142,19 @@ systui_service_provider_menu() { # <provider>
                 if sysconfig_init_provider_available "$provider" 2>/dev/null; then
                     menu_services_provider "$provider"
                 else
-                    if tui_yesno "$label not installed" "Install $label utilities now?"; then
-                        sysconfig_install_init_provider "$provider" || true
-                        if sysconfig_init_provider_available "$provider" 2>/dev/null; then
-                            menu_services_provider "$provider"
-                        fi
+                    systui_ensure_init_installer_loaded || continue
+                    sysconfig_install_init_provider "$provider" || true
+                    if sysconfig_init_provider_available "$provider" 2>/dev/null; then
+                        menu_services_provider "$provider"
                     fi
                 fi
                 ;;
             install)
+                systui_ensure_init_installer_loaded || continue
                 sysconfig_install_init_provider "$provider" || true
                 ;;
             remove)
+                systui_ensure_init_installer_loaded || continue
                 sysconfig_remove_init_provider "$provider" || true
                 ;;
             switch)
@@ -118,7 +166,7 @@ systui_service_provider_menu() { # <provider>
 }
 
 menu_services() {
-    local c current provider label
+    local c current provider label p n
     local -a opts=()
     while true; do
         sysconfig_refresh_init_state
@@ -138,23 +186,24 @@ menu_services() {
                 systui_service_provider_menu "$c"
                 ;;
             status)
-                if declare -F menu_init_utilities >/dev/null 2>&1; then
-                    local p n
-                    {
-                        printf 'Active init: %s\n\n' "$current"
-                        for p in systemd openrc runit sysvinit busybox; do
-                            n=$(sysconfig_init_display_name "$p" 2>/dev/null || printf '%s' "$p")
-                            if [ "$p" = "$current" ]; then
-                                printf '%-14s active\n' "$n"
-                            elif sysconfig_init_provider_available "$p" 2>/dev/null; then
-                                printf '%-14s installed\n' "$n"
-                            else
-                                printf '%-14s not installed\n' "$n"
-                            fi
-                        done
-                    } > "$SYSTUI_TMP/init-provider-status"
-                    tui_text "Init providers" "$SYSTUI_TMP/init-provider-status"
-                fi
+                {
+                    printf 'Active init: %s\n\n' "$current"
+                    for p in systemd openrc runit sysvinit busybox; do
+                        if declare -F sysconfig_init_display_name >/dev/null 2>&1; then
+                            n=$(sysconfig_init_display_name "$p")
+                        else
+                            n="$p"
+                        fi
+                        if [ "$p" = "$current" ]; then
+                            printf '%-14s active\n' "$n"
+                        elif sysconfig_init_provider_available "$p" 2>/dev/null; then
+                            printf '%-14s installed\n' "$n"
+                        else
+                            printf '%-14s not installed\n' "$n"
+                        fi
+                    done
+                } > "$SYSTUI_TMP/init-provider-status"
+                tui_text "Init providers" "$SYSTUI_TMP/init-provider-status"
                 ;;
             initmgr) menu_init_manager ;;
             advanced) sysconfig_call_menu menu_svc_advanced "Advanced services" ;;
