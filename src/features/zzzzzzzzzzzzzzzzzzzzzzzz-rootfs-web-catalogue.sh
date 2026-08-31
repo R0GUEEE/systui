@@ -6,25 +6,48 @@
 ROOTFS_WEB_CATALOGUE_BASE="${ROOTFS_WEB_CATALOGUE_BASE:-https://images.linuxcontainers.org/images}"
 
 rootfs_web_dirs() { # <url>
-    local html
-    html=$(rootfs_fetch_text "$1/" 2>/dev/null) || return 1
-    printf '%s\n' "$html" |
-        grep -oE 'href="[^"?#]+/"' |
-        sed -E 's/^href="//; s|/"$||' |
-        sed 's|/$||' |
+    local url="$1" html
+    html=$(rootfs_fetch_text "$url/" 2>/dev/null) || return 1
+
+    # Directory indexes differ between mirrors/server versions. Accept quoted
+    # and unquoted href values, then fall back to Apache-style visible entries.
+    {
+        printf '%s\n' "$html" |
+            grep -oE 'href=["'"'"']?[^"'"'"' >?#]+/["'"'"']?' 2>/dev/null |
+            sed -E 's/^href=["'"'"']?//; s|/["'"'"']?$||'
+
+        printf '%s\n' "$html" |
+            sed -nE 's@.*>([^<>/[:space:]][^<>]*)/</a>.*@\1@p' 2>/dev/null
+    } |
+        sed 's/&amp;/\&/g; s/%3[Aa]/:/g' |
+        sed 's|/$||; s|.*/||' |
         awk 'NF && $0 != ".." && $0 != "." && $0 !~ /^https?:\/\//' |
-        sed 's|.*/||' |
         sort -u
 }
 
 rootfs_web_files() { # <url>
     local html
     html=$(rootfs_fetch_text "$1/" 2>/dev/null) || return 1
-    printf '%s\n' "$html" |
-        grep -oE 'href="[^"?#]+\.(tar\.gz|tgz|tar\.xz|tar\.zst|tar)"' |
-        sed -E 's/^href="//; s/"$//' |
+    {
+        printf '%s\n' "$html" |
+            grep -oE 'href=["'"'"']?[^"'"'"' >?#]+\.(tar\.gz|tgz|tar\.xz|tar\.zst|tar)["'"'"']?' 2>/dev/null |
+            sed -E 's/^href=["'"'"']?//; s/["'"'"']?$//'
+        printf '%s\n' "$html" |
+            sed -nE 's@.*>([^<>[:space:]]+\.(tar\.gz|tgz|tar\.xz|tar\.zst|tar))</a>.*@\1@p' 2>/dev/null
+    } |
         sed 's|.*/||' |
         sort -u
+}
+
+rootfs_web_debian_releases_fallback() {
+    # Keep Debian useful even if the upstream directory-index markup changes.
+    # Probe known current Debian suites and emit only directories that exist.
+    local suite
+    for suite in bullseye bookworm trixie forky sid; do
+        if rootfs_fetch_text "$ROOTFS_WEB_CATALOGUE_BASE/debian/$suite/" >/dev/null 2>&1; then
+            printf '%s\n' "$suite"
+        fi
+    done
 }
 
 rootfs_web_pick() { # <title> <prompt> <newline-items>
@@ -57,7 +80,14 @@ rootfs_download_live_catalogue() {
     }
     distro=$(rootfs_web_pick "Download rootfs" "Distribution — parsed live from the web:" "$distros") || return 0
 
-    releases=$(rootfs_web_dirs "$base/$distro") || return 1
+    releases=$(rootfs_web_dirs "$base/$distro" 2>/dev/null || true)
+    if [ "$distro" = debian ]; then
+        releases=$(printf '%s\n%s\n' "$releases" "$(rootfs_web_debian_releases_fallback)" | sed '/^$/d' | sort -u)
+    fi
+    [ -n "$releases" ] || {
+        tui_msg "No releases found" "No downloadable releases were parsed for $distro."
+        return 1
+    }
     release=$(rootfs_web_pick "$distro" "Release / branch — parsed live from upstream:" "$releases") || return 0
 
     archs=$(rootfs_web_dirs "$base/$distro/$release") || return 1
