@@ -111,3 +111,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
 101-unified-package-installation-final.sh
 102-tmux-management-overhaul.sh
+103-tmux-shells-menu-integration-final.sh
