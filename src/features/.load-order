@@ -33,6 +33,7 @@ zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-rootfs-web-catalogue.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-extra-web-images.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-hub.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-oci-sources.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
