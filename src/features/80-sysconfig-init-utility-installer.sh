@@ -15,10 +15,33 @@ sysconfig_init_display_name() {
     esac
 }
 
-sysconfig_detect_package_manager() {
-    case "${PM:-}" in
-        apt|apk|dnf|yum|pacman|zypper|xbps|emerge) printf '%s\n' "$PM"; return 0 ;;
+sysconfig_pm_command_available() { # <pm>
+    case "${1:-}" in
+        apt) command -v apt-get >/dev/null 2>&1 ;;
+        apk) command -v apk >/dev/null 2>&1 ;;
+        dnf) command -v dnf >/dev/null 2>&1 ;;
+        yum) command -v yum >/dev/null 2>&1 ;;
+        pacman) command -v pacman >/dev/null 2>&1 ;;
+        zypper) command -v zypper >/dev/null 2>&1 ;;
+        xbps) command -v xbps-install >/dev/null 2>&1 ;;
+        emerge) command -v emerge >/dev/null 2>&1 ;;
+        *) return 1 ;;
     esac
+}
+
+sysconfig_detect_package_manager() {
+    # Reuse SystUI's PM only when its executable exists in the CURRENT runtime.
+    # Bedrock/chroot/proot transitions can leave PM set to a manager from a
+    # different environment, which otherwise results in "command not found".
+    case "${PM:-}" in
+        apt|apk|dnf|yum|pacman|zypper|xbps|emerge)
+            if sysconfig_pm_command_available "$PM"; then
+                printf '%s\n' "$PM"
+                return 0
+            fi
+            ;;
+    esac
+
     if command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
     elif command -v apk >/dev/null 2>&1; then printf 'apk\n'
     elif command -v dnf >/dev/null 2>&1; then printf 'dnf\n'
@@ -84,9 +107,19 @@ sysconfig_init_pm_install() { # <pm> <packages...>
     shift
     [ "$#" -gt 0 ] || return 1
 
+    sysconfig_pm_command_available "$pm" || {
+        tui_msg "Init installer" "Package manager '$pm' was selected, but its command is not available in this runtime."
+        return 127
+    }
+
     if declare -F pm_install >/dev/null 2>&1; then
-        PM="$pm" pm_install "$@"
-        return $?
+        local old_pm="${PM-}" had_pm=0 rc
+        [ "${PM+x}" = x ] && had_pm=1
+        PM="$pm"
+        pm_install "$@"
+        rc=$?
+        if [ "$had_pm" -eq 1 ]; then PM="$old_pm"; else unset PM; fi
+        return "$rc"
     fi
 
     case "$pm" in
@@ -106,6 +139,10 @@ sysconfig_init_pm_remove() { # <pm> <packages...>
     local pm="$1"
     shift
     [ "$#" -gt 0 ] || return 1
+    sysconfig_pm_command_available "$pm" || {
+        tui_msg "Init installer" "Package manager '$pm' is not available in this runtime."
+        return 127
+    }
     case "$pm" in
         apt) run_cmd "Remove init utilities" apt-get -o Dpkg::Use-Pty=0 remove -y -- "$@" ;;
         apk) run_cmd "Remove init utilities" apk del -- "$@" ;;
@@ -125,7 +162,7 @@ sysconfig_install_init_provider() { # <provider>
     label=$(sysconfig_init_display_name "$provider")
 
     pm=$(sysconfig_detect_package_manager) || {
-        tui_msg "Init utilities" "No supported package manager was detected."
+        tui_msg "Init utilities" "No supported package manager command was found in the current runtime."
         return 1
     }
     sysconfig_init_packages_to_array "$provider" "$pm" packages || {
@@ -135,20 +172,14 @@ sysconfig_install_init_provider() { # <provider>
     packages_text=$(printf '%s ' "${packages[@]}")
     packages_text=${packages_text% }
 
-    # The user already explicitly selected Install/reinstall from the provider
-    # menu, so do not put another dialog confirmation in front of the command.
-    # On some terminals that second dialog can consume the key used to select
-    # the menu item and immediately return Cancel, appearing as a brief flash.
-    if [ -t 1 ]; then
-        clear 2>/dev/null || true
-    fi
+    if [ -t 1 ]; then clear 2>/dev/null || true; fi
     printf 'Installing %s init utilities using %s\n' "$label" "$pm"
     printf 'Packages: %s\n\n' "$packages_text"
 
     sysconfig_init_pm_install "$pm" "${packages[@]}"
     rc=$?
     if [ "$rc" -ne 0 ]; then
-        tui_msg "Init utilities — $label" "Installation failed (exit $rc). Review the package-manager output/log for the failing package or dependency."
+        tui_msg "Init utilities — $label" "Installation failed (exit $rc). Package manager: $pm. Packages: $packages_text"
         return "$rc"
     fi
 
@@ -169,7 +200,10 @@ sysconfig_remove_init_provider() { # <provider>
         tui_msg "Remove $label" "Refusing to remove the currently active init provider. Switch to another init first."
         return 1
     fi
-    pm=$(sysconfig_detect_package_manager) || return 1
+    pm=$(sysconfig_detect_package_manager) || {
+        tui_msg "Remove $label" "No supported package manager command was found in the current runtime."
+        return 1
+    }
     sysconfig_init_packages_to_array "$provider" "$pm" packages || return 1
     packages_text=$(printf '%s ' "${packages[@]}")
     packages_text=${packages_text% }
@@ -204,8 +238,6 @@ menu_init_utilities() {
                         if sysconfig_init_provider_available "$provider" 2>/dev/null; then
                             menu_services_provider "$provider"
                         else
-                            # Manage on a missing provider is equivalent to an
-                            # explicit install request, then opens management.
                             if sysconfig_install_init_provider "$provider"; then
                                 sysconfig_init_provider_available "$provider" 2>/dev/null && menu_services_provider "$provider"
                             fi
@@ -260,7 +292,6 @@ menu_services() {
                 if sysconfig_init_provider_available "$c"; then
                     menu_services_provider "$c"
                 else
-                    label=$(sysconfig_init_display_name "$c")
                     if sysconfig_install_init_provider "$c" && sysconfig_init_provider_available "$c"; then
                         menu_services_provider "$c"
                     fi
