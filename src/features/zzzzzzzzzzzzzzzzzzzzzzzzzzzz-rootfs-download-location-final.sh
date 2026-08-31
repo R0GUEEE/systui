@@ -16,6 +16,48 @@ rootfs_download_source_extension() { # <url>
     esac
 }
 
+# Rootfs downloads must not use the generic installer watchdog. The downloader
+# already provides its own retry/connect/transfer timeouts, and the extra
+# function watchdog can stall after curl/wget has reached 100% on iSH-like
+# environments. Return to the caller as soon as rootfs_fetch_file exits.
+rootfs_download_fetch_direct() { # <url> <destination>
+    local url="$1" dest="$2" rc=0
+
+    mkdir -p "$(dirname "$dest")" || return 1
+    rm -f -- "$dest"
+
+    clear
+    printf '>>> Downloading prebuilt rootfs\n'
+    printf '>>> %s\n' "$url"
+    printf '>>> Saving to: %s\n' "$dest"
+    printf '%s\n' '================================================================='
+    log "ROOTFS DOWNLOAD: $url -> $dest"
+
+    rootfs_fetch_file "$url" "$dest" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        rm -f -- "$dest"
+        log "ROOTFS DOWNLOAD FAILED ($rc): $url"
+        printf '%s\n' '================================================================='
+        printf 'Download failed (%s).\n' "$rc"
+        return "$rc"
+    fi
+
+    if [ ! -s "$dest" ]; then
+        rm -f -- "$dest"
+        log "ROOTFS DOWNLOAD FAILED: empty file from $url"
+        printf '%s\n' '================================================================='
+        printf 'Download failed: downloaded file is empty.\n'
+        return 1
+    fi
+
+    sync "$dest" 2>/dev/null || sync 2>/dev/null || true
+    printf '%s\n' '================================================================='
+    printf 'Download complete: %s\n' "$dest"
+    printf 'Continuing to next phase...\n'
+    log "ROOTFS DOWNLOAD COMPLETE: $dest"
+    return 0
+}
+
 # Download the original upstream archive into /opt/rootfs, then normalize from
 # that persistent copy. This replaces the older temp-workspace source download.
 rootfs_download_to_gz() { # <url> <output.tar.gz>
@@ -34,7 +76,7 @@ rootfs_download_to_gz() { # <url> <output.tar.gz>
     # directly without creating a second copy.
     if [ "$source" = "$output" ]; then
         rm -f -- "$output.part"
-        run_cmd "Downloading prebuilt rootfs" rootfs_fetch_file "$url" "$output.part" || { rm -f -- "$output.part"; return 1; }
+        rootfs_download_fetch_direct "$url" "$output.part" || { rm -f -- "$output.part"; return 1; }
         gzip -t "$output.part" >/dev/null 2>&1 || { rm -f -- "$output.part"; return 1; }
         mv -f -- "$output.part" "$output"
         printf 'Archive saved: %s\n' "$output"
@@ -42,9 +84,10 @@ rootfs_download_to_gz() { # <url> <output.tar.gz>
     fi
 
     rm -f -- "$source.part"
-    run_cmd "Downloading prebuilt rootfs" rootfs_fetch_file "$url" "$source.part" || { rm -f -- "$source.part"; return 1; }
+    rootfs_download_fetch_direct "$url" "$source.part" || { rm -f -- "$source.part"; return 1; }
     mv -f -- "$source.part" "$source" || return 1
     printf 'Downloaded source archive: %s\n' "$source"
+    printf 'Starting normalization immediately...\n'
 
     tmpout="$output.part"
     rm -f -- "$tmpout"
