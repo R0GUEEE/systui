@@ -16,7 +16,6 @@ sysconfig_init_display_name() {
 }
 
 sysconfig_detect_package_manager() {
-    # Prefer SystUI's already-detected package manager when it is valid.
     case "${PM:-}" in
         apt|apk|dnf|yum|pacman|zypper|xbps|emerge) printf '%s\n' "$PM"; return 0 ;;
     esac
@@ -40,37 +39,31 @@ sysconfig_init_install_packages() { # <provider> <package-manager>
         apt:runit) printf '%s\n' runit ;;
         apt:sysvinit) printf '%s\n' 'sysvinit-core sysvinit-utils' ;;
         apt:busybox) printf '%s\n' busybox ;;
-
         apk:systemd) printf '%s\n' systemd ;;
         apk:openrc) printf '%s\n' openrc ;;
         apk:runit) printf '%s\n' runit ;;
         apk:sysvinit) printf '%s\n' sysvinit ;;
         apk:busybox) printf '%s\n' busybox ;;
-
         dnf:systemd|yum:systemd) printf '%s\n' systemd ;;
         dnf:openrc|yum:openrc) printf '%s\n' openrc ;;
         dnf:runit|yum:runit) printf '%s\n' runit ;;
         dnf:sysvinit|yum:sysvinit) printf '%s\n' initscripts ;;
         dnf:busybox|yum:busybox) printf '%s\n' busybox ;;
-
         pacman:systemd) printf '%s\n' systemd ;;
         pacman:openrc) printf '%s\n' openrc ;;
         pacman:runit) printf '%s\n' runit ;;
         pacman:sysvinit) printf '%s\n' sysvinit ;;
         pacman:busybox) printf '%s\n' busybox ;;
-
         zypper:systemd) printf '%s\n' systemd ;;
         zypper:openrc) printf '%s\n' openrc ;;
         zypper:runit) printf '%s\n' runit ;;
         zypper:sysvinit) printf '%s\n' sysvinit-tools ;;
         zypper:busybox) printf '%s\n' busybox ;;
-
         xbps:systemd) printf '%s\n' systemd ;;
         xbps:openrc) printf '%s\n' openrc ;;
         xbps:runit) printf '%s\n' runit ;;
         xbps:sysvinit) printf '%s\n' sysvinit ;;
         xbps:busybox) printf '%s\n' busybox ;;
-
         emerge:systemd) printf '%s\n' sys-apps/systemd ;;
         emerge:openrc) printf '%s\n' sys-apps/openrc ;;
         emerge:runit) printf '%s\n' sys-process/runit ;;
@@ -83,7 +76,6 @@ sysconfig_init_install_packages() { # <provider> <package-manager>
 sysconfig_init_packages_to_array() { # <provider> <pm> <array-name>
     local provider="$1" pm="$2" array_name="$3" raw
     raw=$(sysconfig_init_install_packages "$provider" "$pm") || return 1
-    # Package mappings are controlled constants above; split only on whitespace.
     read -r -a "$array_name" <<< "$raw"
 }
 
@@ -92,8 +84,6 @@ sysconfig_init_pm_install() { # <pm> <packages...>
     shift
     [ "$#" -gt 0 ] || return 1
 
-    # Route through SystUI's package installer when available. This provides
-    # metadata refresh/retry/repository recovery and Bedrock fallback.
     if declare -F pm_install >/dev/null 2>&1; then
         PM="$pm" pm_install "$@"
         return $?
@@ -130,7 +120,7 @@ sysconfig_init_pm_remove() { # <pm> <packages...>
 }
 
 sysconfig_install_init_provider() { # <provider>
-    local provider="$1" pm label packages_text
+    local provider="$1" pm label packages_text rc
     local -a packages=()
     label=$(sysconfig_init_display_name "$provider")
 
@@ -145,17 +135,22 @@ sysconfig_install_init_provider() { # <provider>
     packages_text=$(printf '%s ' "${packages[@]}")
     packages_text=${packages_text% }
 
-    # Do NOT return early merely because a provider is detected. The menu action
-    # is Install / reinstall, so an explicit request must invoke the package
-    # manager and can repair a partial/broken installation.
-    if declare -F tui_yesno >/dev/null 2>&1; then
-        tui_yesno "Install $label" "Install/reinstall $label utilities using $pm?\n\nPackages: $packages_text\n\nThis does NOT switch PID 1 or make $label active." || return 0
+    # The user already explicitly selected Install/reinstall from the provider
+    # menu, so do not put another dialog confirmation in front of the command.
+    # On some terminals that second dialog can consume the key used to select
+    # the menu item and immediately return Cancel, appearing as a brief flash.
+    if [ -t 1 ]; then
+        clear 2>/dev/null || true
     fi
+    printf 'Installing %s init utilities using %s\n' "$label" "$pm"
+    printf 'Packages: %s\n\n' "$packages_text"
 
-    sysconfig_init_pm_install "$pm" "${packages[@]}" || {
-        tui_msg "Init utilities — $label" "Installation failed. Review the package-manager output for the failing package or dependency."
-        return 1
-    }
+    sysconfig_init_pm_install "$pm" "${packages[@]}"
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        tui_msg "Init utilities — $label" "Installation failed (exit $rc). Review the package-manager output/log for the failing package or dependency."
+        return "$rc"
+    fi
 
     sysconfig_refresh_init_state 2>/dev/null || true
     if sysconfig_init_provider_available "$provider" 2>/dev/null; then
@@ -206,11 +201,18 @@ menu_init_utilities() {
                     back "Back") || continue
                 case "$action" in
                     manage)
-                        if sysconfig_init_provider_available "$provider" 2>/dev/null; then menu_services_provider "$provider"
-                        else tui_yesno "$label not installed" "Install $label utilities now?" && sysconfig_install_init_provider "$provider"; fi
+                        if sysconfig_init_provider_available "$provider" 2>/dev/null; then
+                            menu_services_provider "$provider"
+                        else
+                            # Manage on a missing provider is equivalent to an
+                            # explicit install request, then opens management.
+                            if sysconfig_install_init_provider "$provider"; then
+                                sysconfig_init_provider_available "$provider" 2>/dev/null && menu_services_provider "$provider"
+                            fi
+                        fi
                         ;;
-                    install) sysconfig_install_init_provider "$provider" ;;
-                    remove) sysconfig_remove_init_provider "$provider" ;;
+                    install) sysconfig_install_init_provider "$provider" || true ;;
+                    remove) sysconfig_remove_init_provider "$provider" || true ;;
                 esac
                 ;;
             status)
@@ -230,8 +232,6 @@ menu_init_utilities() {
     done
 }
 
-# This front door can be superseded by later routing phases; keep it correct for
-# builds that source phase 80 last.
 menu_services() {
     local c current label
     while true; do
@@ -261,8 +261,8 @@ menu_services() {
                     menu_services_provider "$c"
                 else
                     label=$(sysconfig_init_display_name "$c")
-                    if tui_yesno "Services — $label" "$label is not installed/detected. Install its utilities now?"; then
-                        sysconfig_install_init_provider "$c" && sysconfig_init_provider_available "$c" && menu_services_provider "$c"
+                    if sysconfig_install_init_provider "$c" && sysconfig_init_provider_available "$c"; then
+                        menu_services_provider "$c"
                     fi
                 fi
                 ;;
