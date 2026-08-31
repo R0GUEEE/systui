@@ -1,9 +1,8 @@
 # shellcheck shell=bash
 # PHASE 80 — install/manage alternate init utilities from System Config > Services.
 #
-# This phase intentionally installs service-management utilities without
-# automatically replacing PID 1. Switching the active init remains an explicit
-# Init Manager operation.
+# Installing an init provider never switches PID 1 automatically. Switching the
+# active init remains an explicit Init Manager operation.
 
 sysconfig_init_display_name() {
     case "${1:-}" in
@@ -16,49 +15,11 @@ sysconfig_init_display_name() {
     esac
 }
 
-sysconfig_init_install_packages() { # <provider> <package-manager>
-    local provider="$1" pm="$2"
-    case "$pm:$provider" in
-        apt:systemd) printf 'systemd\n' ;;
-        apt:openrc) printf 'openrc\n' ;;
-        apt:runit) printf 'runit\n' ;;
-        apt:sysvinit) printf 'sysvinit-core sysvinit-utils\n' ;;
-        apt:busybox) printf 'busybox\n' ;;
-
-        apk:systemd) printf 'systemd\n' ;;
-        apk:openrc) printf 'openrc\n' ;;
-        apk:runit) printf 'runit\n' ;;
-        apk:sysvinit) printf 'sysvinit\n' ;;
-        apk:busybox) printf 'busybox\n' ;;
-
-        dnf:systemd|yum:systemd) printf 'systemd\n' ;;
-        dnf:openrc|yum:openrc) printf 'openrc\n' ;;
-        dnf:runit|yum:runit) printf 'runit\n' ;;
-        dnf:sysvinit|yum:sysvinit) printf 'initscripts\n' ;;
-        dnf:busybox|yum:busybox) printf 'busybox\n' ;;
-
-        pacman:systemd) printf 'systemd\n' ;;
-        pacman:openrc) printf 'openrc\n' ;;
-        pacman:runit) printf 'runit\n' ;;
-        pacman:sysvinit) printf 'sysvinit\n' ;;
-        pacman:busybox) printf 'busybox\n' ;;
-
-        zypper:systemd) printf 'systemd\n' ;;
-        zypper:openrc) printf 'openrc\n' ;;
-        zypper:runit) printf 'runit\n' ;;
-        zypper:sysvinit) printf 'sysvinit-tools\n' ;;
-        zypper:busybox) printf 'busybox\n' ;;
-
-        xbps:systemd) printf 'systemd\n' ;;
-        xbps:openrc) printf 'openrc\n' ;;
-        xbps:runit) printf 'runit\n' ;;
-        xbps:sysvinit) printf 'sysvinit\n' ;;
-        xbps:busybox) printf 'busybox\n' ;;
-        *) return 1 ;;
-    esac
-}
-
 sysconfig_detect_package_manager() {
+    # Prefer SystUI's already-detected package manager when it is valid.
+    case "${PM:-}" in
+        apt|apk|dnf|yum|pacman|zypper|xbps|emerge) printf '%s\n' "$PM"; return 0 ;;
+    esac
     if command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
     elif command -v apk >/dev/null 2>&1; then printf 'apk\n'
     elif command -v dnf >/dev/null 2>&1; then printf 'dnf\n'
@@ -66,53 +27,147 @@ sysconfig_detect_package_manager() {
     elif command -v pacman >/dev/null 2>&1; then printf 'pacman\n'
     elif command -v zypper >/dev/null 2>&1; then printf 'zypper\n'
     elif command -v xbps-install >/dev/null 2>&1; then printf 'xbps\n'
+    elif command -v emerge >/dev/null 2>&1; then printf 'emerge\n'
     else return 1
     fi
 }
 
-sysconfig_install_init_provider() { # <provider>
-    local provider="$1" pm packages label
-    label=$(sysconfig_init_display_name "$provider")
+sysconfig_init_install_packages() { # <provider> <package-manager>
+    local provider="$1" pm="$2"
+    case "$pm:$provider" in
+        apt:systemd) printf '%s\n' systemd ;;
+        apt:openrc) printf '%s\n' openrc ;;
+        apt:runit) printf '%s\n' runit ;;
+        apt:sysvinit) printf '%s\n' 'sysvinit-core sysvinit-utils' ;;
+        apt:busybox) printf '%s\n' busybox ;;
 
-    if sysconfig_init_provider_available "$provider" 2>/dev/null; then
-        tui_msg "Init utilities — $label" "$label is already installed/detected."
-        return 0
-    fi
+        apk:systemd) printf '%s\n' systemd ;;
+        apk:openrc) printf '%s\n' openrc ;;
+        apk:runit) printf '%s\n' runit ;;
+        apk:sysvinit) printf '%s\n' sysvinit ;;
+        apk:busybox) printf '%s\n' busybox ;;
 
-    pm=$(sysconfig_detect_package_manager) || {
-        tui_msg "Init utilities" "No supported package manager was detected. Supported: apt, apk, dnf, yum, pacman, zypper, xbps."
-        return 1
-    }
-    packages=$(sysconfig_init_install_packages "$provider" "$pm") || {
-        tui_msg "Init utilities — $label" "No package mapping is available for $label on $pm."
-        return 1
-    }
+        dnf:systemd|yum:systemd) printf '%s\n' systemd ;;
+        dnf:openrc|yum:openrc) printf '%s\n' openrc ;;
+        dnf:runit|yum:runit) printf '%s\n' runit ;;
+        dnf:sysvinit|yum:sysvinit) printf '%s\n' initscripts ;;
+        dnf:busybox|yum:busybox) printf '%s\n' busybox ;;
 
-    if declare -F tui_yesno >/dev/null 2>&1; then
-        tui_yesno "Install $label" "Install $label service/init utilities using $pm?\n\nPackages: $packages\n\nThis does NOT switch PID 1 or make $label the active init." || return 0
+        pacman:systemd) printf '%s\n' systemd ;;
+        pacman:openrc) printf '%s\n' openrc ;;
+        pacman:runit) printf '%s\n' runit ;;
+        pacman:sysvinit) printf '%s\n' sysvinit ;;
+        pacman:busybox) printf '%s\n' busybox ;;
+
+        zypper:systemd) printf '%s\n' systemd ;;
+        zypper:openrc) printf '%s\n' openrc ;;
+        zypper:runit) printf '%s\n' runit ;;
+        zypper:sysvinit) printf '%s\n' sysvinit-tools ;;
+        zypper:busybox) printf '%s\n' busybox ;;
+
+        xbps:systemd) printf '%s\n' systemd ;;
+        xbps:openrc) printf '%s\n' openrc ;;
+        xbps:runit) printf '%s\n' runit ;;
+        xbps:sysvinit) printf '%s\n' sysvinit ;;
+        xbps:busybox) printf '%s\n' busybox ;;
+
+        emerge:systemd) printf '%s\n' sys-apps/systemd ;;
+        emerge:openrc) printf '%s\n' sys-apps/openrc ;;
+        emerge:runit) printf '%s\n' sys-process/runit ;;
+        emerge:sysvinit) printf '%s\n' sys-apps/sysvinit ;;
+        emerge:busybox) printf '%s\n' sys-apps/busybox ;;
+        *) return 1 ;;
+    esac
+}
+
+sysconfig_init_packages_to_array() { # <provider> <pm> <array-name>
+    local provider="$1" pm="$2" array_name="$3" raw
+    raw=$(sysconfig_init_install_packages "$provider" "$pm") || return 1
+    # Package mappings are controlled constants above; split only on whitespace.
+    read -r -a "$array_name" <<< "$raw"
+}
+
+sysconfig_init_pm_install() { # <pm> <packages...>
+    local pm="$1"
+    shift
+    [ "$#" -gt 0 ] || return 1
+
+    # Route through SystUI's package installer when available. This provides
+    # metadata refresh/retry/repository recovery and Bedrock fallback.
+    if declare -F pm_install >/dev/null 2>&1; then
+        PM="$pm" pm_install "$@"
+        return $?
     fi
 
     case "$pm" in
-        apt) run_cmd "Install $label" apt-get -o Dpkg::Use-Pty=0 install -y -- $packages ;;
-        apk) run_cmd "Install $label" apk add $packages ;;
-        dnf) run_cmd "Install $label" dnf install -y -- $packages ;;
-        yum) run_cmd "Install $label" yum install -y -- $packages ;;
-        pacman) run_cmd "Install $label" pacman -S --needed --noconfirm $packages ;;
-        zypper) run_cmd "Install $label" zypper --non-interactive install $packages ;;
-        xbps) run_cmd "Install $label" xbps-install -Sy $packages ;;
+        apt) run_cmd "Install init utilities" apt-get -o Dpkg::Use-Pty=0 install -y -- "$@" ;;
+        apk) run_cmd "Install init utilities" apk add -- "$@" ;;
+        dnf) run_cmd "Install init utilities" dnf install -y -- "$@" ;;
+        yum) run_cmd "Install init utilities" yum install -y -- "$@" ;;
+        pacman) run_cmd "Install init utilities" pacman -S --needed --noconfirm -- "$@" ;;
+        zypper) run_cmd "Install init utilities" zypper --non-interactive install -- "$@" ;;
+        xbps) run_cmd "Install init utilities" xbps-install -Sy -- "$@" ;;
+        emerge) run_cmd "Install init utilities" emerge --ask=n -- "$@" ;;
         *) return 1 ;;
-    esac || return $?
+    esac
+}
+
+sysconfig_init_pm_remove() { # <pm> <packages...>
+    local pm="$1"
+    shift
+    [ "$#" -gt 0 ] || return 1
+    case "$pm" in
+        apt) run_cmd "Remove init utilities" apt-get -o Dpkg::Use-Pty=0 remove -y -- "$@" ;;
+        apk) run_cmd "Remove init utilities" apk del -- "$@" ;;
+        dnf) run_cmd "Remove init utilities" dnf remove -y -- "$@" ;;
+        yum) run_cmd "Remove init utilities" yum remove -y -- "$@" ;;
+        pacman) run_cmd "Remove init utilities" pacman -R --noconfirm -- "$@" ;;
+        zypper) run_cmd "Remove init utilities" zypper --non-interactive remove -- "$@" ;;
+        xbps) run_cmd "Remove init utilities" xbps-remove -Ry -- "$@" ;;
+        emerge) run_cmd "Remove init utilities" emerge --unmerge --ask=n -- "$@" ;;
+        *) return 1 ;;
+    esac
+}
+
+sysconfig_install_init_provider() { # <provider>
+    local provider="$1" pm label packages_text
+    local -a packages=()
+    label=$(sysconfig_init_display_name "$provider")
+
+    pm=$(sysconfig_detect_package_manager) || {
+        tui_msg "Init utilities" "No supported package manager was detected."
+        return 1
+    }
+    sysconfig_init_packages_to_array "$provider" "$pm" packages || {
+        tui_msg "Init utilities — $label" "No package mapping is available for $label on $pm."
+        return 1
+    }
+    packages_text=$(printf '%s ' "${packages[@]}")
+    packages_text=${packages_text% }
+
+    # Do NOT return early merely because a provider is detected. The menu action
+    # is Install / reinstall, so an explicit request must invoke the package
+    # manager and can repair a partial/broken installation.
+    if declare -F tui_yesno >/dev/null 2>&1; then
+        tui_yesno "Install $label" "Install/reinstall $label utilities using $pm?\n\nPackages: $packages_text\n\nThis does NOT switch PID 1 or make $label active." || return 0
+    fi
+
+    sysconfig_init_pm_install "$pm" "${packages[@]}" || {
+        tui_msg "Init utilities — $label" "Installation failed. Review the package-manager output for the failing package or dependency."
+        return 1
+    }
 
     sysconfig_refresh_init_state 2>/dev/null || true
     if sysconfig_init_provider_available "$provider" 2>/dev/null; then
-        tui_msg "Init utilities — $label" "$label was installed successfully. The active init was not changed."
+        tui_msg "Init utilities — $label" "$label utilities were installed successfully. The active init was not changed."
     else
-        tui_msg "Init utilities — $label" "Package installation completed, but SystUI could not detect $label's management utilities yet."
+        tui_msg "Init utilities — $label" "Packages installed successfully. $label is not the active/detectable service provider yet; use Init Manager if you want to switch to it."
     fi
 }
 
 sysconfig_remove_init_provider() { # <provider>
-    local provider="$1" pm packages label current
+    local provider="$1" pm label current packages_text
+    local -a packages=()
     label=$(sysconfig_init_display_name "$provider")
     current=${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}
     if [ "$provider" = "$current" ]; then
@@ -120,17 +175,11 @@ sysconfig_remove_init_provider() { # <provider>
         return 1
     fi
     pm=$(sysconfig_detect_package_manager) || return 1
-    packages=$(sysconfig_init_install_packages "$provider" "$pm") || return 1
-    tui_yesno "Remove $label" "Remove $label packages?\n\nPackages: $packages\n\nOnly use this after confirming the system boots with another init." || return 0
-    case "$pm" in
-        apt) run_cmd "Remove $label" apt-get -o Dpkg::Use-Pty=0 remove -y -- $packages ;;
-        apk) run_cmd "Remove $label" apk del $packages ;;
-        dnf) run_cmd "Remove $label" dnf remove -y -- $packages ;;
-        yum) run_cmd "Remove $label" yum remove -y -- $packages ;;
-        pacman) run_cmd "Remove $label" pacman -R --noconfirm $packages ;;
-        zypper) run_cmd "Remove $label" zypper --non-interactive remove $packages ;;
-        xbps) run_cmd "Remove $label" xbps-remove -Ry $packages ;;
-    esac
+    sysconfig_init_packages_to_array "$provider" "$pm" packages || return 1
+    packages_text=$(printf '%s ' "${packages[@]}")
+    packages_text=${packages_text% }
+    tui_yesno "Remove $label" "Remove $label packages?\n\nPackages: $packages_text\n\nOnly use this after confirming the system boots with another init." || return 0
+    sysconfig_init_pm_remove "$pm" "${packages[@]}"
 }
 
 menu_init_utilities() {
@@ -181,7 +230,8 @@ menu_init_utilities() {
     done
 }
 
-# Final Services front door. This intentionally supersedes phases 69/76/79.
+# This front door can be superseded by later routing phases; keep it correct for
+# builds that source phase 80 last.
 menu_services() {
     local c current label
     while true; do
