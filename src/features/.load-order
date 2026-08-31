@@ -30,6 +30,9 @@ zzzzzzzzzzzzzzzzzzzzz-mmdebstrap-no-unshare.sh
 zzzzzzzzzzzzzzzzzzzzzz-rootfs-no-namespace-backends.sh
 zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
 zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
+zzzzzzzzzzzzzzzzzzzzzzzz-rootfs-web-catalogue.sh
+zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-extra-web-images.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-hub.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
