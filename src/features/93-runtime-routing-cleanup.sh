@@ -45,9 +45,9 @@ systui_bedrock_pm_install_raw() { # <stratum> <packages...>
     _systui_bedrock_pm_install_raw_before_alias_cleanup "$st" "${normalized[@]}"
 }
 
-# The older Services front doors listed both "Manage current provider" and the
-# same provider again by name. Keep every provider directly addressable but
-# represent the active state in its label instead of duplicating the action.
+# Keep every provider directly addressable from System Config > Services.
+# The active/install state is shown in-place instead of duplicating a separate
+# "Manage current provider" action.
 systui_service_provider_label() { # <provider> <active>
     local provider="$1" active="$2" name state
     case "$provider" in
@@ -65,7 +65,56 @@ systui_service_provider_label() { # <provider> <active>
     else
         state='not installed'
     fi
-    printf '%s services [%s]\n' "$name" "$state"
+    printf '%s — install / manage [%s]\n' "$name" "$state"
+}
+
+systui_service_provider_menu() { # <provider>
+    local provider="$1" c current label state
+    while true; do
+        sysconfig_refresh_init_state 2>/dev/null || true
+        current=${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}
+        label=$(sysconfig_init_display_name "$provider" 2>/dev/null || printf '%s\n' "$provider")
+        if [ "$provider" = "$current" ]; then
+            state=active
+        elif sysconfig_init_provider_available "$provider" 2>/dev/null; then
+            state=installed
+        else
+            state='not installed'
+        fi
+
+        c=$(tui_menu "$label  [$state]" \
+            "Install or manage $label. Installing utilities does not automatically replace PID 1." \
+            manage "Manage $label services" \
+            install "Install / reinstall $label" \
+            remove "Remove $label" \
+            switch "Switch active init provider" \
+            back "Back") || return 0
+
+        case "$c" in
+            manage)
+                if sysconfig_init_provider_available "$provider" 2>/dev/null; then
+                    menu_services_provider "$provider"
+                else
+                    if tui_yesno "$label not installed" "Install $label utilities now?"; then
+                        sysconfig_install_init_provider "$provider" || true
+                        if sysconfig_init_provider_available "$provider" 2>/dev/null; then
+                            menu_services_provider "$provider"
+                        fi
+                    fi
+                fi
+                ;;
+            install)
+                sysconfig_install_init_provider "$provider" || true
+                ;;
+            remove)
+                sysconfig_remove_init_provider "$provider" || true
+                ;;
+            switch)
+                menu_init_manager
+                ;;
+            back|'') return 0 ;;
+        esac
+    done
 }
 
 menu_services() {
@@ -79,18 +128,32 @@ menu_services() {
             label=$(systui_service_provider_label "$provider" "$current")
             opts+=("$provider" "$label")
         done
-        opts+=(initmgr "Init Manager / switch provider" advanced "Advanced service settings" back "Back")
+        opts+=(status "Installed init provider status" initmgr "Init Manager / switch provider" advanced "Advanced service settings" back "Back")
 
         c=$(tui_menu "Services  [active: $current]" \
-            "Manage an init/service provider. The active provider is marked in-place; duplicate current-provider entries are removed." \
+            "Select an init provider to install, reinstall, remove, or manage its services." \
             "${opts[@]}") || return 0
         case "$c" in
             systemd|openrc|runit|sysvinit|busybox)
-                if sysconfig_init_provider_available "$c" 2>/dev/null; then
-                    menu_services_provider "$c"
-                else
-                    label=$(systui_service_provider_label "$c" "$current")
-                    tui_msg "Services" "$label\n\nInstall this init/service implementation before managing it."
+                systui_service_provider_menu "$c"
+                ;;
+            status)
+                if declare -F menu_init_utilities >/dev/null 2>&1; then
+                    local p n
+                    {
+                        printf 'Active init: %s\n\n' "$current"
+                        for p in systemd openrc runit sysvinit busybox; do
+                            n=$(sysconfig_init_display_name "$p" 2>/dev/null || printf '%s' "$p")
+                            if [ "$p" = "$current" ]; then
+                                printf '%-14s active\n' "$n"
+                            elif sysconfig_init_provider_available "$p" 2>/dev/null; then
+                                printf '%-14s installed\n' "$n"
+                            else
+                                printf '%-14s not installed\n' "$n"
+                            fi
+                        done
+                    } > "$SYSTUI_TMP/init-provider-status"
+                    tui_text "Init providers" "$SYSTUI_TMP/init-provider-status"
                 fi
                 ;;
             initmgr) menu_init_manager ;;
