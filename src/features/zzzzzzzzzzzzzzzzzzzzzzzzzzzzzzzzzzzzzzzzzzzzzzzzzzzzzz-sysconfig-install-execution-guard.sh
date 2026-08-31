@@ -75,8 +75,12 @@ systui_guard_exec_function() { # <timeout-seconds> <function> [args...]
     watcher=$!
 
     wait "$pid" || rc=$?
+
+    # iSH can leave the watcher's child sleep alive after the watcher shell is
+    # terminated. Waiting for that watcher then blocks until the full timeout,
+    # even though the guarded command already finished successfully. Cancel the
+    # watchdog and return immediately instead.
     kill "$watcher" 2>/dev/null || true
-    wait "$watcher" 2>/dev/null || true
 
     if [ "$rc" -eq 143 ] || [ "$rc" -eq 137 ]; then
         return 124
