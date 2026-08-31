@@ -65,26 +65,65 @@ rootfs_download_official_url() { # <distro> <release> <arch>
     esac
 }
 
+# Normalize a downloaded rootfs archive to .tar.gz without extracting it.
+# tar.xz/tar.zst/tar.gz are all compressed representations of the same tar
+# stream, so decompression can be piped directly into gzip. This avoids the old
+# extract -> repack cycle that could consume several times the image size and
+# appear to hang on iSH/slow storage.
 rootfs_download_to_gz() { # <url> <output.tar.gz>
-    local url="$1" output="$2" tmp archive work packroot first count
+    local url="$1" output="$2" tmp archive staged rc=1
     tmp=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/systui-rootfs-download.XXXXXX") || return 1
-    archive="$tmp/source"; work="$tmp/rootfs"; mkdir -p "$work" "$(dirname "$output")"
-    run_cmd "Downloading prebuilt rootfs" rootfs_fetch_file "$url" "$archive" || { rm -rf "$tmp"; return 1; }
+    archive="$tmp/source"
+    staged="$tmp/output.tar.gz"
+    mkdir -p "$(dirname "$output")" || { rm -rf "$tmp"; return 1; }
+
+    run_cmd "Downloading prebuilt rootfs" rootfs_fetch_file "$url" "$archive" || {
+        rm -rf "$tmp"
+        return 1
+    }
+
+    printf 'Download complete. Normalizing archive without unpacking...\n'
+
     case "$url" in
-        *.tar.gz|*.tgz) tar -xzf "$archive" -C "$work" ;;
-        *.tar.xz) tar -xJf "$archive" -C "$work" ;;
+        *.tar.gz|*.tgz)
+            cp -f -- "$archive" "$staged" && rc=0
+            ;;
+        *.tar.xz)
+            if command -v xz >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1; then
+                (set -o pipefail; xz -dc -- "$archive" | gzip -c > "$staged") && rc=0
+            elif command -v unxz >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1; then
+                (set -o pipefail; unxz -c -- "$archive" | gzip -c > "$staged") && rc=0
+            fi
+            ;;
         *.tar.zst)
-            if tar --zstd -xf "$archive" -C "$work" 2>/dev/null; then :
-            elif command -v zstd >/dev/null 2>&1; then zstd -dc "$archive" | tar -xf - -C "$work"
-            else rm -rf "$tmp"; tui_msg "Missing zstd" "zstd is required to normalize this archive to tar.gz."; return 1; fi ;;
-        *) rm -rf "$tmp"; return 1 ;;
-    esac || { rm -rf "$tmp"; return 1; }
-    count=$(find "$work" -mindepth 1 -maxdepth 1 -print 2>/dev/null | wc -l | tr -d ' ')
-    first=$(find "$work" -mindepth 1 -maxdepth 1 -print 2>/dev/null | head -1)
-    packroot="$work"
-    if [ "$count" = 1 ] && [ -d "$first" ] && [ -d "$first/etc" ]; then packroot="$first"; fi
-    rootfs_tar_create gz "$packroot" "$output" || { rm -rf "$tmp"; return 1; }
+            if command -v zstd >/dev/null 2>&1 && command -v gzip >/dev/null 2>&1; then
+                (set -o pipefail; zstd -q -dc -- "$archive" | gzip -c > "$staged") && rc=0
+            fi
+            ;;
+        *.tar)
+            if command -v gzip >/dev/null 2>&1; then
+                gzip -c -- "$archive" > "$staged" && rc=0
+            fi
+            ;;
+    esac
+
+    if [ "$rc" -ne 0 ] || [ ! -s "$staged" ]; then
+        rm -rf "$tmp"
+        tui_msg "Archive normalization failed" "Could not convert the downloaded archive to tar.gz without unpacking it. Ensure gzip and the source decompressor (xz or zstd) are installed."
+        return 1
+    fi
+
+    # Cheap integrity check before replacing an existing output.
+    if ! gzip -t "$staged" >/dev/null 2>&1; then
+        rm -rf "$tmp"
+        tui_msg "Archive normalization failed" "The generated gzip archive failed its integrity check."
+        return 1
+    fi
+
+    mv -f -- "$staged" "$output" || { rm -rf "$tmp"; return 1; }
     rm -rf "$tmp"
+    printf 'Archive ready: %s\n' "$output"
+    return 0
 }
 
 rootfs_download_unpack() { # <archive.tar.gz> <target-dir>
