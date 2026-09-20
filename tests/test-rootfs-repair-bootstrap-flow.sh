@@ -121,15 +121,31 @@ check "Alpine tree is not offered the Debian bootstrap repair" \
 meta=$(rootfs_deb_recovery_metadata "$nomirror")
 IFS='|' read -r m_distro m_release m_arch m_mirror m_pkgs m_qemu m_backend <<< "$meta"
 check "metadata keeps the recorded distribution" is_true text_has "$m_distro" debian
-# The catalogue is host-aware (a cross-architecture build on an x86_64 host
-# offers qemu-debootstrap rather than mmdebstrap), so assert the family.
+# The backend catalogue is host-aware (an arm64 build recorded on an x86_64
+# host offers qemu-debootstrap instead of mmdebstrap), so assert that recovery
+# ends up with a usable Debian-family backend rather than one tool name.
 debian_backend_ok() {
     case "$m_backend" in
-        mmdebstrap|debootstrap|qemu-debootstrap|cdebootstrap|multistrap|bdebstrap) return 0 ;;
+        mmdebstrap|debootstrap|qemu-debootstrap|cdebootstrap|multistrap|bdebstrap|rinse) return 0 ;;
     esac
     return 1
 }
 check "metadata resolves a Debian-family backend" debian_backend_ok
+
+# The recorded backend can be unavailable on this host; recovery must fall back
+# to what this host can build with instead of reporting missing metadata.
+fallback_backend_ok() {
+    local meta
+    rootfs_resolve_backend() { # <distro> <selected> [arch] [release]
+        [ "$2" = auto ] && { printf 'debootstrap\n'; return 0; }
+        return 1
+    }
+    meta=$(rootfs_deb_recovery_metadata "$debian")
+    unset -f rootfs_resolve_backend
+    IFS='|' read -r _fb_d _fb_r _fb_a _fb_m _fb_p _fb_q fb_backend <<< "$meta"
+    [ "$fb_backend" = debootstrap ]
+}
+check "an unusable recorded backend falls back to a usable one" fallback_backend_ok
 check "missing MIRROR falls back to the distribution default" \
     is_true text_has "$m_mirror" "deb.debian.org"
 tree_meta=$(rootfs_deb_recovery_metadata "$tree_mirror")

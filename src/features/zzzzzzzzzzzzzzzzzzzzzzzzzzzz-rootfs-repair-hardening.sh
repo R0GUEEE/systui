@@ -44,7 +44,20 @@ rootfs_deb_recovery_metadata() { # <target> -> distro|release|arch|mirror|packag
     [ -n "$mirror" ] || mirror=$(rootfs_deb_mirror_from_tree "$t" 2>/dev/null || true)
     [ -n "$mirror" ] || mirror=$(rootfs_deb_default_mirror "$distro" 2>/dev/null || true)
     [ -n "$use_qemu" ] || { needs_qemu "$arch" && use_qemu=1 || use_qemu=0; }
-    backend=$(rootfs_resolve_backend "$distro" "${backend:-auto}" "$arch" "$release" 2>/dev/null || true)
+
+    # A backend recorded by another machine can be unusable here (for example an
+    # arm64 rootfs recorded on an x86_64 host, where the catalogue offers
+    # qemu-debootstrap instead of mmdebstrap). Fall back to whatever this host
+    # can actually use, and only keep the recorded name when nothing else
+    # resolves, so the caller can still report it.
+    local recorded="$backend" resolved=""
+    resolved=$(rootfs_resolve_backend "$distro" "${recorded:-auto}" "$arch" "$release" 2>/dev/null || true)
+    if [ -z "$resolved" ] && [ -n "$recorded" ]; then
+        warn "rootfs: backend '$recorded' is not offered for $distro $release ($arch) here; resolving another"
+        resolved=$(rootfs_resolve_backend "$distro" auto "$arch" "$release" 2>/dev/null || true)
+    fi
+    [ -n "$resolved" ] || resolved="$recorded"
+    backend="$resolved"
 
     printf '%s|%s|%s|%s|%s|%s|%s\n' \
         "$distro" "$release" "$arch" "$mirror" "$pkgs" "$use_qemu" "$backend"
