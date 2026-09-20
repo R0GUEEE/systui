@@ -89,7 +89,8 @@ systui_service_do() { # <provider> <action> <service>
 }
 
 systui_service_list() { # <provider>
-    local provider="$1" out="$SYSTUI_TMP/services-$provider"
+    local provider="$1" out
+    out="$SYSTUI_TMP/services-$provider"
     if declare -F sysconfig_service_list_for >/dev/null 2>&1; then
         sysconfig_service_list_for "$provider" "$out" || true
     else
