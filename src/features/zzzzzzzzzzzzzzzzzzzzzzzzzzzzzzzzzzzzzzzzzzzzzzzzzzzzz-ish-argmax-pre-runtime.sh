@@ -12,7 +12,7 @@
 _systui_pre_runtime_unexport_all() {
     local _decl _name _tmp
     _tmp="${SYSTUI_TMP:-/tmp}/systui-pre-runtime-functions.$$"
-    declare -F > "$_tmp" 2>/dev/null || return 0
+    declare -Fx > "$_tmp" 2>/dev/null || return 0
     while IFS= read -r _decl; do
         _name=${_decl##* }
         [ -n "$_name" ] || continue

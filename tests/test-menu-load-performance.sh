@@ -57,8 +57,12 @@ systui_catalogue_category_data() {
 browse_category test
 [ "$(wc -l < "$snapshot_calls")" -eq 1 ]
 
-# Hot menu implementations must not restore known expensive redraw patterns.
+# Hot menu/startup implementations must not restore known expensive redraw patterns.
 ! grep -Fq '< <(tui_geometry' "$ROOT/src/core/tui-widgets.sh"
+! grep -Fq 'declare -F > "$_tmp"' "$ROOT/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ish-argmax-pre-runtime.sh"
+! grep -Fq 'declare -F > "$_tmp"' "$ROOT/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh"
+grep -Fq 'declare -Fx > "$_tmp"' "$ROOT/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ish-argmax-pre-runtime.sh"
+grep -Fq 'declare -Fx > "$_tmp"' "$ROOT/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh"
 ! grep -A25 '^menu_shell_hierarchy()' "$ROOT/src/features/103-tmux-shells-menu-integration-final.sh" \
     | grep -Fq 'detect_init 2>/dev/null || true'
 
