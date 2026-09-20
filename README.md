@@ -160,12 +160,16 @@ override them.
 
    | Tier | Contents | On failure |
    |------|----------|------------|
-   | `core` | bash, dialog, coreutils, grep, sed, gawk, findutils, diffutils, tar, gzip, bzip2, xz, unzip, ca-certificates, curl, procps, util-linux, less, ncurses | aborts the install |
-   | `extra` | git, wget, rsync, jq, openssh-client, iproute2, iputils, dnsutils, netcat, socat, lsof, pv, tree, ncdu, tmux, nano, vim, neovim, micro, htop, ripgrep, fd, fzf, bat, eza, w3m, lynx, most, zip, p7zip, zstd, strace, mtr, nmap, tcpdump, fastfetch, figlet, python3, gnupg, file, which | warns and continues |
-   | `build` | make, gcc, cmake, ninja, pip, python3-venv | warns and continues |
+   | `core` | bash, dialog, coreutils, grep, sed, gawk, findutils, diffutils, tar, gzip, bzip2, xz, unzip, ca-certificates, curl, procps, util-linux, less, ncurses | skipped and reported |
+   | `extra` | git, wget, rsync, jq, openssh-client, iproute2, iputils, dnsutils, netcat, socat, lsof, pv, tree, ncdu, tmux, nano, vim, neovim, micro, htop, ripgrep, fd, fzf, bat, eza, w3m, lynx, most, zip, p7zip, zstd, strace, mtr, nmap, tcpdump, fastfetch, figlet, python3, gnupg, file, which | skipped and reported |
+   | `build` | make, gcc, cmake, ninja, pip, python3-venv | skipped and reported |
 
    Because the toolkit is installed up front, no menu has to install a tool
-   mid-flow, and a package a distribution does not ship cannot fail the install.
+   mid-flow. Packages a distribution cannot provide are located first and then
+   **skipped with a report** — a missing package never aborts the install, and
+   neither does a failed package-index refresh. Each run ends with a summary of
+   what was skipped. Set `SYSTUI_DEPS_STRICT=1` to make unavailable packages a
+   hard error instead.
 
 3. **Replaces managed project files** in `/usr/local/lib/systui/` with the latest copy
 4. **Creates or replaces the executable** at `/usr/local/bin/systui`
@@ -183,9 +187,9 @@ sudo ./install.sh --no-deps       # skip dependency installation
 ```
 
 Environment overrides: `SYSTUI_DEPS_TIERS=core,extra,build`,
-`SYSTUI_MINIMAL_DEPS=1`, `SYSTUI_DEPS_DRY_RUN=1`, `SYSTUI_DEPS_STRICT=0`
-(never fail on an unavailable package), and `SYSTUI_PM_OVERRIDE=<pm>` to force a
-package-manager backend.
+`SYSTUI_MINIMAL_DEPS=1`, `SYSTUI_DEPS_DRY_RUN=1`, `SYSTUI_PM_OVERRIDE=<pm>` to
+force a package-manager backend, and `SYSTUI_DEPS_STRICT=1` to fail instead of
+skipping unavailable packages.
 
 ### Dependencies
 

@@ -68,10 +68,50 @@ detect_pm() {
     fi
 }
 
-# The updater itself needs git/curl/tar and a CA bundle before it can clone.
-# install.sh then installs the full dependency manifest for the new tree.
+update_pkg_installed() { # <pm> <package>
+    case "$1" in
+        apt) dpkg-query -W -f='${Status}' "$2" 2>/dev/null | grep -q 'install ok installed' ;;
+        apk) apk info -e "$2" >/dev/null 2>&1 ;;
+        pacman) pacman -Q "$2" >/dev/null 2>&1 ;;
+        dnf|yum|zypper) rpm -q "$2" >/dev/null 2>&1 ;;
+        xbps) xbps-query -p pkgver "$2" >/dev/null 2>&1 ;;
+        emerge) [ -n "$(portageq match / "$2" 2>/dev/null)" ] ;;
+        *) command -v "$2" >/dev/null 2>&1 ;;
+    esac
+}
+
+update_install_one() { # <pm> <package>
+    case "$1" in
+        apt) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$2" ;;
+        apk) apk add --no-progress "$2" ;;
+        pacman) pacman -S --noconfirm --needed "$2" ;;
+        dnf) dnf install -y --setopt=install_weak_deps=False "$2" ;;
+        yum) yum install -y "$2" ;;
+        zypper) zypper --non-interactive install --no-recommends "$2" ;;
+        xbps) xbps-install -y "$2" ;;
+        emerge) emerge --noreplace "$2" ;;
+        *) return 1 ;;
+    esac
+}
+
+update_refresh_metadata() { # <pm>
+    case "$1" in
+        apt) DEBIAN_FRONTEND=noninteractive apt-get update -qq ;;
+        apk) apk update ;;
+        dnf) dnf makecache -y ;;
+        yum) yum makecache -y ;;
+        zypper) zypper --non-interactive refresh ;;
+        xbps) xbps-install -S ;;
+        pacman) return 0 ;;
+    esac >/dev/null 2>&1 || true
+}
+
+# The updater itself needs git plus a download tool and a CA bundle before it can
+# clone. Each prerequisite is installed on its own and anything a distribution
+# cannot provide is skipped rather than aborting the update; git is the only
+# hard requirement, because without it the update cannot run at all.
 ensure_update_prerequisites() {
-    local pm pkg
+    local pm pkg skipped=''
     local -a pkgs=()
     command -v git >/dev/null 2>&1 || pkgs+=(git)
     if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then pkgs+=(curl); fi
@@ -87,23 +127,25 @@ ensure_update_prerequisites() {
     fi
     pm=$(detect_pm)
     if [ -z "$pm" ]; then
-        warn "No package manager detected; install before updating: ${pkgs[*]}"
+        warn "No package manager detected; install these before updating: ${pkgs[*]}"
         command -v git >/dev/null 2>&1 || die "git is required to update systui."
         return 0
     fi
-    info "Installing update prerequisites ($pm): ${pkgs[*]}"
-    case "$pm" in
-        apt) DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
-             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${pkgs[@]}" ;;
-        apk) apk add --no-progress "${pkgs[@]}" || { apk update && apk add --no-progress "${pkgs[@]}"; } ;;
-        pacman) pacman -S --noconfirm --needed "${pkgs[@]}" ;;
-        dnf) dnf install -y --setopt=install_weak_deps=False "${pkgs[@]}" ;;
-        yum) yum install -y "${pkgs[@]}" ;;
-        zypper) zypper --non-interactive install --no-recommends "${pkgs[@]}" ;;
-        xbps) xbps-install -Sy "${pkgs[@]}" ;;
-        emerge) emerge --noreplace "${pkgs[@]}" ;;
-    esac || warn "Some update prerequisites could not be installed: ${pkgs[*]}"
-    command -v git >/dev/null 2>&1 || die "git is required to update systui."
+
+    info "Update prerequisites ($pm): ${pkgs[*]}"
+    update_refresh_metadata "$pm"
+    for pkg in "${pkgs[@]}"; do
+        update_pkg_installed "$pm" "$pkg" && continue
+        if ! update_install_one "$pm" "$pkg" >/dev/null 2>&1 || ! update_pkg_installed "$pm" "$pkg"; then
+            skipped="$skipped $pkg"
+        fi
+    done
+    if [ -n "$skipped" ]; then
+        warn "Skipped prerequisites not available for $pm:${skipped}"
+        warn "Continuing without them; affected features will report the tool as unavailable."
+    fi
+    command -v git >/dev/null 2>&1 || die "git is required to update systui and could not be installed automatically."
+    return 0
 }
 
 canonical_parent_child() { # <path>

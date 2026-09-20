@@ -101,5 +101,78 @@ if [ "$(id -u)" -eq 0 ]; then
         [ "$before" = "$after" ]' _ "$UPDATE"
 fi
 
+# --- unavailable packages are skipped ---------------------------------------
+fakebin="$tmp/fakebin"
+mkdir -p "$fakebin"
+cat > "$fakebin/dpkg-query" <<'FAKE'
+#!/bin/sh
+exit 1
+FAKE
+cat > "$fakebin/apt-cache" <<'FAKE'
+#!/bin/sh
+exit 1
+FAKE
+cat > "$fakebin/apt-get" <<'FAKE'
+#!/bin/sh
+exit 100
+FAKE
+chmod +x "$fakebin"/*
+
+check "unlocatable packages are skipped instead of failing" bash -c '
+    source "$1"
+    refresh_package_metadata() { return 0; }
+    PATH="$2:$PATH"
+    install_native_packages apt definitely-not-a-real-package-xyz >"$3/out" 2>&1
+    rc=$?
+    [ "$rc" -eq 0 ] || { echo "exit $rc"; exit 1; }
+    grep -q "Not found in any configured repository" "$3/out" &&
+    grep -q "definitely-not-a-real-package-xyz" "$3/out"' _ "$tmp/install_lib.sh" "$fakebin" "$tmp"
+
+check "skipped packages are reported in the summary" bash -c '
+    source "$1"
+    refresh_package_metadata() { return 0; }
+    PATH="$2:$PATH"
+    SYSTUI_DEPS_SKIPPED=""
+    install_native_packages apt another-missing-package-xyz >/dev/null 2>&1
+    deps_report_skipped >"$3/summary" 2>&1
+    grep -q "Skipped (not available for this distribution)" "$3/summary" &&
+    grep -q "another-missing-package-xyz" "$3/summary"' _ "$tmp/install_lib.sh" "$fakebin" "$tmp"
+
+check "strict mode still fails on unavailable packages" bash -c '
+    source "$1"
+    refresh_package_metadata() { return 0; }
+    PATH="$2:$PATH"
+    SYSTUI_DEPS_STRICT=1
+    # error() exits, so run the call in a subshell and inspect its status.
+    if ( install_native_packages apt strict-mode-missing-package ) >/dev/null 2>&1; then exit 1; fi
+    exit 0' _ "$tmp/install_lib.sh" "$fakebin"
+
+check "missing commands are warnings by default" bash -c '
+    source "$1"
+    PROJECT_DIR="$3"
+    deps_missing_commands() { printf "core:definitely-missing-command\n"; }
+    deps_report_skipped() { return 0; }
+    verify_dependencies >"$2/verify" 2>&1
+    rc=$?
+    [ "$rc" -eq 0 ] || { echo "exit $rc"; exit 1; }
+    grep -q "Commands still missing" "$2/verify"' _ "$tmp/install_lib.sh" "$tmp" "$ROOT"
+
+check "strict mode fails verification on missing commands" bash -c '
+    source "$1"
+    PROJECT_DIR="$2"
+    deps_missing_commands() { printf "core:definitely-missing-command\n"; }
+    deps_report_skipped() { return 0; }
+    SYSTUI_DEPS_STRICT=1
+    if ( verify_dependencies ) >/dev/null 2>&1; then exit 1; fi
+    exit 0' _ "$tmp/install_lib.sh" "$ROOT"
+
+check "install.sh documents skip-by-default behaviour" bash -c '
+    grep -q "Skipped (not available for this distribution)" "$1" &&
+    grep -q "Not found in any configured repository" "$1"' _ "$INSTALL"
+check "update.sh installs prerequisites one by one and skips unavailable ones" bash -c '
+    grep -q "update_install_one" "$1" &&
+    grep -q "Skipped prerequisites not available" "$1" &&
+    grep -q "git is required to update systui and could not be installed" "$1"' _ "$UPDATE"
+
 printf '\nDependency pipeline: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

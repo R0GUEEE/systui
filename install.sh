@@ -38,7 +38,7 @@ Environment:
   SYSTUI_MINIMAL_DEPS=1    install only the core tier
   SYSTUI_DEPS_TIERS=...    explicit tiers: core,extra,build
   SYSTUI_DEPS_DRY_RUN=1    print what would be installed, change nothing
-  SYSTUI_DEPS_STRICT=0     do not fail when a package is unavailable
+  SYSTUI_DEPS_STRICT=1     fail instead of skipping unavailable packages
   SYSTUI_PM_OVERRIDE=<pm>  force apt|apk|pacman|dnf|zypper|xbps|emerge
 USAGE
 }
@@ -72,6 +72,9 @@ PACKAGE_METADATA_REFRESHED=0
 refresh_package_metadata() {
     local pm="$1"
     [ "$PACKAGE_METADATA_REFRESHED" = 0 ] || return 0
+    # A failed index refresh must never abort the install: the locate step and
+    # the per-package retry still run, and any package that cannot be found is
+    # reported and skipped.
     case "$pm" in
         apt) apt-get update ;;
         apk) apk update ;;
@@ -83,48 +86,129 @@ refresh_package_metadata() {
         zypper) zypper --non-interactive refresh ;;
         xbps) xbps-install -S ;;
         emerge) return 0 ;;
-    esac
+    esac || warn "Package index refresh did not complete for $pm; continuing"
     PACKAGE_METADATA_REFRESHED=1
+    return 0
 }
 
+# Locate a package in the configured repositories without installing it.
+#   0 = located, 1 = not found, 2 = cannot tell (no usable query for this PM)
+deps_package_available() { # <pm> <package>
+    local pm="$1" pkg="$2"
+    case "$pm" in
+        apt)
+            apt-cache show -- "$pkg" >/dev/null 2>&1 && return 0
+            apt-cache policy -- "$pkg" 2>/dev/null | grep -q 'Candidate: [0-9]' && return 0
+            return 1 ;;
+        apk)
+            apk info -e "$pkg" >/dev/null 2>&1 && return 0
+            apk search -x -- "$pkg" 2>/dev/null | grep -q . && return 0
+            return 1 ;;
+        pacman) pacman -Si -- "$pkg" >/dev/null 2>&1 && return 0; return 1 ;;
+        dnf) dnf -q list --available "$pkg" >/dev/null 2>&1 && return 0; return 1 ;;
+        yum) yum -q list available "$pkg" >/dev/null 2>&1 && return 0; return 1 ;;
+        zypper) zypper --non-interactive --no-refresh search -x "$pkg" >/dev/null 2>&1 && return 0; return 1 ;;
+        xbps) xbps-query -Rs "$pkg" >/dev/null 2>&1 && return 0; return 1 ;;
+        emerge) emerge --search "$pkg" >/dev/null 2>&1 && return 0; return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+deps_run_install_batch() { # <pm> <packages...>
+    local pm="$1"
+    shift
+    case "$pm" in
+        apt) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ;;
+        apk) apk add --no-progress "$@" ;;
+        pacman) pacman -S --noconfirm --needed "$@" ;;
+        dnf) dnf install -y --setopt=install_weak_deps=False "$@" ;;
+        yum) yum install -y "$@" ;;
+        zypper) zypper --non-interactive install --no-recommends "$@" ;;
+        xbps) xbps-install -y "$@" ;;
+        emerge) emerge --noreplace "$@" ;;
+        *) return 1 ;;
+    esac
+}
+
+deps_run_install_one() { # <pm> <package>
+    deps_run_install_batch "$1" "$2"
+}
+
+# Track packages that were unavailable so they are reported once, at the end.
+deps_note_skipped() { # <packages...>
+    local pkg
+    for pkg in "$@"; do
+        [ -n "$pkg" ] || continue
+        case " ${SYSTUI_DEPS_SKIPPED:-} " in
+            *" $pkg "*) ;;
+            *) SYSTUI_DEPS_SKIPPED="${SYSTUI_DEPS_SKIPPED:+$SYSTUI_DEPS_SKIPPED }$pkg" ;;
+        esac
+    done
+    return 0
+}
+
+deps_report_skipped() {
+    [ -n "${SYSTUI_DEPS_SKIPPED:-}" ] || return 0
+    warn "Skipped (not available for this distribution): $SYSTUI_DEPS_SKIPPED"
+    warn "Related features will report their tool as unavailable; everything else works normally."
+    return 0
+}
+
+# Install native packages. Packages a distribution cannot provide are located
+# first and skipped with a report instead of failing the install: no missing
+# package aborts the run. SYSTUI_DEPS_STRICT=1 turns skipped packages back into
+# a hard error.
 install_native_packages() {
-    local pm="$1" pkg; shift
-    local missing=() failed=()
+    local pm="$1" pkg
+    shift
+    [ "$#" -gt 0 ] || return 0
+    local -a missing=() available=() unlocatable=() failed=()
     for pkg in "$@"; do package_is_installed "$pm" "$pkg" || missing+=("$pkg"); done
     [ ${#missing[@]} -gt 0 ] || return 0
     info "Installing ${#missing[@]} missing package(s): ${missing[*]}"
     refresh_package_metadata "$pm"
-    case "$pm" in
-        apt) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${missing[@]}" ;;
-        apk) apk add --no-progress "${missing[@]}" ;;
-        pacman) pacman -S --noconfirm --needed "${missing[@]}" ;;
-        dnf) dnf install -y --setopt=install_weak_deps=False "${missing[@]}" ;;
-        yum) yum install -y "${missing[@]}" ;;
-        zypper) zypper --non-interactive install --no-recommends "${missing[@]}" ;;
-        xbps) xbps-install -y "${missing[@]}" ;;
-        emerge) emerge --noreplace "${missing[@]}" ;;
-    esac && return 0
-    warn "The package batch was not fully available; retrying one package at a time."
+
     for pkg in "${missing[@]}"; do
-        package_is_installed "$pm" "$pkg" && continue
-        case "$pm" in
-            apt) DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$pkg" ;;
-            apk) apk add --no-progress "$pkg" ;;
-            pacman) pacman -S --noconfirm --needed "$pkg" ;;
-            dnf) dnf install -y --setopt=install_weak_deps=False "$pkg" ;;
-            yum) yum install -y "$pkg" ;;
-            zypper) zypper --non-interactive install --no-recommends "$pkg" ;;
-            xbps) xbps-install -y "$pkg" ;;
-            emerge) emerge --noreplace "$pkg" ;;
-        esac >/dev/null 2>&1 || failed+=("$pkg")
-    done
-    [ ${#failed[@]} -eq 0 ] || {
-        if [ "${SYSTUI_DEPS_STRICT:-1}" = "1" ]; then
-            error "Required dependencies could not be installed: ${failed[*]}"
+        if deps_package_available "$pm" "$pkg"; then
+            available+=("$pkg")
+        else
+            case $? in
+                1) unlocatable+=("$pkg") ;;
+                *) available+=("$pkg") ;;
+            esac
         fi
-        warn "Could not install: ${failed[*]}"
-        return 1
-    }
+    done
+    if [ ${#unlocatable[@]} -gt 0 ]; then
+        warn "Not found in any configured repository (skipped): ${unlocatable[*]}"
+        deps_note_skipped "${unlocatable[@]}"
+    fi
+
+    if [ ${#available[@]} -gt 0 ]; then
+        if deps_run_install_batch "$pm" "${available[@]}"; then
+            for pkg in "${available[@]}"; do
+                package_is_installed "$pm" "$pkg" || failed+=("$pkg")
+            done
+        else
+            warn "The package batch did not complete; retrying one package at a time."
+            for pkg in "${available[@]}"; do
+                package_is_installed "$pm" "$pkg" && continue
+                if deps_run_install_one "$pm" "$pkg" >/dev/null 2>&1; then
+                    package_is_installed "$pm" "$pkg" || failed+=("$pkg")
+                else
+                    failed+=("$pkg")
+                fi
+            done
+        fi
+    fi
+
+    if [ ${#failed[@]} -gt 0 ]; then
+        warn "Could not install (skipped): ${failed[*]}"
+        deps_note_skipped "${failed[@]}"
+    fi
+
+    if [ "${SYSTUI_DEPS_STRICT:-0}" = "1" ] && [ -n "${SYSTUI_DEPS_SKIPPED:-}" ]; then
+        error "Dependencies could not be installed: $SYSTUI_DEPS_SKIPPED"
+    fi
     return 0
 }
 
@@ -141,7 +225,8 @@ install_native_packages() {
 #   SYSTUI_MINIMAL_DEPS=1    install only the core tier
 #   SYSTUI_DEPS_TIERS=...    explicit tier selection (core,extra,build)
 #   SYSTUI_DEPS_DRY_RUN=1    print what would be installed, change nothing
-#   SYSTUI_DEPS_STRICT=0     do not fail when a package is unavailable
+#   SYSTUI_DEPS_STRICT=1     fail (instead of skipping) when a package or
+#                            command is unavailable; the default skips
 #   SYSTUI_PM_OVERRIDE=<pm>  force a package-manager backend
 ###############################################################################
 
@@ -215,20 +300,14 @@ deps_missing_commands_group() { # <tier> <prefix> <comma-list>
 
 # Non-core packages are best-effort: a name a distribution does not ship must
 # not abort the whole install. Unavailable packages are reported and skipped.
+# Kept for compatibility with earlier callers: every tier now behaves this way
+# (unavailable packages are skipped and reported), so this is a thin alias.
 install_native_packages_tolerant() { # <pm> <label> <packages...>
-    local pm="$1" label="$2" pkg
+    local pm="$1" label="$2"
     shift 2
     [ "$#" -gt 0 ] || return 0
-    local -a missing=() failed=()
-    for pkg in "$@"; do package_is_installed "$pm" "$pkg" || missing+=("$pkg"); done
-    [ "${#missing[@]}" -gt 0 ] || return 0
-    info "Installing ${#missing[@]} $label package(s)"
-    refresh_package_metadata "$pm"
-    SYSTUI_DEPS_STRICT=0 install_native_packages "$pm" "${missing[@]}" || true
-    for pkg in "${missing[@]}"; do
-        package_is_installed "$pm" "$pkg" || failed+=("$pkg")
-    done
-    [ "${#failed[@]}" -eq 0 ] || warn "Unavailable $label package(s) on $pm (skipped): ${failed[*]}"
+    info "Installing $label package(s)"
+    install_native_packages "$pm" "$@" || true
     return 0
 }
 
@@ -314,9 +393,18 @@ verify_dependencies() {
     else
         for cmd in bash dialog sed awk grep cut tr head sort find; do check_command "$cmd" || missing_commands+="$cmd "; done
     fi
-    if ! check_command curl && ! check_command wget; then missing_commands+="curl-or-wget "; fi
-    [ -z "$missing_commands" ] || error "Missing required commands: $missing_commands"
-    success "All dependencies present"
+    if ! check_command curl && ! check_command wget; then
+        warn "Neither curl nor wget is available; network features will be unavailable."
+    fi
+    if [ -n "$missing_commands" ]; then
+        warn "Commands still missing after the dependency step: $missing_commands"
+        warn "Menus that need them report their tool as unavailable; the rest of systui works normally."
+        if [ "${SYSTUI_DEPS_STRICT:-0}" = "1" ]; then
+            error "Missing required commands: $missing_commands"
+        fi
+    fi
+    deps_report_skipped
+    success "Dependency check finished"
 }
 
 install_project() {
