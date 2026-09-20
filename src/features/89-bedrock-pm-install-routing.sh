@@ -60,7 +60,10 @@ systui_bedrock_pm_install_raw() { # <stratum> <packages...>
 # and recovery layers.
 if declare -F pm_install >/dev/null 2>&1 \
     && ! declare -F _systui_pm_install_before_bedrock_targets >/dev/null 2>&1; then
-    eval "$(declare -f pm_install | sed '1s/^pm_install[[:space:]]*()/_systui_pm_install_before_bedrock_targets ()/')"
+    _systui_saved_fn=$(declare -f pm_install)
+    _systui_saved_fn=${_systui_saved_fn/#pm_install /_systui_pm_install_before_bedrock_targets }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 pm_install() {
