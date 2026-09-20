@@ -67,7 +67,7 @@ systui_debian_init_conflicts() { # <target-provider>
 }
 
 systui_debian_replace_init_provider() { # <provider>
-    local provider="$1" label targets_raw conflicts_raw target_text conflict_text rc pkg
+    local provider="$1" label targets_raw target_text conflict_text rc pkg
     local -a targets=() conflicts=() apt_args=()
 
     command -v apt-get >/dev/null 2>&1 || return 127
