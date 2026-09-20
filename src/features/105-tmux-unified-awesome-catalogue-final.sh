@@ -135,12 +135,12 @@ systui_tmux_catalog_project_action() { # <category> <repo> <name> <description>
     grep -Fq "set -g @plugin '$repo'" "$conf" 2>/dev/null && installed=yes
 
     while true; do
-        action=$(tui_menu_no_tags "$name" \
+        tui_capture_menu action tui_menu_no_tags "$name" \
             "Category: $(systui_tmux_catalog_title "$category")\nRepository: $repo\nTPM configured: $installed\n\n$desc" \
             toggle "$([ "$installed" = yes ] && printf 'Remove from TPM configuration' || printf 'Add as TPM plugin')" \
             clone "Clone/update source locally" \
             details "Show full project details" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$action" in
             toggle)
                 if [ "$installed" = yes ]; then
@@ -187,9 +187,9 @@ systui_tmux_catalog_browse() { # <category|all> [search]
         return 0
     }
 
-    selected=$(tui_menu_no_tags "$(systui_tmux_catalog_title "$category")" \
+    tui_capture_menu selected tui_menu_no_tags "$(systui_tmux_catalog_title "$category")" \
         "${#opts[@]} menu fields loaded. Descriptions are parsed from rothgar/awesome-tmux when available." \
-        "${opts[@]}" back "Back") || return 0
+        "${opts[@]}" back "Back" || return $?
     [ "$selected" != back ] && [ -n "$selected" ] || return 0
 
     while IFS='|' read -r cat repo name desc; do
@@ -209,13 +209,13 @@ systui_tmux_catalog_search() {
 systui_tmux_catalog_tpm_menu() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "TPM maintenance" "Manage Tmux Plugin Manager and configured plugins:" \
+        tui_capture_menu c tui_menu_no_tags "TPM maintenance" "Manage Tmux Plugin Manager and configured plugins:" \
             install "Install/update TPM" \
             apply "Install configured plugins" \
             update "Update all configured plugins" \
             clean "Clean removed plugins" \
             custom "Add custom GitHub owner/repository" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             install) systui_tmux_tpm_install ;;
             apply) systui_tmux_plugins_apply ;;
@@ -252,7 +252,7 @@ systui_tmux_unified_catalogue() {
             tui_msg "Tmux catalogue" "Unable to download/parse rothgar/awesome-tmux and no cached catalogue is available."
             return 1
         }
-        c=$(tui_menu_no_tags "Tmux catalogue" \
+        tui_capture_menu c tui_menu_no_tags "Tmux catalogue" \
             "Unified SystUI + rothgar/awesome-tmux catalogue. All GitHub repository entries are parsed live with descriptions:" \
             all "All projects" \
             curated "SystUI curated plugins/projects" \
@@ -265,7 +265,7 @@ systui_tmux_unified_catalogue() {
             search "Search all projects and descriptions" \
             refresh "Refresh catalogue from GitHub" \
             tpm "TPM maintenance and custom repositories" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             all|curated|configuration|tools|themes|status|plugins|misc) systui_tmux_catalog_browse "$c" ;;
             search) systui_tmux_catalog_search ;;
@@ -293,14 +293,14 @@ menu_tmux_manager() {
     local c ver
     while true; do
         ver=$(tmux -V 2>/dev/null || echo 'not installed')
-        c=$(tui_menu_no_tags "tmux manager" "tmux: $ver" \
+        tui_capture_menu c tui_menu_no_tags "tmux manager" "tmux: $ver" \
             install "Install / update tmux — package manager + live GitHub sources" \
             catalogue "Tmux catalogue — plugins, themes, tools, sessions, configs and Awesome tmux" \
             config "Configuration and presets" \
             sessions "Session management" \
             version "Show tmux/plugin status" \
             remove "Remove native tmux package" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             install) systui_tmux_install_menu ;;
             catalogue) systui_tmux_unified_catalogue ;;
