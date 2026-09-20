@@ -34,6 +34,18 @@ fi
 st() { command -v "$1" >/dev/null 2>&1 && echo "[installed]" || echo ""; }
 stp() { [ -e "$1" ] && echo "[installed]" || echo ""; }
 
+declare -gA SYSTUI_CMD_STATUS=() 2>/dev/null || true
+systui_refresh_cmd_status() {
+    local cmd
+    for cmd in "$@"; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            SYSTUI_CMD_STATUS["$cmd"]=' [installed]'
+        else
+            SYSTUI_CMD_STATUS["$cmd"]=''
+        fi
+    done
+}
+
 valid_safe_name() { [[ "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; }
 valid_username() { [[ "$1" =~ ^[A-Za-z_][A-Za-z0-9_.-]{0,31}$ ]] && getent passwd "$1" >/dev/null 2>&1; }
 valid_uint() { [[ "$1" =~ ^[0-9]+$ ]]; }
@@ -1849,6 +1861,9 @@ menu_repos() {
 pkg_catalogue_cli() {
     while true; do
         local cat
+        systui_refresh_cmd_status curl wget git tmux rsync unzip zip tree file less man openssl gpg \
+            gcc make cmake pkg-config gdb python3 pip3 node htop iotop ncdu lsof strace iostat fastfetch \
+            ip ifconfig nmap tcpdump mtr dig nc ethtool sshd nano vim nvim micro emacs fzf rg fd jq zsh fish
         cat=$(tui_radio "Package Catalogue" "Category (SPACE to select, ENTER to confirm):" \
             core    "Core utilities (curl, git, tmux, rsync...)" on \
             dev     "Development (compilers, python, node...)" off \
@@ -1862,62 +1877,62 @@ pkg_catalogue_cli() {
         local sel=""
         case "$cat" in
             core) sel=$(tui_check "Core utilities" "SPACE toggles, ENTER installs:" \
-                curl "Transfer tool $(st curl)" on \
-                wget "Downloader $(st wget)" on \
-                git "Version control $(st git)" on \
-                tmux "Terminal multiplexer $(st tmux)" off \
-                rsync "File sync $(st rsync)" off \
-                unzip "Unzip archives $(st unzip)" off \
-                zip "Create zip archives $(st zip)" off \
-                tree "Directory trees $(st tree)" off \
-                file "File type detection $(st file)" off \
-                less "Pager $(st less)" off \
-                man-db "Manual pages $(st man)" off \
-                openssl "TLS toolkit $(st openssl)" off \
-                gnupg "GnuPG $(st gpg)" off \
+                curl "Transfer tool ${SYSTUI_CMD_STATUS[curl]}" on \
+                wget "Downloader ${SYSTUI_CMD_STATUS[wget]}" on \
+                git "Version control ${SYSTUI_CMD_STATUS[git]}" on \
+                tmux "Terminal multiplexer ${SYSTUI_CMD_STATUS[tmux]}" off \
+                rsync "File sync ${SYSTUI_CMD_STATUS[rsync]}" off \
+                unzip "Unzip archives ${SYSTUI_CMD_STATUS[unzip]}" off \
+                zip "Create zip archives ${SYSTUI_CMD_STATUS[zip]}" off \
+                tree "Directory trees ${SYSTUI_CMD_STATUS[tree]}" off \
+                file "File type detection ${SYSTUI_CMD_STATUS[file]}" off \
+                less "Pager ${SYSTUI_CMD_STATUS[less]}" off \
+                man-db "Manual pages ${SYSTUI_CMD_STATUS[man]}" off \
+                openssl "TLS toolkit ${SYSTUI_CMD_STATUS[openssl]}" off \
+                gnupg "GnuPG ${SYSTUI_CMD_STATUS[gpg]}" off \
                 ca-certificates "CA certificates" off) ;;
             dev) sel=$(tui_check "Development" "SPACE toggles, ENTER installs:" \
-                build-essential "C/C++ toolchain (meta) $(st gcc)" on \
-                gcc "GNU C compiler $(st gcc)" off \
-                make "GNU make $(st make)" off \
-                cmake "CMake $(st cmake)" off \
-                pkg-config "pkg-config $(st pkg-config)" off \
-                gdb "GNU debugger $(st gdb)" off \
-                python3 "Python 3 $(st python3)" off \
-                python3-pip "pip $(st pip3)" off \
-                nodejs "Node.js $(st node)" off) ;;
+                build-essential "C/C++ toolchain (meta) ${SYSTUI_CMD_STATUS[gcc]}" on \
+                gcc "GNU C compiler ${SYSTUI_CMD_STATUS[gcc]}" off \
+                make "GNU make ${SYSTUI_CMD_STATUS[make]}" off \
+                cmake "CMake ${SYSTUI_CMD_STATUS[cmake]}" off \
+                pkg-config "pkg-config ${SYSTUI_CMD_STATUS[pkg-config]}" off \
+                gdb "GNU debugger ${SYSTUI_CMD_STATUS[gdb]}" off \
+                python3 "Python 3 ${SYSTUI_CMD_STATUS[python3]}" off \
+                python3-pip "pip ${SYSTUI_CMD_STATUS[pip3]}" off \
+                nodejs "Node.js ${SYSTUI_CMD_STATUS[node]}" off) ;;
             monitor) sel=$(tui_check "Monitoring" "SPACE toggles, ENTER installs:" \
-                htop "Process viewer $(st htop)" on \
-                iotop "I/O monitor $(st iotop)" off \
-                ncdu "Disk usage browser $(st ncdu)" off \
-                lsof "Open files $(st lsof)" off \
-                strace "Syscall tracer $(st strace)" off \
-                sysstat "sar/iostat suite $(st iostat)" off \
-                fastfetch "System info banner $(st fastfetch)" off) ;;
+                htop "Process viewer ${SYSTUI_CMD_STATUS[htop]}" on \
+                iotop "I/O monitor ${SYSTUI_CMD_STATUS[iotop]}" off \
+                ncdu "Disk usage browser ${SYSTUI_CMD_STATUS[ncdu]}" off \
+                lsof "Open files ${SYSTUI_CMD_STATUS[lsof]}" off \
+                strace "Syscall tracer ${SYSTUI_CMD_STATUS[strace]}" off \
+                sysstat "sar/iostat suite ${SYSTUI_CMD_STATUS[iostat]}" off \
+                fastfetch "System info banner ${SYSTUI_CMD_STATUS[fastfetch]}" off) ;;
             net) sel=$(tui_check "Network tools" "SPACE toggles, ENTER installs:" \
-                iproute2 "ip / ss $(st ip)" on \
-                net-tools "ifconfig / netstat $(st ifconfig)" off \
-                nmap "Port scanner $(st nmap)" off \
-                tcpdump "Packet capture $(st tcpdump)" off \
-                mtr "traceroute + ping $(st mtr)" off \
-                dnsutils "dig / nslookup $(st dig)" off \
-                netcat-openbsd "netcat $(st nc)" off \
-                ethtool "NIC settings $(st ethtool)" off \
-                openssh-server "OpenSSH server $(st sshd)" off) ;;
+                iproute2 "ip / ss ${SYSTUI_CMD_STATUS[ip]}" on \
+                net-tools "ifconfig / netstat ${SYSTUI_CMD_STATUS[ifconfig]}" off \
+                nmap "Port scanner ${SYSTUI_CMD_STATUS[nmap]}" off \
+                tcpdump "Packet capture ${SYSTUI_CMD_STATUS[tcpdump]}" off \
+                mtr "traceroute + ping ${SYSTUI_CMD_STATUS[mtr]}" off \
+                dnsutils "dig / nslookup ${SYSTUI_CMD_STATUS[dig]}" off \
+                netcat-openbsd "netcat ${SYSTUI_CMD_STATUS[nc]}" off \
+                ethtool "NIC settings ${SYSTUI_CMD_STATUS[ethtool]}" off \
+                openssh-server "OpenSSH server ${SYSTUI_CMD_STATUS[sshd]}" off) ;;
             editors) sel=$(tui_check "Editors" "SPACE toggles, ENTER installs:" \
-                nano "Nano $(st nano)" on \
-                vim "Vim $(st vim)" off \
-                neovim "Neovim $(st nvim)" off \
-                micro "Micro $(st micro)" off \
-                emacs "Emacs $(st emacs)" off) ;;
+                nano "Nano ${SYSTUI_CMD_STATUS[nano]}" on \
+                vim "Vim ${SYSTUI_CMD_STATUS[vim]}" off \
+                neovim "Neovim ${SYSTUI_CMD_STATUS[nvim]}" off \
+                micro "Micro ${SYSTUI_CMD_STATUS[micro]}" off \
+                emacs "Emacs ${SYSTUI_CMD_STATUS[emacs]}" off) ;;
             shellx) sel=$(tui_check "Shell extras" "SPACE toggles, ENTER installs:" \
                 bash-completion "Bash completion" on \
-                fzf "Fuzzy finder $(st fzf)" off \
-                ripgrep "rg — fast grep $(st rg)" off \
-                fd-find "fd — fast find $(st fd)" off \
-                jq "JSON processor $(st jq)" off \
-                zsh "Zsh $(st zsh)" off \
-                fish "Fish $(st fish)" off) ;;
+                fzf "Fuzzy finder ${SYSTUI_CMD_STATUS[fzf]}" off \
+                ripgrep "rg — fast grep ${SYSTUI_CMD_STATUS[rg]}" off \
+                fd-find "fd — fast find ${SYSTUI_CMD_STATUS[fd]}" off \
+                jq "JSON processor ${SYSTUI_CMD_STATUS[jq]}" off \
+                zsh "Zsh ${SYSTUI_CMD_STATUS[zsh]}" off \
+                fish "Fish ${SYSTUI_CMD_STATUS[fish]}" off) ;;
         esac
         sel=${sel//\"/}
         [ -z "${sel// }" ] && continue
@@ -5367,7 +5382,8 @@ menu_tmux() { # <user> <home>
     local conf="$home_dir/.tmux.conf" tpm="$home_dir/.tmux/plugins/tpm"
     while true; do
         local c
-        c=$(tui_menu "tmux — $u" "Terminal multiplexer $(st tmux) — configuration & plugins:" \
+        systui_refresh_cmd_status tmux
+        c=$(tui_menu "tmux — $u" "Terminal multiplexer ${SYSTUI_CMD_STATUS[tmux]} — configuration & plugins:" \
             install "Install tmux" \
             plugins "TPM plugin manager (install, popular, custom, update)" \
             theme "Status-bar theme" \
@@ -5452,7 +5468,20 @@ menu_shell_hierarchy() {
     home_dir=$(user_home "$u"); [ -n "$home_dir" ] || { tui_msg "Error" "User not found."; return 0; }
     cur_shell=$(basename "$(getent passwd "$u" | cut -d: -f7)")
     while true; do
-        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" bash "Bash $(st bash)" "$([ "$cur_shell" = bash ] && echo on || echo off)" zsh "Zsh $(st zsh)" "$([ "$cur_shell" = zsh ] && echo on || echo off)" fish "Fish $(st fish)" "$([ "$cur_shell" = fish ] && echo on || echo off)" nu "Nushell $(st nu)" "$([ "$cur_shell" = nu ] && echo on || echo off)" tmux "tmux" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
+        local bash_on=off zsh_on=off fish_on=off nu_on=off
+        systui_refresh_cmd_status bash zsh fish nu
+        case "$cur_shell" in
+            bash) bash_on=on ;;
+            zsh) zsh_on=on ;;
+            fish) fish_on=on ;;
+            nu) nu_on=on ;;
+        esac
+        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" \
+            bash "Bash ${SYSTUI_CMD_STATUS[bash]}" "$bash_on" \
+            zsh "Zsh ${SYSTUI_CMD_STATUS[zsh]}" "$zsh_on" \
+            fish "Fish ${SYSTUI_CMD_STATUS[fish]}" "$fish_on" \
+            nu "Nushell ${SYSTUI_CMD_STATUS[nu]}" "$nu_on" \
+            tmux "tmux" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
         case "$sh_" in
             bash) m=$(tui_menu "Bash Manager" "Install, remove or configure:" install "Install/reinstall Bash" uninstall "Uninstall Bash" omb "oh-my-bash" bashit "Bash-it" blesh "ble.sh" back "Back") || continue; case "$m" in install) pm_install bash;; uninstall) safe_remove_shell bash;; omb) menu_omb "$u" "$home_dir";; bashit) menu_bashit "$u" "$home_dir";; blesh) menu_blesh "$u" "$home_dir";; esac;;
             zsh) m=$(tui_menu "Zsh Manager" "Install, remove or configure:" install "Install/reinstall Zsh" uninstall "Uninstall Zsh" omz "oh-my-zsh" zinit "zinit" back "Back") || continue; case "$m" in install) menu_zsh_install;; uninstall) safe_remove_shell zsh;; omz) menu_omz "$u" "$home_dir";; zinit) menu_zinit "$u" "$home_dir";; esac;;
@@ -7329,6 +7358,7 @@ menu_shells() {
 menu_editors() {
     while true; do
         local c
+        systui_refresh_cmd_status nano vim nvim micro emacs
         c=$(tui_menu "Editors" "Text editors:" \
             install "Install editors (nano, vim, neovim...)" \
             nanocfg "Configure nano (line numbers, indent, tabs)" \
@@ -7343,11 +7373,11 @@ menu_editors() {
             install)
                 local s
                 s=$(tui_check "Editors" "Install (SPACE toggles):" \
-                    nano "Nano $(st nano)" off \
-                    vim "Vim $(st vim)" off \
-                    neovim "Neovim $(st nvim)" off \
-                    micro "Micro $(st micro)" off \
-                    emacs "Emacs $(st emacs)" off) || continue
+                    nano "Nano ${SYSTUI_CMD_STATUS[nano]}" off \
+                    vim "Vim ${SYSTUI_CMD_STATUS[vim]}" off \
+                    neovim "Neovim ${SYSTUI_CMD_STATUS[nvim]}" off \
+                    micro "Micro ${SYSTUI_CMD_STATUS[micro]}" off \
+                    emacs "Emacs ${SYSTUI_CMD_STATUS[emacs]}" off) || continue
                 s=${s//\"/}
                 [ -z "${s// }" ] && continue
                 # Dispatch to dedicated install menus for neovim and micro
@@ -7458,11 +7488,11 @@ EOF
                 [ -z "$cur_ed" ] && cur_ed="${EDITOR:-nano}"
                 est() { [ "$1" = "$cur_ed" ] && echo on || echo off; }
                 e=$(tui_radio "Default editor" "Current default ($cur_ed) pre-selected. SPACE to change:" \
-                    nano "nano $(st nano)" "$(est nano)" \
-                    vim "vim $(st vim)" "$(est vim)" \
-                    nvim "neovim $(st nvim)" "$(est nvim)" \
-                    micro "micro $(st micro)" "$(est micro)" \
-                    emacs "emacs $(st emacs)" "$(est emacs)") || continue
+                    nano "nano ${SYSTUI_CMD_STATUS[nano]}" "$(est nano)" \
+                    vim "vim ${SYSTUI_CMD_STATUS[vim]}" "$(est vim)" \
+                    nvim "neovim ${SYSTUI_CMD_STATUS[nvim]}" "$(est nvim)" \
+                    micro "micro ${SYSTUI_CMD_STATUS[micro]}" "$(est micro)" \
+                    emacs "emacs ${SYSTUI_CMD_STATUS[emacs]}" "$(est emacs)") || continue
                 [ -z "$e" ] && continue
                 printf 'EDITOR=%s\nVISUAL=%s\nexport EDITOR VISUAL\n' "$e" "$e" > /etc/profile.d/editor.sh
                 command -v update-alternatives >/dev/null && \
@@ -7571,11 +7601,12 @@ sysconfig_set_timezone() {
 menu_network() {
     while true; do
         local c
+        systui_refresh_cmd_status sshd fail2ban-server ufw
         c=$(tui_menu "Network" "Network services & settings:" \
-            ssh      "OpenSSH server $(st sshd)" \
-            fail2ban "fail2ban brute-force protection $(st fail2ban-server)" \
+            ssh      "OpenSSH server ${SYSTUI_CMD_STATUS[sshd]}" \
+            fail2ban "fail2ban brute-force protection ${SYSTUI_CMD_STATUS[fail2ban-server]}" \
             vnc      "VNC server (TigerVNC / x11vnc)" \
-            firewall "Firewall (ufw) $(st ufw)" \
+            firewall "Firewall (ufw) ${SYSTUI_CMD_STATUS[ufw]}" \
             dns      "Configure DNS resolvers" \
             staticip "Static IP configuration" \
             proxy    "System-wide HTTP(S) proxy" \
@@ -8236,8 +8267,11 @@ perf_dns_cache() {
 
 # ---- 2.8 Performance -------------------------------------------------------
 menu_performance() {
+    local c irq_state tlp_state
     while true; do
-        local c
+        irq_state=""; tlp_state=""
+        command -v irqbalance >/dev/null 2>&1 && irq_state="[installed]"
+        command -v tlp >/dev/null 2>&1 && tlp_state="[installed]"
         c=$(tui_menu "Performance (advanced)" "Tuning options:" \
             ishaok     "iSH-AOK compatibility and low-overhead tuning" \
             cpu        "CPU tuning (SMT, turbo, watchdog, mitigations)" \
@@ -8254,8 +8288,8 @@ menu_performance() {
             iosched    "Set I/O scheduler for a disk" \
             thp        "Transparent Hugepages mode" \
             limits     "Raise open-file limits (nofile)" \
-            irqbalance "irqbalance (multi-core IRQ spread) $(st irqbalance)" \
-            tlp        "TLP laptop power management $(st tlp)" \
+            irqbalance "irqbalance (multi-core IRQ spread) $irq_state" \
+            tlp        "TLP laptop power management $tlp_state" \
             journald   "Cap systemd-journald disk usage" \
             trim       "Enable periodic SSD TRIM" \
             sysctl     "Apply common network/VM sysctl tweaks" \
@@ -11070,9 +11104,10 @@ menu_fm_plugins() {
 menu_file_manager_one() {
     local fm="$1" label="$2" c install_label
     while true; do
+        systui_refresh_cmd_status "$fm"
         install_label="Install $label"
         [ "$fm" = yazi ] && install_label="Install Yazi — distribution-aware methods"
-        c=$(tui_menu "$label  $(st "$fm")" "Install, remove and configure $label:" \
+        c=$(tui_menu "$label  ${SYSTUI_CMD_STATUS[$fm]}" "Install, remove and configure $label:" \
             install "$install_label" \
             remove  "Remove $label" \
             configure "Space-to-select configuration menu" \
@@ -11099,16 +11134,17 @@ menu_file_manager_one() {
 menu_file_managers() {
     while true; do
         local c
+        systui_refresh_cmd_status mc lf tere yazi ranger nnn vifm broot xplr
         c=$(tui_menu "File Managers" "Terminal file managers and GitHub add-ons:" \
-            mc     "Midnight Commander — dual-pane, skins & extensions $(st mc)" \
-            lf     "lf — fast Go file manager $(st lf)" \
-            tere   "tere — fast directory navigator $(st tere)" \
-            yazi   "Yazi — async Rust file manager $(st yazi)" \
-            ranger "Ranger — Vim-style Python file manager $(st ranger)" \
-            nnn    "nnn — lightweight extensible file manager $(st nnn)" \
-            vifm   "Vifm — dual-pane Vim-style manager $(st vifm)" \
-            broot  "Broot — tree navigator and launcher $(st broot)" \
-            xplr   "xplr — hackable Lua file explorer $(st xplr)" \
+            mc     "Midnight Commander — dual-pane, skins & extensions ${SYSTUI_CMD_STATUS[mc]}" \
+            lf     "lf — fast Go file manager ${SYSTUI_CMD_STATUS[lf]}" \
+            tere   "tere — fast directory navigator ${SYSTUI_CMD_STATUS[tere]}" \
+            yazi   "Yazi — async Rust file manager ${SYSTUI_CMD_STATUS[yazi]}" \
+            ranger "Ranger — Vim-style Python file manager ${SYSTUI_CMD_STATUS[ranger]}" \
+            nnn    "nnn — lightweight extensible file manager ${SYSTUI_CMD_STATUS[nnn]}" \
+            vifm   "Vifm — dual-pane Vim-style manager ${SYSTUI_CMD_STATUS[vifm]}" \
+            broot  "Broot — tree navigator and launcher ${SYSTUI_CMD_STATUS[broot]}" \
+            xplr   "xplr — hackable Lua file explorer ${SYSTUI_CMD_STATUS[xplr]}" \
             back   "Back") || return 0
         case "$c" in
             mc) menu_file_manager_one mc "Midnight Commander" ;;

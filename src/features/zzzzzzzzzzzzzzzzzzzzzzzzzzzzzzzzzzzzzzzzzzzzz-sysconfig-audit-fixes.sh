@@ -405,9 +405,13 @@ if declare -F menu_network >/dev/null 2>&1 && ! declare -F _systui_base_menu_net
     eval "$(declare -f menu_network | sed '1s/^menu_network[[:space:]]*()/_systui_base_menu_network_audit ()/')"
 fi
 menu_network() {
-    # The base menu remains feature-rich. Refresh detection before entry so its
-    # systemd/network branches reflect the current runtime, not startup state.
-    detect_init 2>/dev/null || true
+    # Startup detection is authoritative for ordinary menu navigation. Reuse it
+    # here instead of making Network opening pay for another systemd/D-Bus probe.
+    if declare -F systui_init_refresh >/dev/null 2>&1; then
+        systui_init_refresh
+    elif [ "${SYSTUI_SERVICE_RUNTIME+x}" != x ]; then
+        detect_init 2>/dev/null || true
+    fi
     _systui_base_menu_network_audit "$@"
 }
 

@@ -132,6 +132,8 @@ systui_bootstrap_package() { # <tag>
 systui_bootstrap_multi_install() {
     local tag label selected state pkg
     local -a opts=() packages=() specials=()
+    declare -F systui_bootstrap_status_cache_clear >/dev/null 2>&1 \
+        && systui_bootstrap_status_cache_clear
 
     while IFS='|' read -r tag label; do
         [ -n "$tag" ] || continue
@@ -158,6 +160,8 @@ systui_bootstrap_multi_install() {
     done
 
     [ "${#packages[@]}" -eq 0 ] || systui_multi_native_install "${packages[@]}" || true
+    declare -F systui_bootstrap_status_cache_clear >/dev/null 2>&1 \
+        && systui_bootstrap_status_cache_clear
 
     # Only genuinely non-native tools use upstream installation after the fast
     # batch. chroot-distro is the current Python upstream project.

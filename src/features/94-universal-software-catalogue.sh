@@ -158,6 +158,38 @@ app_status() {
     if is_pkg_installed "$native"; then printf 'installed\n'; else printf 'available\n'; fi
 }
 
+# Emit native names for all installed packages in one package-manager query.
+# Catalogue category rendering uses this instead of spawning one status command
+# per row.
+systui_catalogue_installed_snapshot() {
+    case "$(systui_catalogue_pm 2>/dev/null || printf unknown)" in
+        apt)
+            command -v dpkg-query >/dev/null 2>&1 || return 1
+            dpkg-query -W -f='${Package}\n' 2>/dev/null
+            ;;
+        apk)
+            apk info 2>/dev/null
+            ;;
+        pacman)
+            pacman -Qq 2>/dev/null
+            ;;
+        dnf|yum|zypper)
+            rpm -qa --qf '%{NAME}\n' 2>/dev/null
+            ;;
+        xbps)
+            xbps-query -l 2>/dev/null | awk '$1=="ii" {p=$2; sub(/-[0-9][^-]*$/, "", p); print p}'
+            ;;
+        emerge)
+            if command -v qlist >/dev/null 2>&1; then
+                qlist -IC 2>/dev/null
+            else
+                return 1
+            fi
+            ;;
+        *) return 1 ;;
+    esac
+}
+
 pkg_show_info() {
     case "$(systui_catalogue_pm 2>/dev/null || printf unknown)" in
         apt) apt-cache show "$1" 2>&1 | head -80 ;;

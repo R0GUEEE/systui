@@ -3,12 +3,16 @@
 # Keep capabilities intact while reducing duplicate top-level entry points.
 
 menu_sysconfig_basics() {
-    local c
+    local c host tz
     while true; do
+        host="${HOSTNAME:-unknown}"
+        [ ! -r /etc/hostname ] || read -r host < /etc/hostname || true
+        tz=unknown
+        [ ! -r /etc/timezone ] || read -r tz < /etc/timezone || true
         c=$(tui_menu_no_tags "System basics" \
             "Core host settings that do not belong to a dedicated section:" \
-            hostname "Set hostname ($(hostname 2>/dev/null || echo unknown))" \
-            timezone "Set timezone ($(cat /etc/timezone 2>/dev/null || echo unknown))" \
+            hostname "Set hostname ($host)" \
+            timezone "Set timezone ($tz)" \
             scan     "Run full system scan" \
             back     "Back") || return 0
         case "$c" in
@@ -110,8 +114,8 @@ menu_packages() {
 systui_catalogue_categories_menu() {
     local c cat
     local -a opts=()
-    declare -F systui_catalogue_registry_ensure >/dev/null 2>&1 \
-        && systui_catalogue_registry_ensure >/dev/null 2>&1 || true
+    declare -F systui_catalogue_ensure_registry >/dev/null 2>&1 \
+        && systui_catalogue_ensure_registry >/dev/null 2>&1 || true
     for cat in ${CAT_ORDER:-}; do
         opts+=("$cat" "$(cat_title "$cat")")
     done
@@ -151,8 +155,8 @@ systui_catalogue_manage_menu() {
 # Categories and Manage submenus.
 pkg_catalogue() {
     local detected c
-    declare -F systui_catalogue_registry_ensure >/dev/null 2>&1 \
-        && systui_catalogue_registry_ensure >/dev/null 2>&1 || true
+    declare -F systui_catalogue_ensure_registry >/dev/null 2>&1 \
+        && systui_catalogue_ensure_registry >/dev/null 2>&1 || true
     if declare -F systui_catalogue_pm >/dev/null 2>&1; then
         detected=$(systui_catalogue_pm 2>/dev/null || printf unknown)
         PM="$detected"; export PM

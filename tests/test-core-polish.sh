@@ -28,16 +28,31 @@ LOGFILE=/dev/null
 # shellcheck source=../src/core/tui-widgets.sh
 . "$ROOT/src/core/tui-widgets.sh"
 
-tput() {
-    case "$1" in lines) printf '22\n';; cols) printf '53\n';; *) return 1;; esac
-}
-export -f tput
-read -r h w list < <(tui_geometry menu)
-[ "$h" -le 22 ]
-[ "$w" -le 53 ]
-[ "$w" -ge 38 ]
-[ "$list" -ge 4 ]
-export -n -f tput
+# Ordinary redraws use Bash-maintained dimensions without any probe.
+LINES=22
+COLUMNS=53
+tui_geometry menu >/dev/null
+[ "$TUI_H" -le 22 ]
+[ "$TUI_W" -le 53 ]
+[ "$TUI_W" -ge 38 ]
+[ "$TUI_LIST" -ge 4 ]
+
+# When shell dimensions are unavailable, one stty probe seeds the cache and
+# later redraws reuse it.
+unset LINES COLUMNS
+TUI_ROWS_CACHE=""
+TUI_COLS_CACHE=""
+stty_calls=0
+stty() { stty_calls=$((stty_calls + 1)); printf '22 53\n'; }
+tput() { return 99; }
+tui_geometry menu >/dev/null
+[ "$stty_calls" -eq 1 ]
+tui_geometry menu >/dev/null
+[ "$stty_calls" -eq 1 ]
+[ "$TUI_H" -le 22 ]
+[ "$TUI_W" -le 53 ]
+
+! grep -Fq '< <(tui_geometry' "$ROOT/src/core/tui-widgets.sh"
 
 # Data-backed package mapping must preserve the historical column contract:
 # Alpine, Arch, Fedora, Void.

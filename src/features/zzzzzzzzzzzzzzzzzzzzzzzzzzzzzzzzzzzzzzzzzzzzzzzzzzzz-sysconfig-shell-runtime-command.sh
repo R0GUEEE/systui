@@ -159,7 +159,11 @@ sysconfig_runtime_summary() {
 menu_shell_runtime_commands() {
     local c
     while true; do
-        detect_init 2>/dev/null || true
+        if declare -F systui_init_refresh >/dev/null 2>&1; then
+            systui_init_refresh
+        elif [ "${SYSTUI_SERVICE_RUNTIME+x}" != x ]; then
+            detect_init 2>/dev/null || true
+        fi
         c=$(tui_menu "Shell runtime configuration" "Configure login/launch and boot/init commands:" status "Show current launch and boot commands" launch "Configure launch command" testlaunch "Test configured launch command (replaces current process)" boot "Configure boot command" applyinit "Apply boot executable as /sbin/init" restoreinit "Restore a Systui /sbin/init backup" back "Back") || return 0
         case "$c" in status) sysconfig_runtime_summary ;; launch) sysconfig_launch_cmd_set ;; testlaunch) sysconfig_launch_cmd_test ;; boot) sysconfig_boot_cmd_set ;; applyinit) sysconfig_boot_apply_init ;; restoreinit) sysconfig_boot_restore_init ;; back|"") return 0 ;; esac
     done
@@ -179,7 +183,11 @@ fi
 menu_shell_hierarchy() {
     local c
     while true; do
-        detect_init 2>/dev/null || true
+        if declare -F systui_init_refresh >/dev/null 2>&1; then
+            systui_init_refresh
+        elif [ "${SYSTUI_SERVICE_RUNTIME+x}" != x ]; then
+            detect_init 2>/dev/null || true
+        fi
         c=$(tui_menu "Shell Managers" "Install/configure shells and manage login/init/runtime defaults. Current init: ${INIT:-unknown}" shells "Install, remove & configure shell managers/frameworks" runtime "Shell runtime configuration (launch cmd / boot cmd)" user "Change a user's default login shell" newuser "Set default login shell for NEW users" accounts "List users and their login shells" shellsfile "Manage /etc/shells" shprovider "Manage system /bin/sh provider" initstatus "Show detected init system / PID 1" initswap "Change init system (systemd/OpenRC/runit/SysVinit)" services "Open service/init manager" back "Back") || return 0
         case "$c" in
             shells) if declare -F _systui_base_menu_shell_hierarchy_logininit >/dev/null 2>&1; then _systui_base_menu_shell_hierarchy_logininit; elif declare -F _systui_base_menu_shell_hierarchy_runtime >/dev/null 2>&1; then _systui_base_menu_shell_hierarchy_runtime; else tui_msg "Shell Managers" "The original shell manager hierarchy is unavailable."; fi ;;

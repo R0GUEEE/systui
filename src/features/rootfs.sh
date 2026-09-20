@@ -1672,6 +1672,10 @@ rootfs_bs_installed() { # <tag>
 }
 
 menu_rootfs_bootstrap_tools() {
+    # Refresh status once when this menu is opened. Subsequent redraws reuse the
+    # in-memory host/Bedrock scan until an install/remove operation invalidates it.
+    declare -F systui_bootstrap_status_cache_clear >/dev/null 2>&1 \
+        && systui_bootstrap_status_cache_clear
     # Returns the correct package name for a tool under the active package manager.
     # Format per entry: tag|apt_pkg|pacman_pkg|dnf_pkg|apk_pkg
     _bs_pkg() { # <tag>
@@ -1792,6 +1796,8 @@ xz-utils|xz-utils|XZ/LZMA compression (needed for Void/Gentoo tarballs)"
                 fi
                 _pkg=$(_bs_pkg "$_tag")
                 _bs_install "$_tag" "$_pkg" "$_BS_PKGS" || true
+                declare -F systui_bootstrap_status_cache_clear >/dev/null 2>&1 \
+                    && systui_bootstrap_status_cache_clear
             done
             continue
         fi
@@ -1872,9 +1878,13 @@ _menu_bs_package() {
         case "$_choice" in
             install)
                 _bs_install "$_tag" "$_pkg" "$_BS_PKGS"
+                declare -F systui_bootstrap_status_cache_clear >/dev/null 2>&1 \
+                    && systui_bootstrap_status_cache_clear
                 ;;
             uninstall)
                 _bs_uninstall "$_tag" "$_pkg"
+                declare -F systui_bootstrap_status_cache_clear >/dev/null 2>&1 \
+                    && systui_bootstrap_status_cache_clear
                 ;;
             config)
                 _bs_config "$_tag" "$_label"

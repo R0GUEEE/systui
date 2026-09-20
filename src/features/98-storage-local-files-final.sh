@@ -11,23 +11,28 @@ if declare -F menu_storage >/dev/null 2>&1 \
     unset _systui_saved_fn
 fi
 
-systui_storage_mount_status() { # <mountpoint>
-    local mp="$1"
-    if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$mp" 2>/dev/null; then
-        printf ' [mounted]'
-    elif grep -qs " $mp " /proc/mounts 2>/dev/null; then
-        printf ' [mounted]'
-    fi
+systui_storage_refresh_mount_status() {
+    local _dev _mp _rest
+    SYSTUI_STORAGE_ICLOUD_STATUS=""
+    SYSTUI_STORAGE_IPHONE_STATUS=""
+    [ -r /proc/mounts ] || return 0
+    while IFS=' ' read -r _dev _mp _rest; do
+        case "$_mp" in
+            /mnt/iCloud) SYSTUI_STORAGE_ICLOUD_STATUS=' [mounted]' ;;
+            /mnt/iPhone) SYSTUI_STORAGE_IPHONE_STATUS=' [mounted]' ;;
+        esac
+    done < /proc/mounts
 }
 
 menu_storage() {
     local c
     while true; do
+        systui_storage_refresh_mount_status
         c=$(tui_menu_no_tags "Storage" \
             "Storage, filesystems and iOS Local Files:" \
             manage "Storage management — mounts, filesystems, SMART and disks" \
-            icloud "Mount iCloud at /mnt/iCloud$(systui_storage_mount_status /mnt/iCloud)" \
-            iphone "Mount iPhone at /mnt/iPhone$(systui_storage_mount_status /mnt/iPhone)" \
+            icloud "Mount iCloud at /mnt/iCloud${SYSTUI_STORAGE_ICLOUD_STATUS}" \
+            iphone "Mount iPhone at /mnt/iPhone${SYSTUI_STORAGE_IPHONE_STATUS}" \
             back "Back") || return 0
         case "$c" in
             manage)
