@@ -19,6 +19,14 @@ systui_init_name() {
 }
 
 systui_init_refresh() {
+    local force="${1:-}"
+    # Startup already performs authoritative detection. Menu redraws must reuse
+    # that state: on native systemd a fresh probe may wait on D-Bus/systemctl.
+    # Force is reserved for explicit diagnostics where live state is requested.
+    if [ "$force" != force ] && [ "${SYSTUI_INIT_STATE_DIRTY:-0}" != 1 ] \
+        && [ "${SYSTUI_SERVICE_RUNTIME+x}" = x ]; then
+        return 0
+    fi
     if declare -F sysconfig_refresh_init_state >/dev/null 2>&1; then
         sysconfig_refresh_init_state >/dev/null 2>&1 || true
     elif declare -F systui_detect_init >/dev/null 2>&1; then
@@ -26,6 +34,11 @@ systui_init_refresh() {
     elif declare -F detect_init >/dev/null 2>&1; then
         detect_init >/dev/null 2>&1 || true
     fi
+    SYSTUI_INIT_STATE_DIRTY=0
+}
+
+systui_init_mark_dirty() {
+    SYSTUI_INIT_STATE_DIRTY=1
 }
 
 systui_init_current() {
@@ -429,7 +442,8 @@ systui_init_provider_files() {
 
 systui_services_diagnostics() {
     local out="$SYSTUI_TMP/init-diagnostics" current pid1 exe p
-    current=$(systui_init_current)
+    systui_init_refresh force
+    current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
     pid1=$(cat /proc/1/comm 2>/dev/null || echo unknown)
     exe=$(readlink -f /proc/1/exe 2>/dev/null || echo unknown)
     {
