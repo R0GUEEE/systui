@@ -100,38 +100,68 @@ bedrock_bootstrap_stratum_has() { # <stratum> <tag>
 # Print every stratum containing the requested bootstrap.  This is kept as a
 # public helper so other Systui menus can show the owning stratum later without
 # duplicating the filesystem scan.
+# Menu status rendering may ask about twenty bootstrap tools in one pass. Keep
+# the Bedrock stratum enumeration and per-tool result in memory for that pass
+# instead of running find/sed/sort once per tool.
+declare -gA SYSTUI_BOOTSTRAP_STATUS_CACHE=() 2>/dev/null || true
+SYSTUI_BEDROCK_STRATA_CACHE_VALID=0
+SYSTUI_BEDROCK_STRATA_CACHE=""
+
+systui_bootstrap_status_cache_clear() {
+    SYSTUI_BOOTSTRAP_STATUS_CACHE=()
+    SYSTUI_BEDROCK_STRATA_CACHE_VALID=0
+    SYSTUI_BEDROCK_STRATA_CACHE=""
+}
+
+systui_bedrock_strata_cache_ensure() {
+    [ "${SYSTUI_BEDROCK_STRATA_CACHE_VALID:-0}" = 1 ] && return 0
+    SYSTUI_BEDROCK_STRATA_CACHE=$(bedrock_bootstrap_strata 2>/dev/null || true)
+    SYSTUI_BEDROCK_STRATA_CACHE_VALID=1
+}
+
 bedrock_bootstrap_locations() { # <tag>
     local tag="$1" st
     bedrock_bootstrap_active || return 1
-
+    systui_bedrock_strata_cache_ensure
     while IFS= read -r st; do
         [ -n "$st" ] || continue
         bedrock_bootstrap_stratum_has "$st" "$tag" && printf '%s\n' "$st"
-    done <<< "$(bedrock_bootstrap_strata)"
-
-    # A later non-matching stratum must not turn a successful scan into a
-    # failure after earlier matches have already been printed.
+    done <<< "$SYSTUI_BEDROCK_STRATA_CACHE"
     return 0
 }
 
-# Host/native detection remains authoritative.  Only when it misses do we scan
-# Bedrock's installed strata.  This means the normal Rootfs > Bootstrap menu,
-# its package submenu, install pre-check and uninstall pre-check all gain the
-# same Bedrock-aware behavior automatically.
+# Host/native detection remains authoritative. Only when it misses do we scan
+# Bedrock. Cache both positive and negative results until an install/remove path
+# explicitly invalidates the status cache.
 rootfs_bs_installed() { # <tag>
-    local tag="$1" st
+    local tag="$1" st cached
+    if [[ -v "SYSTUI_BOOTSTRAP_STATUS_CACHE[$tag]" ]]; then
+        cached=${SYSTUI_BOOTSTRAP_STATUS_CACHE[$tag]}
+        [ "$cached" = 1 ]
+        return
+    fi
 
     if declare -F _systui_native_rootfs_bs_installed >/dev/null 2>&1 \
         && _systui_native_rootfs_bs_installed "$tag"; then
+        SYSTUI_BOOTSTRAP_STATUS_CACHE["$tag"]=1
         return 0
     fi
 
-    bedrock_bootstrap_active || return 1
+    if ! bedrock_bootstrap_active; then
+        SYSTUI_BOOTSTRAP_STATUS_CACHE["$tag"]=0
+        return 1
+    fi
+
+    systui_bedrock_strata_cache_ensure
     while IFS= read -r st; do
         [ -n "$st" ] || continue
-        bedrock_bootstrap_stratum_has "$st" "$tag" && return 0
-    done <<< "$(bedrock_bootstrap_strata)"
+        if bedrock_bootstrap_stratum_has "$st" "$tag"; then
+            SYSTUI_BOOTSTRAP_STATUS_CACHE["$tag"]=1
+            return 0
+        fi
+    done <<< "$SYSTUI_BEDROCK_STRATA_CACHE"
 
+    SYSTUI_BOOTSTRAP_STATUS_CACHE["$tag"]=0
     return 1
 }
 
