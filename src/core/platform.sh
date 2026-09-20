@@ -3,11 +3,13 @@
 # Safe to source from the interactive TUI, provisioning helpers, and tests.
 
 systui_is_ish() {
-    case "${SYSTUI_ISH_AOK:-}" in 1|yes|true) return 0 ;; esac
-    case "${container:-}" in *ish*|*iSH*) return 0 ;; esac
-    case "$(uname -r 2>/dev/null) $(uname -a 2>/dev/null)" in
-        *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) return 0 ;;
+    case "${SYSTUI_ISH_AOK:-}" in 1|yes|true) SYSTUI_IS_ISH_CACHE=1; return 0 ;; esac
+    case "${SYSTUI_IS_ISH_CACHE:-}" in 1) return 0 ;; 0) return 1 ;; esac
+    case "${container:-}" in *ish*|*iSH*) SYSTUI_IS_ISH_CACHE=1; return 0 ;; esac
+    case "$(uname -a 2>/dev/null)" in
+        *-ish*|*ish_aok*|*iSH-AOK*|*iSH*) SYSTUI_IS_ISH_CACHE=1; return 0 ;;
     esac
+    SYSTUI_IS_ISH_CACHE=0
     return 1
 }
 
@@ -125,12 +127,17 @@ systui_systemd_online() {
 }
 
 systui_runtime_profile() {
-    if systui_is_ish; then printf 'ish-aok\n'
-    elif [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then printf 'wsl\n'
-    elif systui_is_container; then printf 'container\n'
-    elif [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then printf 'proot\n'
-    else printf 'native-linux\n'
+    if [ -n "${SYSTUI_RUNTIME_PROFILE_CACHE:-}" ]; then
+        printf '%s\n' "$SYSTUI_RUNTIME_PROFILE_CACHE"
+        return 0
     fi
+    if systui_is_ish; then SYSTUI_RUNTIME_PROFILE_CACHE=ish-aok
+    elif [ -n "${WSL_DISTRO_NAME:-}" ] || grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then SYSTUI_RUNTIME_PROFILE_CACHE=wsl
+    elif systui_is_container; then SYSTUI_RUNTIME_PROFILE_CACHE=container
+    elif [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_LOADER:-}" ]; then SYSTUI_RUNTIME_PROFILE_CACHE=proot
+    else SYSTUI_RUNTIME_PROFILE_CACHE=native-linux
+    fi
+    printf '%s\n' "$SYSTUI_RUNTIME_PROFILE_CACHE"
 }
 
 systui_capability() { # <name>
