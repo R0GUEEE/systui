@@ -225,7 +225,7 @@ systui_service_manage_menu() { # <provider>
 }
 
 systui_service_create_menu() { # <provider>
-    local provider="$1" name desc command user path runlevel
+    local provider="$1" name desc command user path
     name=$(tui_input "Create service" "Service name:" "") || return 0
     [ -n "$name" ] || return 0
     if declare -F sysconfig_valid_token >/dev/null 2>&1; then sysconfig_valid_token "$name" || { tui_msg "Invalid name" "Unsafe service name."; return 1; }; fi
