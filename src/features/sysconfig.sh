@@ -855,6 +855,7 @@ menu_distro_repos() {
             back "Return to Repositories" off) || return 0
         case "$action" in
             refresh) run_cmd "apt-get update" apt-get update ;;
+            another) continue ;;
             back) return 0 ;;
         esac
     done
