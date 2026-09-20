@@ -40,7 +40,7 @@ no_interactive_source_prompt() {
     local body
     body=$(declare -f bedrock_sysconfig_install_fallback)
     ! grep -qE 'tui_(radio|yesno|check)' <<< "$body" &&
-    grep -q 'bedrock_sysconfig_best_source' <<< "$body"
+    grep -q 'bedrock_stratum_install_packages' <<< "$body"
 }
 check "install fallback does not prompt for a stratum" no_interactive_source_prompt
 
@@ -50,10 +50,11 @@ install_uses_selected_stratum() {
     trap 'rm -f "${log:-}"' RETURN
     bedrock_sysconfig_best_source() { printf 'ubuntu|apt|3.4.5\n'; }
     bedrock_aok_brl() { printf '/tmp/brl\n'; }
+    bedrock_stratum_install_packages() { printf 'helper %s %s\n' "$1" "$2" >> "$log"; return 0; }
     run_cmd() { printf '%s\n' "$*" >> "$log"; return 0; }
     # Avoid executing the fake brl for enable; the command is allowed to fail.
     bedrock_sysconfig_install_fallback demo >/dev/null 2>&1 || return 1
-    grep -q 'Install demo 3.4.5 from Bedrock stratum ubuntu \[apt\].*/tmp/brl install ubuntu demo' "$log"
+    grep -q '^helper ubuntu demo$' "$log"
 }
 check "installation targets the automatically selected stratum" install_uses_selected_stratum
 

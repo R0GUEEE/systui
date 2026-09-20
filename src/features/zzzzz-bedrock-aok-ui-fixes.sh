@@ -219,8 +219,14 @@ bedrock_aok_strata_menu() {
                     tui_msg "Invalid package name" "Package names may only contain letters, numbers, + . _ : @ / and -."
                     continue
                 fi
-                # shellcheck disable=SC2086
-                run_cmd "Install into $st" "$brl" install "$st" $pkg
+                if declare -F bedrock_stratum_install_packages >/dev/null 2>&1; then
+                    bedrock_stratum_install_packages "$st" "$pkg" || true
+                else
+                    # Compatibility fallback for reduced builds; prefer the
+                    # stratum-native package-manager helper when available.
+                    # shellcheck disable=SC2086
+                    run_cmd "Install into $st" "$brl" install "$st" $pkg
+                fi
                 ;;
             rename)
                 st=$(bedrock_aok_pick_stratum "Rename stratum" "Choose a stratum") || continue

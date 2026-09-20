@@ -30,7 +30,7 @@ bedrock_aok_extra_http_index_latest() { # <url> <extended-regex>
 }
 
 bedrock_aok_extra_builtin_urls() { # <tag>
-    local tag="$1" a base file listing
+    local tag="$1" a base file listing html latest
     case "$tag" in
         alpine)
             a=$(bedrock_aok_extra_arch alpine) || return 1
@@ -40,12 +40,17 @@ bedrock_aok_extra_builtin_urls() { # <tag>
             ;;
         ubuntu)
             a=$(bedrock_aok_extra_arch ubuntu) || return 1
-            printf 'https://cdimage.ubuntu.com/ubuntu-base/releases/26.04/release/ubuntu-base-26.04-base-%s.tar.gz\n' "$a"
+            base='https://cdimage.ubuntu.com/ubuntu-base/releases'
+            html=$(bedrock_aok_http_text "$base/" 2>/dev/null || true)
+            latest=$(printf '%s\n' "$html" | grep -Eo 'href="[0-9]{2}\.[0-9]{2}/"' | sed -E 's/^href="//;s#/$##;s/"$//' | LC_ALL=C sort -Vu | tail -n1)
+            [ -n "$latest" ] || latest=26.04
+            file="ubuntu-base-$latest-base-$a.tar.gz"
+            printf '%s/%s/release/%s\n' "$base" "$latest" "$file"
             ;;
         void)
             a=$(bedrock_aok_extra_arch void) || return 1
             base='https://repo-default.voidlinux.org/live/current'
-            file=$(bedrock_aok_extra_http_index_latest "$base/" "void-[0-9][0-9A-Za-z._-]*-$a-ROOTFS\\.tar\\.xz") || return 1
+            file=$(bedrock_aok_extra_http_index_latest "$base/" "void-$a-ROOTFS-[0-9]+\\.tar\\.xz") || return 1
             printf '%s/%s\n' "$base" "$file"
             ;;
         gentoo)

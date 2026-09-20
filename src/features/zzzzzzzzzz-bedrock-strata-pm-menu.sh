@@ -175,6 +175,17 @@ bedrock_stratum_pm_valid_pkgs() { # <space-separated packages>
     [ "$bad" = 0 ]
 }
 
+bedrock_stratum_install_packages() { # <stratum> <space-separated packages>
+    local st="$1" pkgs="$2" pm brl cmd
+    [ -n "$st" ] || return 1
+    bedrock_stratum_pm_valid_pkgs "$pkgs" || return 2
+    brl=$(bedrock_stratum_pm_brl) || return 1
+    pm=$(bedrock_stratum_pm_of "$st")
+    [ "$pm" != unknown ] || { tui_msg "Install unavailable" "No supported package manager was detected in Bedrock stratum '$st'."; return 1; }
+    cmd=$(bedrock_stratum_pm_command "$st" "$pm" install "$pkgs") || return 1
+    run_cmd "Install into $st [$pm]: $pkgs" "$brl" strat -r "$st" /bin/sh -lc "$cmd"
+}
+
 # Edit the stratum's primary package-manager configuration file via TUI:
 # stage it out, edit, then copy it back into the stratum.
 bedrock_stratum_pm_edit_config() { # <stratum> <pm>
@@ -283,7 +294,7 @@ bedrock_stratum_pm_menu() { # <stratum>
                 [ -n "${p//[[:space:]]/}" ] || continue
                 bedrock_stratum_pm_valid_pkgs "$p" || { tui_msg "Invalid package name" "Use letters, numbers, + . _ : @ / and - only."; continue; }
                 tui_yesno "Install into $st" "Install '$p' into the '$st' stratum [${pm}]?" || continue
-                run_cmd "Install into $st [$pm]: $p" "$brl" strat -r "$st" /bin/sh -lc "$(bedrock_stratum_pm_command "$st" "$pm" install "$p")" || true
+                bedrock_stratum_install_packages "$st" "$p" || true
                 ;;
             remove)
                 p=$(tui_input "Remove from $st" "Package names (space-separated):" "") || continue

@@ -121,8 +121,12 @@ bedrock_sysconfig_install_fallback() { # <package>
     IFS='|' read -r st pm ver <<< "$best"
     [ -n "$st" ] && [ -n "$ver" ] || return 1
 
-    run_cmd "Install $pkg $ver from Bedrock stratum $st [$pm]" \
-        "$brl" install "$st" "$pkg" || return 1
+    if declare -F bedrock_stratum_install_packages >/dev/null 2>&1; then
+        bedrock_stratum_install_packages "$st" "$pkg" || return 1
+    else
+        run_cmd "Install $pkg $ver from Bedrock stratum $st [$pm]" \
+            "$brl" install "$st" "$pkg" || return 1
+    fi
 
     # Make the chosen source immediately participate in the unified system.
     "$brl" enable "$st" >/dev/null 2>&1 || true

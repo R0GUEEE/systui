@@ -117,7 +117,11 @@ bedrock_sysconfig_install_fallback() { # <package>
             "${opts[@]}") || return 1
     fi
 
-    run_cmd "Install $pkg from Bedrock stratum $st" "$brl" install "$st" "$pkg" || return 1
+    if declare -F bedrock_stratum_install_packages >/dev/null 2>&1; then
+        bedrock_stratum_install_packages "$st" "$pkg" || return 1
+    else
+        run_cmd "Install $pkg from Bedrock stratum $st" "$brl" install "$st" "$pkg" || return 1
+    fi
     # Ensure the stratum participates in cross-command resolution and rebuild
     # wrappers so newly installed executables are immediately visible system-wide.
     "$brl" enable "$st" >/dev/null 2>&1 || true

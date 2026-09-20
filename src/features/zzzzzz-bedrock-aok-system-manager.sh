@@ -80,8 +80,14 @@ bedrock_aok_bulk_install_packages() {
     fi
     tui_yesno "Bulk package install" "Install '$pkg' into all selected strata?\n\n$strata" || return 0
     for st in $strata; do
-        # shellcheck disable=SC2086
-        run_cmd "Install into $st" "$brl" install "$st" $pkg || true
+        if declare -F bedrock_stratum_install_packages >/dev/null 2>&1; then
+            bedrock_stratum_install_packages "$st" "$pkg" || true
+        else
+            # Compatibility fallback for reduced builds; prefer the stratum's
+            # native package-manager helper when available.
+            # shellcheck disable=SC2086
+            run_cmd "Install into $st" "$brl" install "$st" $pkg || true
+        fi
     done
 }
 

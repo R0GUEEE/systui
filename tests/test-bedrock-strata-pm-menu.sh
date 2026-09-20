@@ -106,6 +106,19 @@ strata_enum() {
 }
 check "strata enumerated from integration helper" strata_enum
 
+helper_installs_with_native_pm() {
+    local log="$SYSTUI_TMP/helper.log"
+    run_cmd() { printf '%s\n' "$*" > "$log"; return 0; }
+    bedrock_stratum_install_packages debian 'curl git'
+    grep -q '/bedrock/bin/brl strat -r debian /bin/sh -lc apt-get install -y curl git' "$log"
+}
+check "stratum install helper uses native PM via brl strat" helper_installs_with_native_pm
+
+helper_rejects_bad_pkgs() {
+    ! bedrock_stratum_install_packages debian 'curl;rm'
+}
+check "stratum install helper rejects unsafe package names" helper_rejects_bad_pkgs
+
 # --- menu_packages override gating -------------------------------------------
 # When Bedrock is inactive the native menu is used; when active the override
 # builds a menu until Back.  We simulate both by overriding the underlying
