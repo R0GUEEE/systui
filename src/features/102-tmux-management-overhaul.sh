@@ -61,7 +61,7 @@ systui_tmux_release_asset_url() { # <repo> <regex>
 }
 
 systui_tmux_install_static_github() {
-    local arch regex url tmp unpack bin
+    local arch regex url tmp bin
     arch=$(systui_tmux_arch)
     case "$arch" in
         x86_64) regex='linux[-_.](x86_64|amd64).*\.tar\.gz$|linux.*(x86_64|amd64).*\.tar\.gz$' ;;
@@ -99,7 +99,7 @@ systui_tmux_install_appimage() {
 }
 
 systui_tmux_build_from_git() { # <stable|master>
-    local mode="$1" tmp src tag json tarurl
+    local mode="$1" tmp src json tarurl
     systui_tmux_install_build_deps || return 1
     tmp=$(mktemp -d "${SYSTUI_TMP:-${TMPDIR:-/tmp}}/tmux-build.XXXXXX") || return 1
     if [ "$mode" = master ]; then
@@ -178,7 +178,7 @@ systui_tmux_plugin_remove() { # <owner/repo>
 }
 
 systui_tmux_plugins_apply() {
-    local tpm="$(systui_tmux_plugin_dir)/tpm"
+    local tpm\n    tpm="$(systui_tmux_plugin_dir)/tpm"
     [ -x "$tpm/bin/install_plugins" ] || systui_tmux_tpm_install || return 1
     "$tpm/bin/install_plugins" || true
     command -v tmux >/dev/null 2>&1 && tmux source-file "$(systui_tmux_conf)" 2>/dev/null || true
@@ -231,7 +231,7 @@ systui_tmux_plugin_selector_data() { # curated/live
 }
 
 systui_tmux_manage_plugin_selection() { # curated|live
-    local picks repo conf existing
+    local picks repo conf
     conf=$(systui_tmux_conf)
     picks=$(systui_tmux_plugin_selector_data "$1") || return 0
     picks=${picks//\"/}
