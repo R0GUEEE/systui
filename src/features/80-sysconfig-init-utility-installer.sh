@@ -99,6 +99,8 @@ sysconfig_init_install_packages() { # <provider> <package-manager>
 sysconfig_init_packages_to_array() { # <provider> <pm> <array-name>
     local provider="$1" pm="$2" array_name="$3" raw
     raw=$(sysconfig_init_install_packages "$provider" "$pm") || return 1
+    # array_name intentionally names the destination array.
+    # shellcheck disable=SC2229
     read -r -a "$array_name" <<< "$raw"
 }
 

@@ -5,15 +5,24 @@
 
 if declare -F rootfs_dm_package >/dev/null 2>&1 \
     && ! declare -F _systui_rootfs_dm_package_before_distrobox_final >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_dm_package | sed '1s/^rootfs_dm_package[[:space:]]*()/_systui_rootfs_dm_package_before_distrobox_final ()/')"
+    _systui_saved_fn=$(declare -f rootfs_dm_package)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_dm_package /_systui_rootfs_dm_package_before_distrobox_final }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 if declare -F rootfs_dm_installed_names >/dev/null 2>&1 \
     && ! declare -F _systui_rootfs_dm_installed_names_before_distrobox_final >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_dm_installed_names | sed '1s/^rootfs_dm_installed_names[[:space:]]*()/_systui_rootfs_dm_installed_names_before_distrobox_final ()/')"
+    _systui_saved_fn=$(declare -f rootfs_dm_installed_names)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_dm_installed_names /_systui_rootfs_dm_installed_names_before_distrobox_final }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 if declare -F rootfs_dm_install >/dev/null 2>&1 \
     && ! declare -F _systui_rootfs_dm_install_before_distrobox_final >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_dm_install | sed '1s/^rootfs_dm_install[[:space:]]*()/_systui_rootfs_dm_install_before_distrobox_final ()/')"
+    _systui_saved_fn=$(declare -f rootfs_dm_install)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_dm_install /_systui_rootfs_dm_install_before_distrobox_final }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 rootfs_dm_repo_has_package() { # <package>

@@ -158,7 +158,10 @@ bedrock_aok_discovery_source_urls() { # <tag>
 }
 
 if declare -F bedrock_aok_extra_source_urls >/dev/null 2>&1 && ! declare -F _bedrock_aok_extra_source_urls_before_web >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_extra_source_urls | sed '1s/^bedrock_aok_extra_source_urls[[:space:]]*()/_bedrock_aok_extra_source_urls_before_web ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_extra_source_urls)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_extra_source_urls /_bedrock_aok_extra_source_urls_before_web }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_extra_source_urls() {
     local tag="$1"
@@ -169,7 +172,10 @@ bedrock_aok_extra_source_urls() {
 }
 
 if declare -F bedrock_aok_extra_catalog_rows >/dev/null 2>&1 && ! declare -F _bedrock_aok_extra_catalog_rows_before_web >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_extra_catalog_rows | sed '1s/^bedrock_aok_extra_catalog_rows[[:space:]]*()/_bedrock_aok_extra_catalog_rows_before_web ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_extra_catalog_rows)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_extra_catalog_rows /_bedrock_aok_extra_catalog_rows_before_web }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_extra_catalog_rows() {
     local tag label

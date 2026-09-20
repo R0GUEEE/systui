@@ -3,7 +3,10 @@
 
 # Preserve the centralized detector, then refine unknown/SysV-looking BusyBox PID1 cases.
 if declare -F systui_detect_init >/dev/null 2>&1 && ! declare -F _systui_detect_init_before_busybox >/dev/null 2>&1; then
-    eval "$(declare -f systui_detect_init | sed '1s/^systui_detect_init[[:space:]]*()/_systui_detect_init_before_busybox ()/')"
+    _systui_saved_fn=$(declare -f systui_detect_init)
+    _systui_saved_fn=${_systui_saved_fn/#systui_detect_init /_systui_detect_init_before_busybox }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 systui_busybox_init_present() {
@@ -159,7 +162,10 @@ menu_services() {
 
 # Rootfs support: recognize and wire the BusyBox init applet.
 if declare -F systui_rootfs_init_detect >/dev/null 2>&1 && ! declare -F _systui_rootfs_init_detect_before_busybox >/dev/null 2>&1; then
-    eval "$(declare -f systui_rootfs_init_detect | sed '1s/^systui_rootfs_init_detect[[:space:]]*()/_systui_rootfs_init_detect_before_busybox ()/')"
+    _systui_saved_fn=$(declare -f systui_rootfs_init_detect)
+    _systui_saved_fn=${_systui_saved_fn/#systui_rootfs_init_detect /_systui_rootfs_init_detect_before_busybox }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 systui_rootfs_init_detect() {
     local t="$1" detected
@@ -172,7 +178,10 @@ systui_rootfs_init_detect() {
 }
 
 if declare -F rootfs_wb_init_link_target >/dev/null 2>&1 && ! declare -F _rootfs_wb_init_link_target_before_busybox >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_init_link_target | sed '1s/^rootfs_wb_init_link_target[[:space:]]*()/_rootfs_wb_init_link_target_before_busybox ()/')"
+    _systui_saved_fn=$(declare -f rootfs_wb_init_link_target)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_wb_init_link_target /_rootfs_wb_init_link_target_before_busybox }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 rootfs_wb_init_link_target() {
     local t="$1" init="$2"

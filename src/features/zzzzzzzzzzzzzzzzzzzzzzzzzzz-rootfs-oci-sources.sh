@@ -130,7 +130,10 @@ rootfs_oci_known_image_menu() {
 
 if declare -F rootfs_download_source_hub >/dev/null 2>&1 \
     && ! declare -F _rootfs_download_source_hub_before_oci >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_download_source_hub | sed '1s/^rootfs_download_source_hub[[:space:]]*()/_rootfs_download_source_hub_before_oci ()/')"
+    _systui_saved_fn=$(declare -f rootfs_download_source_hub)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_download_source_hub /_rootfs_download_source_hub_before_oci }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 rootfs_download_source_hub() {

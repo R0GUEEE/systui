@@ -5,7 +5,10 @@
 
 if declare -F menu_storage >/dev/null 2>&1 \
     && ! declare -F _systui_storage_before_local_files_final >/dev/null 2>&1; then
-    eval "$(declare -f menu_storage | sed '1s/^menu_storage[[:space:]]*()/_systui_storage_before_local_files_final ()/')"
+    _systui_saved_fn=$(declare -f menu_storage)
+    _systui_saved_fn=${_systui_saved_fn/#menu_storage /_systui_storage_before_local_files_final }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 systui_storage_mount_status() { # <mountpoint>

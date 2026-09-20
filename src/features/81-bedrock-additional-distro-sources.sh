@@ -114,7 +114,10 @@ bedrock_aok_extra_catalog_rows() {
 }
 
 if declare -F bedrock_aok_available_strata >/dev/null 2>&1 && ! declare -F _bedrock_aok_available_strata_before_extra_sources >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_available_strata | sed '1s/^bedrock_aok_available_strata[[:space:]]*()/_bedrock_aok_available_strata_before_extra_sources ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_available_strata)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_available_strata /_bedrock_aok_available_strata_before_extra_sources }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_available_strata() {
     {
@@ -124,7 +127,10 @@ bedrock_aok_available_strata() {
 }
 
 if declare -F bedrock_aok_fetch_stratum_resilient >/dev/null 2>&1 && ! declare -F _bedrock_aok_fetch_stratum_before_extra_sources >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_fetch_stratum_resilient | sed '1s/^bedrock_aok_fetch_stratum_resilient[[:space:]]*()/_bedrock_aok_fetch_stratum_before_extra_sources ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_fetch_stratum_resilient)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_fetch_stratum_resilient /_bedrock_aok_fetch_stratum_before_extra_sources }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_fetch_stratum_resilient() { # <stratum>
     local tag="$1" url brl tried=0
@@ -198,7 +204,10 @@ bedrock_aok_sources_menu() {
 }
 
 if declare -F bedrock_aok_strata_menu >/dev/null 2>&1 && ! declare -F _bedrock_aok_strata_menu_before_extra_sources >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_strata_menu | sed '1s/^bedrock_aok_strata_menu[[:space:]]*()/_bedrock_aok_strata_menu_before_extra_sources ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_strata_menu)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_strata_menu /_bedrock_aok_strata_menu_before_extra_sources }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_strata_menu() {
     local c

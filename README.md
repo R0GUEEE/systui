@@ -15,7 +15,7 @@ systui is a comprehensive Linux system administration tool with:
 
 ```bash
 # Clone or download the project
-git clone https://github.com/... systui
+git clone https://github.com/R0GUEEE/systui.git systui
 cd systui
 
 # Run installation (requires root)

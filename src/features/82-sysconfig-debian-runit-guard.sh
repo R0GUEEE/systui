@@ -8,7 +8,10 @@
 
 if declare -F sysconfig_install_init_provider >/dev/null 2>&1 \
     && ! declare -F _sysconfig_install_init_provider_before_debian_init_switch >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_install_init_provider | sed '1s/^sysconfig_install_init_provider[[:space:]]*()/_sysconfig_install_init_provider_before_debian_init_switch ()/')"
+    _systui_saved_fn=$(declare -f sysconfig_install_init_provider)
+    _systui_saved_fn=${_systui_saved_fn/#sysconfig_install_init_provider /_sysconfig_install_init_provider_before_debian_init_switch }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 systui_debian_family() {
@@ -67,7 +70,7 @@ systui_debian_init_conflicts() { # <target-provider>
 }
 
 systui_debian_replace_init_provider() { # <provider>
-    local provider="$1" label targets_raw conflicts_raw target_text conflict_text rc pkg
+    local provider="$1" label targets_raw target_text conflict_text rc pkg
     local -a targets=() conflicts=() apt_args=()
 
     command -v apt-get >/dev/null 2>&1 || return 127

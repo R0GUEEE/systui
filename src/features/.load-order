@@ -33,6 +33,7 @@ zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-rootfs-web-catalogue.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-extra-web-images.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-hub.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-oci-sources.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-download-location-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
@@ -87,6 +88,8 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 77-host-native-install-default.sh
 78-bedrock-init-compatibility.sh
 79-busybox-init-support.sh
+80-sysconfig-init-utility-installer.sh
+82-sysconfig-debian-runit-guard.sh
 80-busybox-rootfs-init-final.sh
 81-bedrock-additional-distro-sources.sh
 82-bedrock-web-source-discovery.sh
@@ -102,13 +105,13 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 92-runtime-menu-cleanup.sh
 93-runtime-routing-cleanup.sh
 94-universal-software-catalogue.sh
+94-sysconfig-init-package-safety.sh
 95-software-catalogue-registry-final.sh
 96-menu-consolidation-final.sh
 97-software-catalogue-collections-final.sh
 98-storage-local-files-final.sh
 99-distro-manager-distrobox-final.sh
 100-archlinuxarm-download-final.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
 101-unified-package-installation-final.sh
 102-tmux-management-overhaul.sh
 103-tmux-shells-menu-integration-final.sh
@@ -118,3 +121,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-clean
 107-tmux-menu-consolidation-final.sh
 108-services-init-full-configuration-final.sh
 109-init-comprehensive-configuration-final.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-final-init-provider-switch.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh

@@ -2,7 +2,10 @@
 # PHASE 80 — final BusyBox rootfs init installation and selection.
 
 if declare -F rootfs_wb_init_install_apt >/dev/null 2>&1 && ! declare -F _rootfs_wb_init_install_apt_before_busybox >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_init_install_apt | sed '1s/^rootfs_wb_init_install_apt[[:space:]]*()/_rootfs_wb_init_install_apt_before_busybox ()/')"
+    _systui_saved_fn=$(declare -f rootfs_wb_init_install_apt)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_wb_init_install_apt /_rootfs_wb_init_install_apt_before_busybox }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 rootfs_wb_busybox_prepare() { # <target>
@@ -56,7 +59,10 @@ rootfs_wb_init_install_apt() { # <target> <init>
 }
 
 if declare -F rootfs_wb_init_wire >/dev/null 2>&1 && ! declare -F _rootfs_wb_init_wire_before_busybox >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_init_wire | sed '1s/^rootfs_wb_init_wire[[:space:]]*()/_rootfs_wb_init_wire_before_busybox ()/')"
+    _systui_saved_fn=$(declare -f rootfs_wb_init_wire)
+    _systui_saved_fn=${_systui_saved_fn/#rootfs_wb_init_wire /_rootfs_wb_init_wire_before_busybox }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 rootfs_wb_init_wire() { # <target> <init>
     local t="$1" init="$2" busy

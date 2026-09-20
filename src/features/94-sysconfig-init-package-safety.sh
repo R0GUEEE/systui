@@ -7,7 +7,10 @@
 
 if declare -F sysconfig_init_install_packages >/dev/null 2>&1 \
     && ! declare -F _sysconfig_init_install_packages_before_safety >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_init_install_packages | sed '1s/^sysconfig_init_install_packages[[:space:]]*()/_sysconfig_init_install_packages_before_safety ()/')"
+    _systui_saved_fn=$(declare -f sysconfig_init_install_packages)
+    _systui_saved_fn=${_systui_saved_fn/#sysconfig_init_install_packages /_sysconfig_init_install_packages_before_safety }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 sysconfig_init_install_packages() { # <provider> <package-manager>
