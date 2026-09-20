@@ -107,7 +107,7 @@ systui_tmux_awesome_live_section() { # <heading text>
     data=$(systui_tmux_fetch_text "$SYSTUI_TMUX_AWESOME_README" 2>/dev/null) || return 1
     while IFS= read -r line; do
         case "$line" in
-            '## '*|'## <a '* )
+            '## '*)
                 if printf '%s' "$line" | grep -Fqi "$wanted"; then section=1; continue; fi
                 [ "$section" -eq 1 ] && break
                 ;;
