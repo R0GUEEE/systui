@@ -95,58 +95,129 @@ tui_geometry() { # <kind> -> "height width list-height" and TUI_H/TUI_W/TUI_LIST
 # DIALOG WRAPPERS
 ###############################################################################
 
+tui_report_dialog_error() { # <widget> <title> <rc>
+    local widget="${1:-dialog}" title="${2:-unknown}" rc="${3:-1}"
+    local msg="systui: $widget failed while opening '$title' (dialog exit $rc)"
+    printf '%s\n' "$msg" >&2
+    if declare -F log >/dev/null 2>&1; then
+        log "$msg" 2>/dev/null || true
+    fi
+}
+
+tui_dialog_status() { # <widget> <title> <rc>
+    local widget="$1" title="$2" rc="$3"
+    case "$rc" in
+        0|1|255) return "$rc" ;;
+        *) tui_report_dialog_error "$widget" "$title" "$rc"; return "$rc" ;;
+    esac
+}
+
+# Run a menu capture from the parent shell. This primes terminal geometry before
+# the command-substitution child is created, so the size cache survives menu
+# redraws. Cancel/ESC becomes an empty selection; actual dialog failures remain
+# non-zero and have already been reported by the widget wrapper.
+tui_capture_menu() { # <destination-var> <tui_menu|tui_menu_no_tags> <args...>
+    local dest="$1" widget="$2" out='' rc=0
+    shift 2
+    case "$widget" in tui_menu|tui_menu_no_tags) ;; *) return 2 ;; esac
+    tui_refresh_terminal_size
+    if out=$("$widget" "$@"); then rc=0; else rc=$?; fi
+    case "$rc" in
+        0) printf -v "$dest" '%s' "$out"; return 0 ;;
+        1|255) printf -v "$dest" '%s' ''; return 0 ;;
+        *) printf -v "$dest" '%s' "$out"; return "$rc" ;;
+    esac
+}
+
+tui_call_menu() { # <function> <label> [args...]
+    local fn="$1" label="${2:-$1}"
+    shift 2 || true
+    if declare -F "$fn" >/dev/null 2>&1; then
+        "$fn" "$@"
+        return $?
+    fi
+    local msg="Menu unavailable: $label (missing function: $fn)"
+    if declare -F log >/dev/null 2>&1; then log "$msg" 2>/dev/null || true; fi
+    if declare -F tui_msg >/dev/null 2>&1 && command -v "${DIALOG:-dialog}" >/dev/null 2>&1; then
+        tui_msg "Menu unavailable" "$label could not be loaded.\n\nMissing function: $fn" || true
+    else
+        printf 'systui: %s\n' "$msg" >&2
+    fi
+    return 0
+}
+
 tui_msg() {
     local h w _; tui_geometry msg >/dev/null; h=$TUI_H; w=$TUI_W
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --msgbox "$2" "$h" "$w"
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --msgbox "$2" "$h" "$w" || rc=$?
+    tui_dialog_status "msgbox" "$1" "$rc"
 }
 
 tui_yesno() {
     local h w _; tui_geometry yesno >/dev/null; h=$TUI_H; w=$TUI_W
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --yesno "$2" "$h" "$w"
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --yesno "$2" "$h" "$w" || rc=$?
+    tui_dialog_status "yesno" "$1" "$rc"
 }
 
 tui_input() {
     local h w _; tui_geometry input >/dev/null; h=$TUI_H; w=$TUI_W
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --inputbox "$2" "$h" "$w" "${3:-}" 3>&1 1>&2 2>&3
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --inputbox "$2" "$h" "$w" "${3:-}" 3>&1 1>&2 2>&3 || rc=$?
+    tui_dialog_status "inputbox" "$1" "$rc"
 }
 
 tui_password() {
     local h w _; tui_geometry password >/dev/null; h=$TUI_H; w=$TUI_W
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --passwordbox "$2" "$h" "$w" 3>&1 1>&2 2>&3
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --passwordbox "$2" "$h" "$w" 3>&1 1>&2 2>&3 || rc=$?
+    tui_dialog_status "passwordbox" "$1" "$rc"
 }
 
 tui_menu() {
     local title="$1" text="$2" h w list; shift 2
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
+    tui_dialog_status "menu" "$title" "$rc"
 }
 
 tui_menu_no_tags() {
     local title="$1" text="$2" h w list; shift 2
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --no-tags --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --no-tags --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
+    tui_dialog_status "menu" "$title" "$rc"
 }
 
 tui_radio() {
     local title="$1" text="$2" h w list; shift 2
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --radiolist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --radiolist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
+    tui_dialog_status "radiolist" "$1" "$rc"
 }
 
 tui_check() {
     local title="$1" text="$2" h w list; shift 2
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --checklist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --checklist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
+    tui_dialog_status "checklist" "$1" "$rc"
 }
 
 tui_text() {
     local h w _; tui_geometry text >/dev/null; h=$TUI_H; w=$TUI_W
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --textbox "$2" "$h" "$w"
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --textbox "$2" "$h" "$w" || rc=$?
+    tui_dialog_status "textbox" "$1" "$rc"
 }
 
 tui_progress() {
     local h w _; tui_geometry progress >/dev/null; h=$TUI_H; w=$TUI_W
-    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --gauge "$2" "$h" "$w" "${3:-0}"
+    local rc=0
+    "$DIALOG" --backtitle "$BACKTITLE" --title "$1" --gauge "$2" "$h" "$w" "${3:-0}" || rc=$?
+    tui_dialog_status "gauge" "$1" "$rc"
 }
 
 ###############################################################################

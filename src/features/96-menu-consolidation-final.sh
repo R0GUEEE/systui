@@ -9,30 +9,25 @@ menu_sysconfig_basics() {
         [ ! -r /etc/hostname ] || read -r host < /etc/hostname || true
         tz=unknown
         [ ! -r /etc/timezone ] || read -r tz < /etc/timezone || true
-        c=$(tui_menu_no_tags "System basics" \
+        tui_capture_menu c tui_menu_no_tags "System basics" \
             "Core host settings that do not belong to a dedicated section:" \
             hostname "Set hostname ($host)" \
             timezone "Set timezone ($tz)" \
             scan     "Run full system scan" \
-            back     "Back") || return 0
+            back     "Back" || return $?
         case "$c" in
-            hostname) sysconfig_set_hostname ;;
-            timezone) sysconfig_set_timezone ;;
-            scan) menu_scan_system ;;
+            hostname) tui_call_menu sysconfig_set_hostname "Hostname" ;;
+            timezone) tui_call_menu sysconfig_set_timezone "Timezone" ;;
+            scan) tui_call_menu menu_scan_system "System scan" ;;
             back|'') return 0 ;;
         esac
     done
 }
 
+# Compatibility name introduced by the earlier menu hardening pass. Keep callers
+# and integration tests on one dispatcher while the implementation lives in core.
 systui_menu_dispatch() {
-    local fn="$1" label="$2"
-    shift 2
-    if declare -F "$fn" >/dev/null 2>&1; then
-        "$fn" "$@"
-    else
-        tui_msg "Unavailable" "$label is unavailable because $fn was not loaded."
-        return 127
-    fi
+    tui_call_menu "$@"
 }
 
 # Common Tasks duplicated Packages, Editors, Users, SSH/Network, Services and
@@ -41,7 +36,7 @@ systui_menu_dispatch() {
 menu_sysconfig() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "System Configuration" \
+        tui_capture_menu c tui_menu_no_tags "System Configuration" \
             "Detected: package manager = ${PM:-unknown}, init = ${INIT:-unknown}" \
             system       "System basics — hostname, timezone, system scan" \
             packages     "Packages, catalogue, repositories and managers" \
@@ -52,17 +47,17 @@ menu_sysconfig() {
             services     "Services and init systems" \
             users        "Users, sudo, passwords and SSH keys" \
             storage      "Storage, mounts, filesystems and SMART" \
-            back         "Back to main menu") || return 0
+            back         "Back to main menu" || return $?
         case "$c" in
-            system)       systui_menu_dispatch menu_sysconfig_basics "System basics" ;;
-            packages)     systui_menu_dispatch menu_packages "Packages" ;;
-            shells)       systui_menu_dispatch menu_shells "Shells" ;;
-            editors)      systui_menu_dispatch menu_editors "Editors" ;;
-            filemanagers) systui_menu_dispatch menu_file_managers "File managers" ;;
-            network)      systui_menu_dispatch menu_network "Network" ;;
-            services)     systui_menu_dispatch menu_services "Services" ;;
-            users)        systui_menu_dispatch menu_users "Users" ;;
-            storage)      systui_menu_dispatch menu_storage "Storage" ;;
+            system)       tui_call_menu menu_sysconfig_basics "System basics" ;;
+            packages)     tui_call_menu menu_packages "Packages" ;;
+            shells)       tui_call_menu menu_shells "Shells" ;;
+            editors)      tui_call_menu menu_editors "Editors" ;;
+            filemanagers) tui_call_menu menu_file_managers "File managers" ;;
+            network)      tui_call_menu menu_network "Network" ;;
+            services)     tui_call_menu menu_services "Services" ;;
+            users)        tui_call_menu menu_users "Users" ;;
+            storage)      tui_call_menu menu_storage "Storage" ;;
             back|'') return 0 ;;
         esac
     done
@@ -88,12 +83,12 @@ menu_package_managers() {
             opts+=(bedrock "Bedrock strata package managers")
         fi
         opts+=(back "Back")
-        c=$(tui_menu_no_tags "Package Managers" \
+        tui_capture_menu c tui_menu_no_tags "Package Managers" \
             "Install, remove and configure package-manager ecosystems:" \
-            "${opts[@]}") || return 0
+            "${opts[@]}" || return $?
         case "$c" in
-            native) _systui_package_managers_before_menu_consolidation ;;
-            bedrock) bedrock_systui_package_managers_menu ;;
+            native) tui_call_menu _systui_package_managers_before_menu_consolidation "Native package managers" ;;
+            bedrock) tui_call_menu bedrock_systui_package_managers_menu "Bedrock package managers" ;;
             back|'') return 0 ;;
         esac
     done
@@ -103,20 +98,20 @@ menu_package_managers() {
 menu_packages() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "Package Configuration [${PM:-unknown}]" \
+        tui_capture_menu c tui_menu_no_tags "Package Configuration [${PM:-unknown}]" \
             "Select a package-management section:" \
             packages  "Install, remove, search and update packages" \
             catalogue "Software catalogue" \
             repos      "Repositories and signing keys" \
             managers   "Package managers" \
             advanced   "Advanced package maintenance" \
-            back       "Back") || return 0
+            back       "Back" || return $?
         case "$c" in
-            packages) menu_package_operations || true ;;
-            catalogue) pkg_catalogue || true ;;
-            repos) menu_repos || true ;;
-            managers) menu_package_managers || true ;;
-            advanced) menu_pkg_advanced || true ;;
+            packages) tui_call_menu menu_package_operations "Package operations" ;;
+            catalogue) tui_call_menu pkg_catalogue "Software catalogue" ;;
+            repos) tui_call_menu menu_repos "Repositories" ;;
+            managers) tui_call_menu menu_package_managers "Package managers" ;;
+            advanced) tui_call_menu menu_pkg_advanced "Advanced package maintenance" ;;
             back|'') return 0 ;;
         esac
     done
@@ -132,24 +127,24 @@ systui_catalogue_categories_menu() {
     done
     opts+=(back "Back")
     while true; do
-        c=$(tui_menu_no_tags "Software categories" \
-            "Browse software by category:" "${opts[@]}") || return 0
+        tui_capture_menu c tui_menu_no_tags "Software categories" \
+            "Browse software by category:" "${opts[@]}" || return $?
         [ "$c" = back ] || [ -z "$c" ] && return 0
-        browse_category "$c"
+        tui_call_menu browse_category "Software category: $c" "$c"
     done
 }
 
 systui_catalogue_manage_menu() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "Catalogue management" \
+        tui_capture_menu c tui_menu_no_tags "Catalogue management" \
             "Package discovery and maintenance tools:" \
             installed "Installed catalogue software" \
             updates   "Available package updates" \
             search    "Search package repositories" \
             bulk      "Import/export and bulk package actions" \
             health    "Package health and repair" \
-            back      "Back") || return 0
+            back      "Back" || return $?
         case "$c" in
             installed) catalogue_installed ;;
             updates) catalogue_updates ;;
@@ -177,7 +172,7 @@ pkg_catalogue() {
         return 0
     fi
     while true; do
-        c=$(tui_menu_no_tags "Software Catalogue [${PM}]" \
+        tui_capture_menu c tui_menu_no_tags "Software Catalogue [${PM}]" \
             "Browse and manage software:" \
             featured    "Featured software" \
             categories  "Browse all categories" \
@@ -185,7 +180,7 @@ pkg_catalogue() {
             cli         "Terminal-tool checklists" \
             manage      "Search, updates, installed apps and maintenance" \
             awesome     "Awesome Linux catalogue" \
-            back        "Back") || return 0
+            back        "Back" || return $?
         case "$c" in
             featured) browse_category featured "${FEATURED_APPS:-}" ;;
             categories) systui_catalogue_categories_menu ;;

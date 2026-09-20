@@ -89,7 +89,8 @@ systui_service_do() { # <provider> <action> <service>
 }
 
 systui_service_list() { # <provider>
-    local provider="$1" out="$SYSTUI_TMP/services-$provider"
+    local provider="$1" out
+    out="$SYSTUI_TMP/services-$provider"
     if declare -F sysconfig_service_list_for >/dev/null 2>&1; then
         sysconfig_service_list_for "$provider" "$out" || true
     else
@@ -157,11 +158,11 @@ systui_service_config_menu() { # <provider> <service>
     local provider="$1" service="$2" c file
     file=$(systui_service_config_file "$provider" "$service")
     while true; do
-        c=$(tui_menu_no_tags "Service configuration — $service" "Provider: $(systui_init_name "$provider")\nNative path: $file" \
+        tui_capture_menu c tui_menu_no_tags "Service configuration — $service" "Provider: $(systui_init_name "$provider")\nNative path: $file" \
             view "View configuration" \
             edit "Edit configuration" \
             reload "Reload provider configuration" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             view)
                 if [ -r "$file" ]; then cp "$file" "$SYSTUI_TMP/service-config-view"; else printf '(not present)\n%s\n' "$file" > "$SYSTUI_TMP/service-config-view"; fi
@@ -188,7 +189,7 @@ systui_service_config_menu() { # <provider> <service>
 systui_service_manage_menu() { # <provider>
     local provider="$1" c service action
     while true; do
-        c=$(tui_menu_no_tags "$(systui_init_name "$provider") — service manager" \
+        tui_capture_menu c tui_menu_no_tags "$(systui_init_name "$provider") — service manager" \
             "Lifecycle, boot state, logs and service configuration:" \
             list "List services" \
             start "Start service" stop "Stop service" restart "Restart service" status "Status" \
@@ -196,7 +197,7 @@ systui_service_manage_menu() { # <provider>
             logs "View service logs" config "Edit service configuration" \
             mask "Mask/unmask unit (systemd)" \
             create "Create a new service definition" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             list) systui_service_list "$provider" ;;
             start|stop|restart|status|enable|disable)
@@ -225,7 +226,7 @@ systui_service_manage_menu() { # <provider>
 }
 
 systui_service_create_menu() { # <provider>
-    local provider="$1" name desc command user path runlevel
+    local provider="$1" name desc command user path
     name=$(tui_input "Create service" "Service name:" "") || return 0
     [ -n "$name" ] || return 0
     if declare -F sysconfig_valid_token >/dev/null 2>&1; then sysconfig_valid_token "$name" || { tui_msg "Invalid name" "Unsafe service name."; return 1; }; fi
@@ -311,8 +312,8 @@ systui_init_provider_config_menu() { # <provider>
     while true; do
         case "$provider" in
             systemd)
-                c=$(tui_menu_no_tags "systemd configuration" "Manager, logging, login and boot defaults:" \
-                    manager "Edit /etc/systemd/system.conf" journald "Edit /etc/systemd/journald.conf" logind "Edit /etc/systemd/logind.conf" target "Default boot target" reload "daemon-reload" back "Back") || return 0
+                tui_capture_menu c tui_menu_no_tags "systemd configuration" "Manager, logging, login and boot defaults:" \
+                    manager "Edit /etc/systemd/system.conf" journald "Edit /etc/systemd/journald.conf" logind "Edit /etc/systemd/logind.conf" target "Default boot target" reload "daemon-reload" back "Back" || return $?
                 case "$c" in
                     manager) f=/etc/systemd/system.conf ;;
                     journald) f=/etc/systemd/journald.conf ;;
@@ -323,19 +324,19 @@ systui_init_provider_config_menu() { # <provider>
                 esac
                 ;;
             openrc)
-                c=$(tui_menu_no_tags "OpenRC configuration" "OpenRC runtime and service defaults:" rcconf "Edit /etc/rc.conf" confd "Browse /etc/conf.d" runlevels "Runlevel configuration" back "Back") || return 0
+                tui_capture_menu c tui_menu_no_tags "OpenRC configuration" "OpenRC runtime and service defaults:" rcconf "Edit /etc/rc.conf" confd "Browse /etc/conf.d" runlevels "Runlevel configuration" back "Back" || return $?
                 case "$c" in rcconf) f=/etc/rc.conf ;; confd) f=/etc/conf.d ;; runlevels) systui_openrc_runlevel_menu; continue ;; back|'') return 0 ;; esac
                 ;;
             runit)
-                c=$(tui_menu_no_tags "runit configuration" "runit service directories and boot scripts:" stage1 "Edit /etc/runit/1" stage2 "Edit /etc/runit/2" stage3 "Edit /etc/runit/3" services "Browse service directory" back "Back") || return 0
+                tui_capture_menu c tui_menu_no_tags "runit configuration" "runit service directories and boot scripts:" stage1 "Edit /etc/runit/1" stage2 "Edit /etc/runit/2" stage3 "Edit /etc/runit/3" services "Browse service directory" back "Back" || return $?
                 case "$c" in stage1) f=/etc/runit/1 ;; stage2) f=/etc/runit/2 ;; stage3) f=/etc/runit/3 ;; services) f=/etc/sv ;; back|'') return 0 ;; esac
                 ;;
             sysvinit)
-                c=$(tui_menu_no_tags "SysVinit configuration" "Runlevels and system defaults:" inittab "Edit /etc/inittab" defaults "Browse /etc/default" runlevel "Set default runlevel" back "Back") || return 0
+                tui_capture_menu c tui_menu_no_tags "SysVinit configuration" "Runlevels and system defaults:" inittab "Edit /etc/inittab" defaults "Browse /etc/default" runlevel "Set default runlevel" back "Back" || return $?
                 case "$c" in inittab) f=/etc/inittab ;; defaults) f=/etc/default ;; runlevel) systui_sysv_runlevel_menu; continue ;; back|'') return 0 ;; esac
                 ;;
             busybox)
-                c=$(tui_menu_no_tags "BusyBox init configuration" "BusyBox init uses /etc/inittab:" inittab "Edit /etc/inittab" view "View /etc/inittab" back "Back") || return 0
+                tui_capture_menu c tui_menu_no_tags "BusyBox init configuration" "BusyBox init uses /etc/inittab:" inittab "Edit /etc/inittab" view "View /etc/inittab" back "Back" || return $?
                 case "$c" in inittab) f=/etc/inittab ;; view) [ -r /etc/inittab ] && cp /etc/inittab "$SYSTUI_TMP/inittab" || : > "$SYSTUI_TMP/inittab"; tui_text "BusyBox /etc/inittab" "$SYSTUI_TMP/inittab"; continue ;; back|'') return 0 ;; esac
                 ;;
         esac
@@ -351,7 +352,7 @@ systui_init_provider_config_menu() { # <provider>
 
 systui_systemd_target_menu() {
     local c target
-    c=$(tui_menu_no_tags "systemd default target" "Choose default boot target:" multi-user.target "multi-user.target" graphical.target "graphical.target" rescue.target "rescue.target" emergency.target "emergency.target" custom "Custom target" back "Back") || return 0
+    tui_capture_menu c tui_menu_no_tags "systemd default target" "Choose default boot target:" multi-user.target "multi-user.target" graphical.target "graphical.target" rescue.target "rescue.target" emergency.target "emergency.target" custom "Custom target" back "Back" || return $?
     [ "$c" = back ] && return 0
     if [ "$c" = custom ]; then target=$(tui_input "Default target" "Target name:" "") || return 0; else target="$c"; fi
     [ -n "$target" ] || return 0
@@ -385,7 +386,7 @@ systui_init_provider_admin_menu() { # <provider>
         if [ "$provider" = "$current" ]; then state=active
         elif systui_init_installed "$provider"; then state=installed
         else state='not installed'; fi
-        c=$(tui_menu_no_tags "$(systui_init_name "$provider") [$state]" \
+        tui_capture_menu c tui_menu_no_tags "$(systui_init_name "$provider") [$state]" \
             "Provider administration and configuration:" \
             services "Manage services" \
             config "Provider configuration" \
@@ -393,7 +394,7 @@ systui_init_provider_admin_menu() { # <provider>
             switch "Switch system to this init provider" \
             remove "Remove provider" \
             files "Show provider files/directories" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             services)
                 if systui_init_installed "$provider"; then systui_service_manage_menu "$provider"
@@ -505,7 +506,7 @@ menu_init_manager() {
             opts+=("$p" "$label")
         done
         opts+=(runtime "Launch/boot command configuration" diagnostics "Detection and PID 1 diagnostics" back "Back")
-        c=$(tui_menu_no_tags "Init systems [active: $current]" "Install, switch and configure init providers:" "${opts[@]}") || return 0
+        tui_capture_menu c tui_menu_no_tags "Init systems [active: $current]" "Install, switch and configure init providers:" "${opts[@]}" || return $?
         case "$c" in
             systemd|openrc|runit|sysvinit|busybox) systui_init_provider_admin_menu "$c" ;;
             runtime) if declare -F menu_shell_runtime_commands >/dev/null 2>&1; then menu_shell_runtime_commands; else tui_msg "Runtime" "Runtime command manager is unavailable."; fi ;;
@@ -532,9 +533,9 @@ menu_services() {
               diagnostics "Diagnostics and provider detection" \
               advanced "Legacy advanced service settings" \
               back "Back")
-        c=$(tui_menu_no_tags "Services & Init Systems [active: $current]" \
+        tui_capture_menu c tui_menu_no_tags "Services & Init Systems [active: $current]" \
             "Full service lifecycle, init-provider installation/switching, boot configuration, logs and service definitions:" \
-            "${opts[@]}") || return 0
+            "${opts[@]}" || return $?
         case "$c" in
             active)
                 case "$current" in systemd|openrc|runit|sysvinit|busybox) systui_service_manage_menu "$current" ;; *) tui_msg "Services" "No supported active provider detected." ;; esac
@@ -549,5 +550,4 @@ menu_services() {
     done
 }
 
-export -f menu_services menu_init_manager menu_services_provider 2>/dev/null || true
 return 0 2>/dev/null || true

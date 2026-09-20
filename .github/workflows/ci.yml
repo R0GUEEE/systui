@@ -78,7 +78,7 @@ jobs:
             echo 'TUI widgets must use responsive geometry rather than fixed dimensions.' >&2
             exit 1
           fi
-          if grep -nE 'declare -f .*\|[[:space:]]*(sed|awk)' src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh src/features/[0-9]*-*.sh; then
+          if grep -nE 'declare -f .*\|[[:space:]]*(sed|awk)' src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh "${modern_features[@]}"; then
             echo 'Modern modules must preserve functions with Bash builtins, not external declare-f pipelines.' >&2
             exit 1
           fi

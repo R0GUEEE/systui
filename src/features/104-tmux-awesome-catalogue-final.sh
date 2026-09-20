@@ -107,7 +107,7 @@ systui_tmux_awesome_live_section() { # <heading text>
     data=$(systui_tmux_fetch_text "$SYSTUI_TMUX_AWESOME_README" 2>/dev/null) || return 1
     while IFS= read -r line; do
         case "$line" in
-            '## '*|'## <a '* )
+            '## '*)
                 if printf '%s' "$line" | grep -Fqi "$wanted"; then section=1; continue; fi
                 [ "$section" -eq 1 ] && break
                 ;;
@@ -127,14 +127,14 @@ systui_tmux_awesome_live_section() { # <heading text>
 
 systui_tmux_awesome_live_browser() {
     local section heading repo label action dest
-    section=$(tui_menu_no_tags "Awesome tmux — live GitHub catalogue" \
+    tui_capture_menu section tui_menu_no_tags "Awesome tmux — live GitHub catalogue" \
         "Parsed live from rothgar/awesome-tmux:" \
         configuration "Configuration" \
         tools "Tools and session management" \
         themes "Themes" \
         status "Status Bar" \
         plugins "Plugins" \
-        back "Back") || return 0
+        back "Back" || return $?
     [ "$section" != back ] || return 0
     case "$section" in
         configuration) heading='Configuration' ;;
@@ -149,12 +149,12 @@ systui_tmux_awesome_live_browser() {
         opts+=("$repo" "$label — $repo")
     done <<< "$(systui_tmux_awesome_live_section "$heading")"
     [ "${#opts[@]}" -gt 0 ] || { tui_msg "Awesome tmux" "No GitHub entries could be parsed from the '$heading' section."; return 0; }
-    repo=$(tui_menu_no_tags "$heading" "Choose a GitHub project:" "${opts[@]}" back "Back") || return 0
+    tui_capture_menu repo tui_menu_no_tags "$heading" "Choose a GitHub project:" "${opts[@]}" back "Back" || return $?
     [ "$repo" != back ] || return 0
-    action=$(tui_menu_no_tags "$repo" "Choose how Systui should handle this project:" \
+    tui_capture_menu action tui_menu_no_tags "$repo" "Choose how Systui should handle this project:" \
         tpm "Add to .tmux.conf as a TPM plugin" \
         clone "Clone/update source under ~/.local/share/systui/tmux-awesome" \
-        back "Back") || return 0
+        back "Back" || return $?
     case "$action" in
         tpm)
             systui_tmux_tpm_install || return 1
@@ -191,7 +191,7 @@ systui_tmux_install_oh_my_tmux() {
 systui_tmux_awesome_tools_menu() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "Awesome tmux" \
+        tui_capture_menu c tui_menu_no_tags "Awesome tmux" \
             "Curated and live options sourced from rothgar/awesome-tmux:" \
             themes "Themes — Catppuccin, Dracula, Rose Pine, Tokyo Night, Gruvbox..." \
             status "Status bar — CPU, battery, modes, host, Kubernetes..." \
@@ -200,7 +200,7 @@ systui_tmux_awesome_tools_menu() {
             utility "Utilities — yank, logging, open, task monitor, media..." \
             ohmytmux "Install/update Oh My Tmux! (gpakosz/.tmux)" \
             live "Browse awesome-tmux live from GitHub" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             themes) systui_tmux_awesome_plugin_category themes "Awesome tmux themes" ;;
             status) systui_tmux_awesome_plugin_category status "Awesome tmux status bar" ;;
@@ -228,7 +228,7 @@ menu_tmux_manager() {
     local c ver
     while true; do
         ver=$(tmux -V 2>/dev/null || echo 'not installed')
-        c=$(tui_menu_no_tags "tmux manager" "tmux: $ver" \
+        tui_capture_menu c tui_menu_no_tags "tmux manager" "tmux: $ver" \
             install "Install / update tmux — package manager + live GitHub sources" \
             plugins "Plugins — TPM, curated, live GitHub browser, custom repos" \
             awesome "Awesome tmux — themes, status, sessions, tools and live catalogue" \
@@ -236,7 +236,7 @@ menu_tmux_manager() {
             sessions "Session management" \
             version "Show tmux/plugin status" \
             remove "Remove native tmux package" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             install) systui_tmux_install_menu ;;
             plugins) systui_tmux_plugins_menu ;;
