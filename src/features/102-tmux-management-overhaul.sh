@@ -122,7 +122,7 @@ systui_tmux_build_from_git() { # <stable|master>
 systui_tmux_install_menu() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "Install / update tmux" "Choose an installation source. GitHub-backed options resolve current releases live:" \
+        tui_capture_menu c tui_menu_no_tags "Install / update tmux" "Choose an installation source. GitHub-backed options resolve current releases live:" \
             native "Native package manager (${PM:-unknown})" \
             static "GitHub tmux/tmux-builds — static Linux binary" \
             source "GitHub tmux/tmux — latest stable source" \
@@ -130,7 +130,7 @@ systui_tmux_install_menu() {
             appimage "GitHub nelsonenzo/tmux-appimage" \
             brew "Homebrew (when installed)" \
             nix "Nix profile (when installed)" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             native) systui_tmux_install_native || true ;;
             static) systui_tmux_install_static_github || true ;;
@@ -254,7 +254,7 @@ systui_tmux_plugins_menu() {
     local c tpm
     while true; do
         tpm="$(systui_tmux_plugin_dir)/tpm"
-        c=$(tui_menu_no_tags "tmux plugins" "TPM: $([ -d "$tpm" ] && echo installed || echo not-installed). Manage curated or live GitHub plugins:" \
+        tui_capture_menu c tui_menu_no_tags "tmux plugins" "TPM: $([ -d "$tpm" ] && echo installed || echo not-installed). Manage curated or live GitHub plugins:" \
             tpm "Install/update TPM (tmux-plugins/tpm)" \
             curated "Curated plugin collection" \
             github "Browse tmux-plugins organization live from GitHub" \
@@ -262,7 +262,7 @@ systui_tmux_plugins_menu() {
             install "Install configured plugins now" \
             update "Update all installed TPM plugins" \
             clean "Remove plugins no longer in .tmux.conf" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             tpm) systui_tmux_tpm_install || true ;;
             curated) systui_tmux_tpm_install >/dev/null 2>&1 || true; systui_tmux_manage_plugin_selection curated ;;
@@ -280,14 +280,14 @@ systui_tmux_config_menu() {
     local c conf
     conf=$(systui_tmux_conf); touch "$conf"
     while true; do
-        c=$(tui_menu_no_tags "tmux configuration" "Config: $conf" \
+        tui_capture_menu c tui_menu_no_tags "tmux configuration" "Config: $conf" \
             edit "Edit .tmux.conf" \
             basic "Apply basic sane defaults" \
             mouse "Toggle mouse support" \
             vi "Enable vi copy-mode keys" \
             reload "Reload active tmux configuration" \
             backup "Backup .tmux.conf" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             edit) "${EDITOR:-nano}" "$conf" ;;
             basic) cat >> "$conf" <<'EOF'
@@ -317,8 +317,8 @@ systui_tmux_sessions_menu() {
     local c name session
     command -v tmux >/dev/null 2>&1 || { tui_msg "tmux" "tmux is not installed."; return 0; }
     while true; do
-        c=$(tui_menu_no_tags "tmux sessions" "$(tmux list-sessions 2>/dev/null || echo 'No running sessions')" \
-            new "Create new session" attach "Attach/select session" kill "Kill selected session" killall "Kill tmux server" back "Back") || return 0
+        tui_capture_menu c tui_menu_no_tags "tmux sessions" "$(tmux list-sessions 2>/dev/null || echo 'No running sessions')" \
+            new "Create new session" attach "Attach/select session" kill "Kill selected session" killall "Kill tmux server" back "Back" || return $?
         case "$c" in
             new) name=$(tui_input "New tmux session" "Session name:" "main") || continue; [ -n "$name" ] && tmux new-session -d -s "$name" ;;
             attach)
@@ -338,14 +338,14 @@ menu_tmux_manager() {
     local c ver
     while true; do
         ver=$(tmux -V 2>/dev/null || echo 'not installed')
-        c=$(tui_menu_no_tags "tmux manager" "tmux: $ver" \
+        tui_capture_menu c tui_menu_no_tags "tmux manager" "tmux: $ver" \
             install "Install / update tmux — package manager + live GitHub sources" \
             plugins "Plugins — TPM, curated, live GitHub browser, custom repos" \
             config "Configuration and presets" \
             sessions "Session management" \
             version "Show tmux/plugin status" \
             remove "Remove native tmux package" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             install) systui_tmux_install_menu ;;
             plugins) systui_tmux_plugins_menu ;;
@@ -369,10 +369,10 @@ fi
 menu_shells() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "Shells & terminal environment" "Shell configuration and terminal multiplexing:" \
+        tui_capture_menu c tui_menu_no_tags "Shells & terminal environment" "Shell configuration and terminal multiplexing:" \
             shells "Shells, prompts and shell plugins" \
             tmux "tmux manager — installation, sessions, config and plugins" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             shells) declare -F _systui_shells_before_tmux_overhaul >/dev/null 2>&1 && _systui_shells_before_tmux_overhaul ;;
             tmux) menu_tmux_manager ;;
