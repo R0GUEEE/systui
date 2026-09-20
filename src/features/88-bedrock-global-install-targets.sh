@@ -209,7 +209,10 @@ unset _flag _systui_install_fn
 
 if declare -F sysconfig_pm_multi_install >/dev/null 2>&1 \
     && ! declare -F _systui_bedrock_target_original_sysconfig_pm_multi_install >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_pm_multi_install | sed '1s/^sysconfig_pm_multi_install[[:space:]]*()/_systui_bedrock_target_original_sysconfig_pm_multi_install ()/')"
+    _systui_saved_fn=$(declare -f sysconfig_pm_multi_install)
+    _systui_saved_fn=${_systui_saved_fn/#sysconfig_pm_multi_install /_systui_bedrock_target_original_sysconfig_pm_multi_install }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
     systui_bedrock_stratum_multi_pm_install() { # <stratum>
         local st="$1" selected tag cmd label
         local -a opts=()
