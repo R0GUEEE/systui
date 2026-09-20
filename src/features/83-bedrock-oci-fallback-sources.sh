@@ -117,7 +117,10 @@ bedrock_aok_oci_install_stratum() { # <tag> <image>
 }
 
 if declare -F bedrock_aok_available_strata >/dev/null 2>&1 && ! declare -F _bedrock_aok_available_strata_before_oci >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_available_strata | sed '1s/^bedrock_aok_available_strata[[:space:]]*()/_bedrock_aok_available_strata_before_oci ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_available_strata)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_available_strata /_bedrock_aok_available_strata_before_oci }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_available_strata() {
     { _bedrock_aok_available_strata_before_oci 2>/dev/null || true; bedrock_aok_oci_catalog_rows; } \
@@ -125,7 +128,10 @@ bedrock_aok_available_strata() {
 }
 
 if declare -F bedrock_aok_fetch_stratum_resilient >/dev/null 2>&1 && ! declare -F _bedrock_aok_fetch_stratum_before_oci >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_fetch_stratum_resilient | sed '1s/^bedrock_aok_fetch_stratum_resilient[[:space:]]*()/_bedrock_aok_fetch_stratum_before_oci ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_fetch_stratum_resilient)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_fetch_stratum_resilient /_bedrock_aok_fetch_stratum_before_oci }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_fetch_stratum_resilient() { # <tag>
     local tag="$1" image tried=0
