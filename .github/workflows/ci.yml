@@ -94,6 +94,10 @@ jobs:
             case "$rel" in ''|'#'*) continue;; esac
             test -f "src/features/$rel" || { echo "missing manifest feature: $rel" >&2; exit 1; }
           done < "$manifest"
+          while IFS= read -r -d '' feature; do
+            rel=${feature#src/features/}
+            grep -Fxq "$rel" "$manifest" || { echo "feature missing from manifest: $rel" >&2; exit 1; }
+          done < <(find src/features -maxdepth 1 -type f -name '*.sh' -print0)
           last=$(grep -vE '^[[:space:]]*(#|$)' "$manifest" | tail -n1)
           case "$last" in *-rootfs-ish-argmax-cleanup.sh) ;; *) echo "ARG_MAX cleanup must load last; found: $last" >&2; exit 1;; esac
           # Assert the authoritative final hardening chain remains ordered.
