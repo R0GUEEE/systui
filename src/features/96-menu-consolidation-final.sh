@@ -24,6 +24,17 @@ menu_sysconfig_basics() {
     done
 }
 
+systui_menu_dispatch() {
+    local fn="$1" label="$2"
+    shift 2
+    if declare -F "$fn" >/dev/null 2>&1; then
+        "$fn" "$@"
+    else
+        tui_msg "Unavailable" "$label is unavailable because $fn was not loaded."
+        return 127
+    fi
+}
+
 # Common Tasks duplicated Packages, Editors, Users, SSH/Network, Services and
 # Shells.  Replace it with a small System basics section and leave each feature
 # reachable from its single authoritative top-level section.
@@ -43,15 +54,15 @@ menu_sysconfig() {
             storage      "Storage, mounts, filesystems and SMART" \
             back         "Back to main menu") || return 0
         case "$c" in
-            system)       menu_sysconfig_basics ;;
-            packages)     menu_packages ;;
-            shells)       menu_shells ;;
-            editors)      menu_editors ;;
-            filemanagers) menu_file_managers ;;
-            network)      menu_network ;;
-            services)     menu_services ;;
-            users)        menu_users ;;
-            storage)      menu_storage ;;
+            system)       systui_menu_dispatch menu_sysconfig_basics "System basics" ;;
+            packages)     systui_menu_dispatch menu_packages "Packages" ;;
+            shells)       systui_menu_dispatch menu_shells "Shells" ;;
+            editors)      systui_menu_dispatch menu_editors "Editors" ;;
+            filemanagers) systui_menu_dispatch menu_file_managers "File managers" ;;
+            network)      systui_menu_dispatch menu_network "Network" ;;
+            services)     systui_menu_dispatch menu_services "Services" ;;
+            users)        systui_menu_dispatch menu_users "Users" ;;
+            storage)      systui_menu_dispatch menu_storage "Storage" ;;
             back|'') return 0 ;;
         esac
     done

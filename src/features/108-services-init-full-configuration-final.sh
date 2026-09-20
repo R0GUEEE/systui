@@ -380,7 +380,8 @@ systui_sysv_runlevel_menu() {
 systui_init_provider_admin_menu() { # <provider>
     local provider="$1" current state c
     while true; do
-        current=$(systui_init_current)
+        systui_init_refresh
+        current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
         if [ "$provider" = "$current" ]; then state=active
         elif systui_init_installed "$provider"; then state=installed
         else state='not installed'; fi
@@ -470,7 +471,8 @@ systui_services_diagnostics() {
 
 systui_services_boot_analysis() {
     local out="$SYSTUI_TMP/boot-analysis" current
-    current=$(systui_init_current)
+    systui_init_refresh
+    current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
     : > "$out"
     case "$current" in
         systemd)
@@ -495,7 +497,8 @@ menu_init_manager() {
     local c current p label
     local -a opts
     while true; do
-        current=$(systui_init_current)
+        systui_init_refresh
+        current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
         opts=()
         for p in systemd openrc runit sysvinit busybox; do
             label=$(systui_init_provider_status_line "$p" "$current")
@@ -516,7 +519,8 @@ menu_services() {
     local c current p label
     local -a opts
     while true; do
-        current=$(systui_init_current)
+        systui_init_refresh
+        current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
         opts=()
         opts+=(active "Manage active provider — $(systui_init_name "$current")")
         for p in systemd openrc runit sysvinit busybox; do
