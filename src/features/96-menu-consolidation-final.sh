@@ -24,6 +24,12 @@ menu_sysconfig_basics() {
     done
 }
 
+# Compatibility name introduced by the earlier menu hardening pass. Keep callers
+# and integration tests on one dispatcher while the implementation lives in core.
+systui_menu_dispatch() {
+    tui_call_menu "$@"
+}
+
 # Common Tasks duplicated Packages, Editors, Users, SSH/Network, Services and
 # Shells.  Replace it with a small System basics section and leave each feature
 # reachable from its single authoritative top-level section.
