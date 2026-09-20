@@ -59,7 +59,24 @@ browse_category test
 
 # Hot menu implementations must not restore known expensive redraw patterns.
 ! grep -Fq '< <(tui_geometry' "$ROOT/src/core/tui-widgets.sh"
-! grep -A20 '^menu_shell_hierarchy()' "$ROOT/src/features/103-tmux-shells-menu-integration-final.sh" \
+! grep -A25 '^menu_shell_hierarchy()' "$ROOT/src/features/103-tmux-shells-menu-integration-final.sh" \
     | grep -Fq 'detect_init 2>/dev/null || true'
+
+# Shell Managers should stay compact: login/account controls are grouped under
+# a submenu and init/service work routes to the authoritative manager instead of
+# duplicating five account/init actions on the front door.
+grep -q '^systui_shell_login_accounts_menu()' "$ROOT/src/features/103-tmux-shells-menu-integration-final.sh"
+grep -q '^systui_shell_init_services_menu()' "$ROOT/src/features/103-tmux-shells-menu-integration-final.sh"
+hierarchy_body=$(awk '/^menu_shell_hierarchy\(\)/,/^}/' "$ROOT/src/features/103-tmux-shells-menu-integration-final.sh")
+grep -q 'login "Login shells' <<<"$hierarchy_body"
+grep -q 'initmgr "Init & services manager"' <<<"$hierarchy_body"
+if grep -q 'newuser "Set default login shell' <<<"$hierarchy_body"; then
+    echo 'Shell Managers front door still exposes per-account actions inline' >&2
+    exit 1
+fi
+if grep -q 'services "Open service/init manager' <<<"$hierarchy_body"; then
+    echo 'Shell Managers front door still duplicates service manager inline' >&2
+    exit 1
+fi
 
 printf 'ok - menu load paths reuse cached state and batch status probes\n'
