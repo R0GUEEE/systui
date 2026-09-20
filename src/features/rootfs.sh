@@ -1963,7 +1963,11 @@ _bs_install() {
         return 0
     fi
 
-    tui_msg "Installing $_tag" "Attempting installation…"
+    # Do not block here with a msgbox. The actual installer/run_cmd path below
+    # provides progress and/or the package-manager chooser. A modal "Attempting
+    # installation…" box looks like a hang on small/limited terminals and must
+    # not sit between the user's install selection and the real work.
+    log "Installing $_tag (package: $_pkg)" 2>/dev/null || true
 
     # chroot-distro must come from the regular-Linux-capable upstream GitHub repo,
     # not from a distro package or an Android-specific source.
