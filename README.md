@@ -667,6 +667,42 @@ The RootFS Builder now opens a categorized package catalogue after preset select
 
 System Configuration > Packages > Managers now provides configuration and maintenance hubs for APT, apt-fast, Nala, aptitude, pacman, yay, paru, DNF, YUM, zypper, apk, XBPS, Portage, Flatpak, Snap, Nix, Homebrew, pip, pipx, npm, pnpm, Yarn, Cargo, RubyGems, Composer, and Go tools.
 
+**Install package managers** (the SPACE-to-select checklist) installs everything
+you select without a single follow-up prompt. Each manager has an automatic
+strategy with fallbacks — native package, official unattended installer, npm
+global, corepack, cargo, official tarball, GitHub release binary or AUR build —
+and every helper runs with stdin closed so upstream installers cannot block on a
+question. The run ends with a log summary of which managers are now available;
+the per-manager method menus remain available under **Configure individual
+package managers**.
+
+Automation hooks: `SYSTUI_PM_INSTALL_MODE=menu` restores the old method prompts,
+`SYSTUI_PM_AUTO_<TAG>="command"` overrides one manager's install command (for
+example `SYSTUI_PM_AUTO_BREW="brew update"`), and `SYSTUI_PM_AUTO_STRICT=1`
+makes the tool exit non-zero when a selected manager could not be installed.
+
+<details>
+<summary>Automatic strategy per manager</summary>
+
+| Manager | Automatic strategy |
+|---|---|
+| apt-fast | native package, then aria2 + upstream quick-install script |
+| nala | native package, then the official PPA |
+| aptitude, Flatpak, Snap | native package (Flatpak adds Flathub, Snap enables snapd.socket) |
+| pip | native package, `python3 -m ensurepip`, then get-pip.py |
+| pipx | native package, then `pip install --user pipx` + ensurepath |
+| npm | native package, then the NodeSource LTS repository |
+| pnpm, Yarn | npm global install, then corepack |
+| Cargo | native package, then rustup `-y --no-modify-path` |
+| RubyGems | native ruby + ruby-dev/devel |
+| Composer | native package, then the signature-verified official installer |
+| Go | native package, then the official go.dev tarball |
+| yay, paru | GitHub release binary, then cargo, then an unattended AUR makepkg build |
+| Nix | official multi-user installer, then single-user, then native package |
+| Homebrew | the bundled root-compatible installer, then upstream `NONINTERACTIVE=1` |
+
+</details>
+
 Homebrew is managed through a permanent root-compatibility layer for iSH-AOK /
 Debian arm64: a shared installer under `share/homebrew/`, a system wrapper at
 `/usr/local/bin/brew`, a UID shim at `/usr/local/lib/homebrew-root/`, and a

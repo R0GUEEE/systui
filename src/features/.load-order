@@ -122,4 +122,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-adapters.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-repair-hardening.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-shell-repair.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-package-install-options-final.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-package-manager-auto-install.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
