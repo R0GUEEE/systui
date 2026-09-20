@@ -28,7 +28,11 @@ fi
 menu_shell_hierarchy() {
     local c
     while true; do
-        detect_init 2>/dev/null || true
+        if declare -F systui_init_refresh >/dev/null 2>&1; then
+            systui_init_refresh
+        elif [ "${SYSTUI_SERVICE_RUNTIME+x}" != x ]; then
+            detect_init 2>/dev/null || true
+        fi
         c=$(tui_menu "Shell Managers" \
             "Install/configure shells, terminal tools and login/init defaults. Current init: ${INIT:-unknown}" \
             shells "Install, remove & configure shell managers/frameworks" \
