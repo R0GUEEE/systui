@@ -109,7 +109,13 @@ browse_category() {
             [ -n "$key" ] || continue
             native=$(app_native_name "$key" 2>/dev/null || printf SKIP)
             [ -n "$native" ] && [ "$native" != SKIP ] || continue
-            if [[ -v "installed_native[$native]" ]]; then
+            if [ "$snapshot_ok" = 1 ]; then
+                if [[ -v "installed_native[$native]" ]]; then
+                    state=on; installed+="${installed:+ }$key"
+                else
+                    state=off
+                fi
+            elif [ "$(app_status "$key")" = installed ]; then
                 state=on; installed+="${installed:+ }$key"
             else
                 state=off
