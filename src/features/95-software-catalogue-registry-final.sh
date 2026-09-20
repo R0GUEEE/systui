@@ -55,6 +55,9 @@ systui_catalogue_rebuild_order() {
 
 systui_catalogue_ensure_registry() {
     local count
+    if [ "${SYSTUI_CATALOGUE_REGISTRY_READY:-0}" = 1 ] && [ -n "${CAT_ORDER:-}" ]; then
+        return 0
+    fi
     count=$(systui_catalogue_registry_count)
     if [ "$count" -eq 0 ]; then
         systui_catalogue_seed_fallback
@@ -63,7 +66,11 @@ systui_catalogue_ensure_registry() {
     fi
     systui_catalogue_rebuild_order
     [ -n "${FEATURED_APPS:-}" ] || FEATURED_APPS='firefox git htop tmux neovim python3 nodejs docker.io'
-    [ -n "$CAT_ORDER" ] && [ "$count" -gt 0 ]
+    if [ -n "$CAT_ORDER" ] && [ "$count" -gt 0 ]; then
+        SYSTUI_CATALOGUE_REGISTRY_READY=1
+        return 0
+    fi
+    return 1
 }
 
 systui_catalogue_category_data() { # <category> [featured-keys]
