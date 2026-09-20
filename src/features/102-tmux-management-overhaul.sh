@@ -178,7 +178,8 @@ systui_tmux_plugin_remove() { # <owner/repo>
 }
 
 systui_tmux_plugins_apply() {
-    local tpm\n    tpm="$(systui_tmux_plugin_dir)/tpm"
+    local tpm
+    tpm="$(systui_tmux_plugin_dir)/tpm"
     [ -x "$tpm/bin/install_plugins" ] || systui_tmux_tpm_install || return 1
     "$tpm/bin/install_plugins" || true
     command -v tmux >/dev/null 2>&1 && tmux source-file "$(systui_tmux_conf)" 2>/dev/null || true
