@@ -35,10 +35,6 @@ detect_distro() {
     log "Detected distro: ${DISTRO_PRETTY_NAME:-unknown} (id=${DISTRO:-unknown}, like=${DISTRO_ID_LIKE:-none}, version=${DISTRO_VERSION:-unknown})"
 }
 
-detect_pm 2>/dev/null || true
-detect_init 2>/dev/null || true
-detect_distro 2>/dev/null || true
-
-# Do not brand non-iSH hosts as iSH-AOK in the dialog backtitle.
-BACKTITLE="${SYSTUI_ENVIRONMENT:-linux} · systui v${SYSTUI_VERSION:-dev}"
-export BACKTITLE
+# Startup performs one authoritative detection pass after every feature has
+# loaded. Running it here would duplicate package/init/distro probes before
+# later compatibility layers have finished overriding detection behavior.

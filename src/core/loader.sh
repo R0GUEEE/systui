@@ -2,12 +2,18 @@
 # Central feature-manifest loader.
 
 systui_unexport_all_functions() {
-    local line fn
+    local line fn export_dump
+    export_dump="${SYSTUI_TMP:-${TMPDIR:-/tmp}}/.systui-exported-functions.$"
+    # Avoid process substitution here. On iSH, spawning a helper Bash for every
+    # feature is expensive and works against the ARG_MAX cleanup this function
+    # is meant to provide. "declare" and the loop below are Bash builtins.
+    declare -Fx > "$export_dump" 2>/dev/null || return 0
     while IFS= read -r line; do
         fn=${line##* }
         [ -n "${fn:-}" ] || continue
         export -n -f "${fn?}" 2>/dev/null || true
-    done < <(declare -Fx)
+    done < "$export_dump"
+    : > "$export_dump"
 }
 
 systui_should_scrub_function_exports() {
@@ -54,6 +60,7 @@ systui_resolve_feature_path() { # <manifest entry>
 
 systui_load_features() { # [manifest]
     local manifest="${1:-$SYSTUI_LIBDIR/src/features/.load-order}" rel feature resolved
+    local scrub_exports=-1
     [ -r "$manifest" ] || {
         echo "systui: missing feature load manifest: $manifest" >&2
         return 1
@@ -74,9 +81,20 @@ systui_load_features() { # [manifest]
             echo "systui: failed to load $feature" >&2
             return 1
         }
+        # 00-platform-bootstrap.sh defines the authoritative runtime helpers.
+        # Resolve the expensive auto/iSH decision once, after the first feature
+        # has made those helpers available, instead of probing after all ~125
+        # features.
+        if [ "$scrub_exports" = -1 ]; then
+            if systui_should_scrub_function_exports; then
+                scrub_exports=1
+            else
+                scrub_exports=0
+            fi
+        fi
         # Do not let a deliberate "no scrub needed" result become the loader's
         # return status on native Linux. A completed feature load is success.
-        if systui_should_scrub_function_exports; then
+        if [ "$scrub_exports" = 1 ]; then
             systui_unexport_all_functions
         fi
     done < "$manifest"

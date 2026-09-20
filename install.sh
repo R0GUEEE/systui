@@ -189,6 +189,8 @@ startup_stage "detecting platform"
 detect_pm || startup_die "package manager detection failed"
 detect_init || startup_die "init detection failed"
 detect_distro || startup_die "distribution detection failed"
+BACKTITLE="${SYSTUI_ENVIRONMENT:-linux} · systui v${SYSTUI_VERSION:-dev}"
+export BACKTITLE
 require_root || startup_die "root privileges are required"
 
 systui_startup_check() {
