@@ -36,7 +36,7 @@ rootfs_recover_deb_base_clean_stage() { # <target> <distro> <release> <arch> <mi
     }
 
     log "rootfs: rebuilding contaminated $backend base in clean stage $stage"
-    if ! SYSTUI_UNSHARE_SUPPORTED=0 \
+    if ! SYSTUI_RECOVERY_NO_UNSHARE=1 \
         build_debfamily "$distro" "$release" "$arch" "$mirror" "$stage" "$pkgs" "$use_qemu" "$backend"; then
         rootfs_set_build_stage "$t" bootstrap-clean-recovery-failed
         rm -rf -- "$stage" 2>/dev/null || true

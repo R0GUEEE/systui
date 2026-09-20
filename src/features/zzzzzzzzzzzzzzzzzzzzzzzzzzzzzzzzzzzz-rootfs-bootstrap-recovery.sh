@@ -3,6 +3,56 @@
 # ROOTFS RECOVERY — distinguish incomplete bootstrap from package repair
 ###############################################################################
 
+# Is this tree a Debian-family (dpkg/APT) rootfs? The essential-base predicate
+# below is meaningless for Alpine/Arch/Fedora/Void trees: those legitimately
+# have no dpkg, apt-get or glibc, and reporting them as an "incomplete Debian
+# bootstrap" made the readiness scan offer a repair that cannot apply.
+# Unknown trees stay Debian-family: a partially built Debian rootfs may not
+# contain dpkg yet, and that is exactly the case this recovery exists for.
+rootfs_tree_is_deb_family() { # <target>
+    local t="$1" id="" like="" f b
+
+    [ -d "$t" ] || return 1
+
+    # dpkg tooling or a dpkg database is authoritative, whatever the vendor
+    # strings say.
+    if [ -x "$t/usr/bin/dpkg" ] || [ -x "$t/bin/dpkg" ] || [ -r "$t/var/lib/dpkg/status" ]; then
+        return 0
+    fi
+
+    id=$(sed -n 's/^ID=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
+    like=$(sed -n 's/^ID_LIKE=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
+    case " $id $like " in
+        *debian*|*ubuntu*|*devuan*|*kali*) return 0 ;;
+    esac
+    case "$id" in
+        alpine|arch|archarm|fedora|centos|rhel|rocky|almalinux|opensuse*|suse|sles|gentoo|void|nixos|solus|clear-linux-os|amzn|manjaro|endeavouros|garuda)
+            return 1 ;;
+    esac
+
+    # Any distribution marker file other than the Debian ones is decisive.
+    for f in "$t"/etc/*-release; do
+        [ -e "$f" ] || continue
+        b=$(basename "$f")
+        case "$b" in
+            os-release|lsb-release|debian_version|*-upstream-release) continue ;;
+        esac
+        return 1
+    done
+
+    return 0
+}
+
+# Which essential base components are physically missing, as a printable list.
+rootfs_deb_base_gaps() { # <target>
+    local t="$1" gaps=""
+    if [ ! -x "$t/bin/sh" ] && [ ! -x "$t/usr/bin/sh" ]; then gaps="$gaps /bin/sh"; fi
+    if [ ! -x "$t/usr/bin/dpkg" ] && [ ! -x "$t/bin/dpkg" ]; then gaps="$gaps dpkg"; fi
+    if [ ! -x "$t/usr/bin/apt-get" ] && [ ! -x "$t/bin/apt-get" ]; then gaps="$gaps apt-get"; fi
+    rootfs_deb_libc_present "$t" || gaps="$gaps libc6"
+    printf '%s\n' "${gaps# }"
+}
+
 rootfs_deb_libc_present() { # <target>
     local t="$1" p
     # Readiness is about whether the bootstrap runtime physically exists, not
@@ -21,6 +71,9 @@ rootfs_deb_libc_present() { # <target>
 
 rootfs_deb_base_incomplete() { # <target>
     local t="$1"
+    # Another distribution (Alpine, Arch, Fedora, ...) never has a Debian-family
+    # bootstrap base to restore; do not report it as incomplete.
+    rootfs_tree_is_deb_family "$t" || return 1
     [ -x "$t/bin/sh" ] || [ -x "$t/usr/bin/sh" ] || return 0
     [ -x "$t/usr/bin/dpkg" ] || [ -x "$t/bin/dpkg" ] || return 0
     [ -x "$t/usr/bin/apt-get" ] || [ -x "$t/bin/apt-get" ] || return 0
@@ -76,14 +129,21 @@ rootfs_recover_deb_base() { # <target> <distro> <release> <arch> <mirror> <packa
 
     rootfs_deb_base_incomplete "$t" || return 0
 
-    [ -n "$distro" ] && [ -n "$release" ] && [ -n "$mirror" ] && [ -n "$backend" ] || {
+    local missing=""
+    [ -n "$distro" ]  || missing="$missing DISTRO"
+    [ -n "$release" ] || missing="$missing RELEASE"
+    [ -n "$mirror" ]  || missing="$missing MIRROR"
+    [ -n "$backend" ] || missing="$missing BACKEND"
+    if [ -n "$missing" ]; then
         tui_msg "Bootstrap recovery unavailable" \
-"The rootfs is missing essential base packages (APT and/or libc6), but its build metadata is incomplete.
+"The rootfs is missing essential base packages ($(rootfs_deb_base_gaps "$t")), but the build metadata needed to restore them is incomplete.
 
-Expected build state: distro, release, mirror and backend.
-Do not run dpkg --configure -a yet; restore the base system first."
+Missing:$missing
+
+Those values come from the rootfs build state. Rebuild the rootfs, or restore its state file, and run this recovery again.
+Do not run dpkg --configure -a against this tree yet."
         return 1
-    }
+    fi
 
     case "$distro" in
         debian|devuan|ubuntu|kali) ;;
@@ -106,10 +166,12 @@ Continue?" || return 1
                 tui_msg "Bootstrap recovery failed" "Could not clear stale mounts/device nodes from the partial rootfs."
                 return 1
             }
-            # Force the already-installed mmdebstrap compatibility wrapper into
-            # its no-unshare path for this recovery attempt, even if the host
-            # capability probe was stale or never ran in the current process.
-            SYSTUI_UNSHARE_SUPPORTED=0 \
+            # Force the mmdebstrap/usr-merge compatibility wrapper into its
+            # no-unshare path for this recovery attempt. SYSTUI_UNSHARE_SUPPORTED
+            # is readonly (set once by the host capability probe), so a prefix
+            # assignment to it only printed "readonly variable"; the writable
+            # companion below is what the wrapper actually honours.
+            SYSTUI_RECOVERY_NO_UNSHARE=1 \
                 build_debfamily "$distro" "$release" "$arch" "$mirror" "$t" "$pkgs" "$use_qemu" "$backend" || {
                     rootfs_set_build_stage "$t" bootstrap-recovery-failed
                     tui_msg "Bootstrap recovery failed" "The $backend base-system recovery failed. See $LOGFILE."
@@ -138,84 +200,10 @@ Systui will not run dpkg package repair against this rootfs yet."
     return 0
 }
 
-if declare -F rootfs_continue_generation >/dev/null 2>&1 && \
-   ! declare -F _systui_base_rootfs_continue_generation_bootstrap >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_continue_generation | sed '1s/^rootfs_continue_generation[[:space:]]*()/_systui_base_rootfs_continue_generation_bootstrap ()/')"
-fi
+# The Continue/recover workflow is reimplemented in the final hardening module
+# (zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-repair-hardening.sh), which adds the
+# essential-base diagnosis, the empty-selection re-ask and the watchdog-safe
+# restore. Keeping a second copy here only let a stale, unreachable message
+# reach users again.
 
-rootfs_continue_generation() { # <target>
-    local t="$1" distro release arch mirror pkgs use_qemu backend stage action base_incomplete=0
-    distro=$(rootfs_state_get "$t" DISTRO || true)
-    release=$(rootfs_state_get "$t" RELEASE || true)
-    arch=$(rootfs_state_get "$t" ARCH || true)
-    mirror=$(rootfs_state_get "$t" MIRROR || true)
-    pkgs=$(rootfs_state_get "$t" PACKAGES || true)
-    use_qemu=$(rootfs_state_get "$t" USE_QEMU || true)
-    backend=$(rootfs_state_get "$t" BACKEND || true)
-    stage=$(rootfs_state_get "$t" STAGE || true)
-
-    [ -n "$distro" ] || distro=$(sed -n 's/^ID=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
-    [ -n "$release" ] || release=$(sed -n 's/^VERSION_CODENAME=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
-    [ -n "$arch" ] || arch=$(host_debarch)
-    [ -n "$use_qemu" ] || { needs_qemu "$arch" && use_qemu=1 || use_qemu=0; }
-    backend=$(rootfs_resolve_backend "$distro" "${backend:-auto}" "$arch" "$release" 2>/dev/null || true)
-
-    case "$distro" in debian|devuan|ubuntu|kali)
-        rootfs_deb_base_incomplete "$t" && base_incomplete=1
-        ;;
-    esac
-
-    if [ "$base_incomplete" -eq 1 ]; then
-        action=$(tui_check "Continue generation" \
-            "Detected: ${distro:-unknown} ${release:-unknown} ($arch), backend: ${backend:-unknown}, stage: ${stage:-unknown}\n\nEssential base system is incomplete. APT repair is disabled until apt-get and libc6 are restored.\nSPACE selects recovery steps:" \
-            bootstrap "Restore/complete bootstrap base (apt-get + libc6)" on \
-            packages "Install remaining packages after base recovery" on \
-            config "Open in-rootfs configuration after recovery" on) || return 0
-    else
-        action=$(tui_check "Continue generation" \
-            "Detected: ${distro:-unknown} ${release:-unknown} ($arch), backend: ${backend:-unknown}, stage: ${stage:-unknown}\nSPACE selects recovery steps:" \
-            second "Complete interrupted debootstrap second stage" on \
-            repair "Repair dpkg/APT package configuration" on \
-            packages "Install remaining packages from build state" on \
-            config "Open in-rootfs configuration after recovery" on) || return 0
-    fi
-    action=${action//\"/}
-
-    case " $action " in *" bootstrap "*)
-        rootfs_recover_deb_base "$t" "$distro" "$release" "$arch" "$mirror" "$pkgs" "$use_qemu" "$backend" || return 0
-        ;;
-    esac
-
-    case " $action " in *" second "*)
-        if [ -x "$t/debootstrap/debootstrap" ]; then
-            if run_cmd "Complete debootstrap second stage" rootfs_run_second_stage "$t" "$arch" "$use_qemu"; then
-                rootfs_set_build_stage "$t" bootstrap-complete
-            else
-                rootfs_set_build_stage "$t" bootstrap-second-stage-failed
-                return 0
-            fi
-        fi ;;
-    esac
-
-    if rootfs_deb_base_incomplete "$t"; then
-        tui_msg "Package repair deferred" "apt-get and/or libc6 are still missing. Restore the bootstrap base before running dpkg/APT repair."
-        return 0
-    fi
-
-    case " $action " in *" repair "*)
-        if [ "$(rootfs_detect_pm "$t")" = apt ]; then
-            rootfs_chroot_exec "$t" "Repair package configuration" \
-                "export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get -f install -y && dpkg --configure -a && apt-get -f install -y" || true
-        fi ;;
-    esac
-    case " $action " in *" packages "*)
-        if [ -n "${pkgs//[[:space:]]/}" ] && [ "$(rootfs_detect_pm "$t")" = apt ]; then
-            rootfs_install_deb_packages "$t" "$pkgs" || true
-        fi ;;
-    esac
-    rootfs_set_build_stage "$t" recovered
-    case " $action " in *" config "*) rootfs_cfg_menu "$t" ;; esac
-    tui_msg "Recovery complete" "Generation recovery finished for:\n$t\n\nReview the log for any package-specific warnings: $LOGFILE"
-}
-
-export -f rootfs_deb_libc_present rootfs_deb_base_incomplete rootfs_recover_mmdebstrap_prepare rootfs_recover_deb_base rootfs_continue_generation
+export -f rootfs_deb_libc_present rootfs_deb_base_incomplete rootfs_recover_mmdebstrap_prepare rootfs_recover_deb_base

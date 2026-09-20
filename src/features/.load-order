@@ -123,4 +123,6 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 109-init-comprehensive-configuration-final.sh
 110-zypper-full-package-functionality-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-final-init-provider-switch.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-adapters.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-repair-hardening.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh

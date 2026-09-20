@@ -14,7 +14,12 @@ if command -v mmdebstrap >/dev/null 2>&1; then
 fi
 
 rootfs_install_mmdebstrap_ish_shim() {
-    [ "${SYSTUI_UNSHARE_SUPPORTED:-1}" = 0 ] || return 0
+    # The host capability probe sets SYSTUI_UNSHARE_SUPPORTED once per process
+    # and marks it readonly. Recovery can additionally request the no-unshare
+    # path through the writable companion flag.
+    if [ "${SYSTUI_UNSHARE_SUPPORTED:-1}" != 0 ] && [ "${SYSTUI_RECOVERY_NO_UNSHARE:-0}" != 1 ]; then
+        return 0
+    fi
     [ -n "${_systui_mmdebstrap_real:-}" ] || return 0
 
     local dir="${SYSTUI_TMP:-/tmp}/mmdebstrap-ish-bin" shim="$dir/mmdebstrap"

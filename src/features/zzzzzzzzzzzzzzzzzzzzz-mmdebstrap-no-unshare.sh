@@ -12,7 +12,7 @@ if type -P mmdebstrap >/dev/null 2>&1; then
         local -a args=("$@") out=()
         local i arg next skip_next=0 have_mode=0 have_canmount_skip=0
 
-        if [ "${SYSTUI_UNSHARE_SUPPORTED:-1}" = 1 ]; then
+        if [ "${SYSTUI_UNSHARE_SUPPORTED:-1}" = 1 ] && [ "${SYSTUI_RECOVERY_NO_UNSHARE:-0}" != 1 ]; then
             "$_systui_mmdebstrap_bin" "${args[@]}"
             return $?
         fi
