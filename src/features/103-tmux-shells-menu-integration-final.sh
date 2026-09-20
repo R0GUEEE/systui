@@ -33,7 +33,7 @@ menu_shell_hierarchy() {
         elif [ "${SYSTUI_SERVICE_RUNTIME+x}" != x ]; then
             detect_init 2>/dev/null || true
         fi
-        c=$(tui_menu "Shell Managers" \
+        tui_capture_menu c tui_menu "Shell Managers" \
             "Install/configure shells, terminal tools and login/init defaults. Current init: ${INIT:-unknown}" \
             shells "Install, remove & configure shell managers/frameworks" \
             tmux "tmux — install/update, plugins, config and sessions" \
@@ -45,7 +45,7 @@ menu_shell_hierarchy() {
             initstatus "Show detected init system / PID 1" \
             initswap "Change init system (systemd/OpenRC/runit/SysVinit)" \
             services "Open service/init manager" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             shells)
                 if declare -F _systui_base_menu_shell_hierarchy_logininit >/dev/null 2>&1; then
@@ -90,6 +90,5 @@ menu_shell_hierarchy() {
     done
 }
 
-export -f menu_shells menu_shell_hierarchy 2>/dev/null || true
 
 return 0 2>/dev/null || true

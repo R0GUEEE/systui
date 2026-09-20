@@ -150,7 +150,7 @@ fi
 menu_package_operations() {
     local c
     while true; do
-        c=$(tui_menu_no_tags "Package operations" \
+        tui_capture_menu c tui_menu_no_tags "Package operations" \
             "Unified package installation across native, universal, language and user package managers:" \
             install "Install packages — choose package manager" \
             remove "Remove packages — choose package manager" \
@@ -158,7 +158,7 @@ menu_package_operations() {
             native "Native package operations — search, update, hold, clean, info" \
             managers "Install/configure package managers" \
             catalogue "Software catalogue" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             install) systui_unified_install_menu ;;
             remove) systui_unified_remove_menu ;;

@@ -34,7 +34,7 @@ menu_tmux_manager() {
     local c ver
     while true; do
         ver=$(tmux -V 2>/dev/null || echo 'not installed')
-        c=$(tui_menu_no_tags "tmux manager" \
+        tui_capture_menu c tui_menu_no_tags "tmux manager" \
             "tmux: $ver — one consolidated manager for installation, plugins, Awesome tmux, configuration and sessions." \
             install "Install / update tmux" \
             all "All catalogue projects — SPACE multi-select" \
@@ -52,7 +52,7 @@ menu_tmux_manager() {
             sessions "Live tmux session management" \
             status "Show tmux / plugin status" \
             remove "Remove native tmux package" \
-            back "Back") || return 0
+            back "Back" || return $?
         case "$c" in
             install) systui_tmux_install_menu ;;
             all) systui_tmux_catalog_browse all ;;
