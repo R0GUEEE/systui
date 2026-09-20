@@ -60,18 +60,11 @@ systui_resolve_feature_path() { # <manifest entry>
 
 systui_load_features() { # [manifest]
     local manifest="${1:-$SYSTUI_LIBDIR/src/features/.load-order}" rel feature resolved
-    local scrub_exports=0
+    local scrub_exports=-1
     [ -r "$manifest" ] || {
         echo "systui: missing feature load manifest: $manifest" >&2
         return 1
     }
-    # Runtime identity does not change while one manifest is loading. Resolve
-    # the expensive auto/iSH decision once instead of running platform probes
-    # after every feature.
-    if systui_should_scrub_function_exports; then
-        scrub_exports=1
-    fi
-
     while IFS= read -r rel || [ -n "$rel" ]; do
         case "$rel" in ''|'#'*) continue ;; esac
         feature="$SYSTUI_LIBDIR/src/features/$rel"
@@ -88,6 +81,17 @@ systui_load_features() { # [manifest]
             echo "systui: failed to load $feature" >&2
             return 1
         }
+        # 00-platform-bootstrap.sh defines the authoritative runtime helpers.
+        # Resolve the expensive auto/iSH decision once, after the first feature
+        # has made those helpers available, instead of probing after all ~125
+        # features.
+        if [ "$scrub_exports" = -1 ]; then
+            if systui_should_scrub_function_exports; then
+                scrub_exports=1
+            else
+                scrub_exports=0
+            fi
+        fi
         # Do not let a deliberate "no scrub needed" result become the loader's
         # return status on native Linux. A completed feature load is success.
         if [ "$scrub_exports" = 1 ]; then
