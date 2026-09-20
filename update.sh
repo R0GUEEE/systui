@@ -15,6 +15,8 @@ LIB_DIR="$INSTALL_PREFIX/lib/systui"
 REPO_URL="https://github.com/R0GUEEE/systui.git"
 BRANCH="main"
 NO_DEPS=0
+MINIMAL=0
+DRY_RUN=0
 
 usage() {
     cat <<USAGE
@@ -22,6 +24,8 @@ Usage: $0 [options]
 
 Options:
   --force       Accepted for compatibility; updates are always full replacements.
+  --minimal     Install only the core dependency tier in the replaced tree.
+  --dry-run     Show the dependency plan without changing the system.
   --no-deps     Skip dependency installation during reinstall.
   -h, --help    Show this help.
 
@@ -29,6 +33,7 @@ Every update is a clean replacement from:
   $REPO_URL
   branch: $BRANCH
 
+Dependencies are pre-installed from share/systui-deps.tsv before installing.
 Update checkout:
   $CACHE_DIR (fixed, root-owned)
 USAGE
@@ -37,6 +42,8 @@ USAGE
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --force) ;;
+        --minimal) MINIMAL=1 ;;
+        --dry-run) DRY_RUN=1 ;;
         --no-deps) NO_DEPS=1 ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -46,7 +53,58 @@ done
 
 info() { printf '\033[0;34m[INFO]\033[0m %s\n' "$*"; }
 ok()   { printf '\033[0;32m[OK]\033[0m %s\n' "$*"; }
+warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
 die()  { printf '\033[0;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
+
+detect_pm() {
+    if command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
+    elif command -v apk >/dev/null 2>&1; then printf 'apk\n'
+    elif command -v pacman >/dev/null 2>&1; then printf 'pacman\n'
+    elif command -v dnf >/dev/null 2>&1; then printf 'dnf\n'
+    elif command -v zypper >/dev/null 2>&1; then printf 'zypper\n'
+    elif command -v yum >/dev/null 2>&1; then printf 'yum\n'
+    elif command -v xbps-install >/dev/null 2>&1; then printf 'xbps\n'
+    elif command -v emerge >/dev/null 2>&1; then printf 'emerge\n'
+    fi
+}
+
+# The updater itself needs git/curl/tar and a CA bundle before it can clone.
+# install.sh then installs the full dependency manifest for the new tree.
+ensure_update_prerequisites() {
+    local pm pkg
+    local -a pkgs=()
+    command -v git >/dev/null 2>&1 || pkgs+=(git)
+    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then pkgs+=(curl); fi
+    command -v tar >/dev/null 2>&1 || pkgs+=(tar)
+    [ -e /etc/ssl/certs/ca-certificates.crt ] || pkgs+=(ca-certificates)
+
+    if [ "${#pkgs[@]}" -eq 0 ]; then
+        return 0
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        info "[dry-run] update prerequisites would be installed: ${pkgs[*]}"
+        return 0
+    fi
+    pm=$(detect_pm)
+    if [ -z "$pm" ]; then
+        warn "No package manager detected; install before updating: ${pkgs[*]}"
+        command -v git >/dev/null 2>&1 || die "git is required to update systui."
+        return 0
+    fi
+    info "Installing update prerequisites ($pm): ${pkgs[*]}"
+    case "$pm" in
+        apt) DEBIAN_FRONTEND=noninteractive apt-get update -qq || true
+             DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "${pkgs[@]}" ;;
+        apk) apk add --no-progress "${pkgs[@]}" || { apk update && apk add --no-progress "${pkgs[@]}"; } ;;
+        pacman) pacman -S --noconfirm --needed "${pkgs[@]}" ;;
+        dnf) dnf install -y --setopt=install_weak_deps=False "${pkgs[@]}" ;;
+        yum) yum install -y "${pkgs[@]}" ;;
+        zypper) zypper --non-interactive install --no-recommends "${pkgs[@]}" ;;
+        xbps) xbps-install -Sy "${pkgs[@]}" ;;
+        emerge) emerge --noreplace "${pkgs[@]}" ;;
+    esac || warn "Some update prerequisites could not be installed: ${pkgs[*]}"
+    command -v git >/dev/null 2>&1 || die "git is required to update systui."
+}
 
 canonical_parent_child() { # <path>
     local p="$1" parent base
@@ -80,13 +138,20 @@ safe_remove_library() {
     [ ! -e "$p" ] || rm -rf --one-file-system -- "$p"
 }
 
-command -v git >/dev/null 2>&1 || die "git is required to update systui."
-
 if [ "$(id -u)" -ne 0 ]; then
     args=("$0")
     [ "$NO_DEPS" -eq 1 ] && args+=(--no-deps)
+    [ "$MINIMAL" -eq 1 ] && args+=(--minimal)
+    [ "$DRY_RUN" -eq 1 ] && args+=(--dry-run)
     command -v sudo >/dev/null 2>&1 || die "Run this script as root."
     exec sudo "${args[@]}"
+fi
+
+# Prerequisites are installed as root, before anything needs them.
+if [ "$NO_DEPS" -eq 1 ]; then
+    command -v git >/dev/null 2>&1 || die "git is required to update systui."
+else
+    ensure_update_prerequisites
 fi
 
 CACHE_DIR=$(canonical_parent_child "$CACHE_DIR") || die "Unsafe update cache path."
@@ -97,6 +162,20 @@ STATE_DIR=$(canonical_parent_child "$STATE_DIR") || die "Unsafe state directory 
 mkdir -p -- "$STATE_DIR" "$(dirname -- "$CACHE_DIR")"
 chown root:root "$(dirname -- "$CACHE_DIR")" "$STATE_DIR" 2>/dev/null || true
 chmod 0755 "$STATE_DIR" "$(dirname -- "$CACHE_DIR")" 2>/dev/null || true
+
+if [ "$DRY_RUN" -eq 1 ]; then
+    plan_args=''
+    [ "$MINIMAL" -eq 1 ] && plan_args="$plan_args --minimal"
+    [ "$NO_DEPS" -eq 1 ] && plan_args="$plan_args --no-deps"
+    info "[dry-run] would replace the update checkout: $CACHE_DIR"
+    info "[dry-run] would clone $REPO_URL ($BRANCH)"
+    info "[dry-run] would remove and reinstall: $LIB_DIR"
+    info "[dry-run] would run: INSTALL_PREFIX=$INSTALL_PREFIX $CACHE_DIR/install.sh$plan_args"
+    SYSTUI_PM_OVERRIDE="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}" \
+        bash "$(dirname "$0")/install.sh" --deps-only --dry-run || warn "Dependency plan could not be generated."
+    ok "Dry run complete; nothing was changed."
+    exit 0
+fi
 
 info "Replacing update checkout with a fresh GitHub main clone..."
 safe_remove_cache "$CACHE_DIR"
@@ -119,10 +198,14 @@ if [ -e "$LIB_DIR" ]; then
     safe_remove_library "$LIB_DIR"
 fi
 
+install_args=()
+[ "$MINIMAL" -eq 1 ] && install_args+=(--minimal)
+[ "$DRY_RUN" -eq 1 ] && install_args+=(--dry-run)
+
 if [ "$NO_DEPS" -eq 1 ]; then
-    SYSTUI_SKIP_DEPS=1 INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh"
+    SYSTUI_SKIP_DEPS=1 INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh" ${install_args[@]+"${install_args[@]}"}
 else
-    INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh"
+    INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh" ${install_args[@]+"${install_args[@]}"}
 fi
 
 printf '%s\n' "$CACHE_DIR" > "$STATE_DIR/source-dir"

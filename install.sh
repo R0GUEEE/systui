@@ -19,6 +19,30 @@ error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
 
 require_root() { [ "$(id -u)" -eq 0 ] || error "This script must be run as root. Try: sudo $0"; }
 
+usage() {
+    cat <<USAGE
+Usage: $0 [options]
+
+Options:
+  --deps-only   Install and verify dependencies, then exit
+  --dry-run     Print the dependency plan without changing the system
+  --minimal     Install only the core dependency tier
+  --no-deps     Skip dependency installation
+  -h, --help    Show this help.
+
+All packages systui needs are declared in share/systui-deps.tsv and installed
+up front, so no menu fails because a tool is missing later.
+
+Environment:
+  SYSTUI_SKIP_DEPS=1       skip dependency installation entirely
+  SYSTUI_MINIMAL_DEPS=1    install only the core tier
+  SYSTUI_DEPS_TIERS=...    explicit tiers: core,extra,build
+  SYSTUI_DEPS_DRY_RUN=1    print what would be installed, change nothing
+  SYSTUI_DEPS_STRICT=0     do not fail when a package is unavailable
+  SYSTUI_PM_OVERRIDE=<pm>  force apt|apk|pacman|dnf|zypper|xbps|emerge
+USAGE
+}
+
 detect_pm() {
     if command -v apt-get >/dev/null 2>&1; then echo apt
     elif command -v apk >/dev/null 2>&1; then echo apk
@@ -94,41 +118,202 @@ install_native_packages() {
             emerge) emerge --noreplace "$pkg" ;;
         esac >/dev/null 2>&1 || failed+=("$pkg")
     done
-    [ ${#failed[@]} -eq 0 ] || error "Required dependencies could not be installed: ${failed[*]}"
+    [ ${#failed[@]} -eq 0 ] || {
+        if [ "${SYSTUI_DEPS_STRICT:-1}" = "1" ]; then
+            error "Required dependencies could not be installed: ${failed[*]}"
+        fi
+        warn "Could not install: ${failed[*]}"
+        return 1
+    }
+    return 0
+}
+
+###############################################################################
+# Dependency installation (manifest driven)
+#
+# share/systui-deps.tsv is the single source of truth for systui's runtime,
+# toolkit and build dependencies. "core" packages are required for the TUI to
+# start; "extra" and "build" cover the CLI tooling and toolchains systui menus
+# invoke. Every tier is installed up front so features do not fail mid-flow.
+#
+# Environment:
+#   SYSTUI_SKIP_DEPS=1       skip dependency installation entirely
+#   SYSTUI_MINIMAL_DEPS=1    install only the core tier
+#   SYSTUI_DEPS_TIERS=...    explicit tier selection (core,extra,build)
+#   SYSTUI_DEPS_DRY_RUN=1    print what would be installed, change nothing
+#   SYSTUI_DEPS_STRICT=0     do not fail when a package is unavailable
+#   SYSTUI_PM_OVERRIDE=<pm>  force a package-manager backend
+###############################################################################
+
+deps_manifest_path() {
+    if [ -r "$PROJECT_DIR/share/systui-deps.tsv" ]; then printf '%s\n' "$PROJECT_DIR/share/systui-deps.tsv"
+    elif [ -n "${LIB_DIR:-}" ] && [ -r "$LIB_DIR/share/systui-deps.tsv" ]; then printf '%s\n' "$LIB_DIR/share/systui-deps.tsv"
+    else return 1
+    fi
+}
+
+deps_family_column() {
+    case "$1" in
+        apt) printf '2\n' ;; apk) printf '3\n' ;; pacman) printf '4\n' ;;
+        dnf|yum|zypper) printf '5\n' ;; xbps) printf '6\n' ;; emerge) printf '7\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+deps_tiers() {
+    if [ -n "${SYSTUI_DEPS_TIERS:-}" ]; then printf '%s\n' "$SYSTUI_DEPS_TIERS"; return 0; fi
+    if [ "${SYSTUI_MINIMAL_DEPS:-0}" = "1" ]; then printf 'core\n'; return 0; fi
+    printf 'core,extra,build\n'
+}
+
+# Emit "tier<TAB>package" rows for the requested tiers on this package manager.
+deps_rows() { # <column> <tiers-csv>
+    local col="$1" tiers="$2" manifest canonical apt apk pacman dnf xbps emerge tier cmds pkg
+    manifest=$(deps_manifest_path) || return 1
+    while IFS=$'\t' read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
+        case "${canonical:-}" in ''|'#'*) continue ;; esac
+        case ",${tiers}," in *",${tier:-},"*) ;; *) continue ;; esac
+        case "$col" in
+            2) pkg="$apt" ;; 3) pkg="$apk" ;; 4) pkg="$pacman" ;;
+            5) pkg="$dnf" ;; 6) pkg="$xbps" ;; 7) pkg="$emerge" ;;
+            *) return 1 ;;
+        esac
+        [ -n "${pkg:-}" ] || continue
+        [ "$pkg" = "-" ] || printf '%s\t%s\n' "$tier" "$pkg"
+    done < "$manifest"
+}
+
+# Missing commands declared by the manifest, one "tier:command" per line.
+# The manifest may split a "commands" field on "|": entries before the bar are
+# mandatory, entries after it are advisory and reported as "soft:tier:command".
+deps_missing_commands() { # <tiers-csv>
+    local tiers="$1" manifest canonical apt apk pacman dnf xbps emerge tier cmds
+    manifest=$(deps_manifest_path) || return 1
+    while IFS=$'\t' read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
+        case "${canonical:-}" in ''|'#'*) continue ;; esac
+        case ",${tiers}," in *",${tier:-},"*) ;; *) continue ;; esac
+        [ -n "${cmds:-}" ] || continue
+        [ "$cmds" = "-" ] && continue
+        deps_missing_commands_group "$tier" '' "${cmds%%|*}"
+        case "$cmds" in
+            *'|'*) deps_missing_commands_group "$tier" 'soft:' "${cmds#*|}" ;;
+        esac
+    done < "$manifest"
+}
+
+deps_missing_commands_group() { # <tier> <prefix> <comma-list>
+    local tier="$1" prefix="$2" list="$3" cmd
+    while [ -n "$list" ]; do
+        case "$list" in
+            *,*) cmd=${list%%,*}; list=${list#*,} ;;
+            *)   cmd=$list; list='' ;;
+        esac
+        [ -n "$cmd" ] || continue
+        command -v "$cmd" >/dev/null 2>&1 || printf '%s%s:%s\n' "$prefix" "$tier" "$cmd"
+    done
+}
+
+# Non-core packages are best-effort: a name a distribution does not ship must
+# not abort the whole install. Unavailable packages are reported and skipped.
+install_native_packages_tolerant() { # <pm> <label> <packages...>
+    local pm="$1" label="$2" pkg
+    shift 2
+    [ "$#" -gt 0 ] || return 0
+    local -a missing=() failed=()
+    for pkg in "$@"; do package_is_installed "$pm" "$pkg" || missing+=("$pkg"); done
+    [ "${#missing[@]}" -gt 0 ] || return 0
+    info "Installing ${#missing[@]} $label package(s)"
+    refresh_package_metadata "$pm"
+    SYSTUI_DEPS_STRICT=0 install_native_packages "$pm" "${missing[@]}" || true
+    for pkg in "${missing[@]}"; do
+        package_is_installed "$pm" "$pkg" || failed+=("$pkg")
+    done
+    [ "${#failed[@]}" -eq 0 ] || warn "Unavailable $label package(s) on $pm (skipped): ${failed[*]}"
+    return 0
+}
+
+deps_install_tier() { # <pm> <tier> <packages...>
+    local pm="$1" tier="$2"
+    shift 2
+    [ "$#" -gt 0 ] || return 0
+    if [ "${SYSTUI_DEPS_DRY_RUN:-0}" = "1" ]; then
+        printf '[dry-run] %s (%s): %s\n' "$tier" "$pm" "$*"
+        return 0
+    fi
+    case "$tier" in
+        core) install_native_packages "$pm" "$@" ;;
+        *)    install_native_packages_tolerant "$pm" "$tier" "$@" ;;
+    esac
 }
 
 install_dependencies() {
-    if [ "${SYSTUI_SKIP_DEPS:-0}" = "1" ]; then info "Skipping dependency installation (SYSTUI_SKIP_DEPS=1)"; return 0; fi
-    info "Checking the minimal systui runtime dependencies..."
-    local pm pkg_bash pkg_dialog pkg_coreutils pkg_grep pkg_sed pkg_awk pkg_find pkg_curl pkg_ca cmd core_missing=0
-    local required=()
-    pm=$(detect_pm); [ -z "$pm" ] && error "Could not detect package manager. Please install manually."
-    case "$pm" in
-        apt|apk|pacman|dnf|yum|zypper|xbps)
-            pkg_bash='bash'; pkg_dialog='dialog'; pkg_coreutils='coreutils'; pkg_grep='grep'; pkg_sed='sed'; pkg_awk='gawk'; pkg_find='findutils'; pkg_curl='curl'; pkg_ca='ca-certificates' ;;
-        emerge)
-            pkg_bash='app-shells/bash'; pkg_dialog='dev-util/dialog'; pkg_coreutils='sys-apps/coreutils'; pkg_grep='sys-apps/grep'; pkg_sed='sys-apps/sed'; pkg_awk='sys-apps/gawk'; pkg_find='sys-apps/findutils'; pkg_curl='net-misc/curl'; pkg_ca='app-misc/ca-certificates' ;;
-    esac
+    if [ "${SYSTUI_SKIP_DEPS:-0}" = "1" ]; then
+        info "Skipping dependency installation (SYSTUI_SKIP_DEPS=1)"
+        return 0
+    fi
+    local pm col tiers manifest row_file tier pkg
+    pm="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}"
+    [ -n "$pm" ] || error "Could not detect a package manager. Install dependencies manually or set SYSTUI_PM_OVERRIDE=<apt|apk|pacman|dnf|zypper|xbps|emerge>."
+    col=$(deps_family_column "$pm") || error "Unsupported package manager: $pm"
+    tiers=$(deps_tiers)
+
+    if ! manifest=$(deps_manifest_path); then
+        warn "Dependency manifest is missing (share/systui-deps.tsv); installing the built-in core list."
+        install_native_packages "$pm" bash dialog coreutils grep sed gawk findutils tar gzip xz-utils unzip ca-certificates curl
+        return 0
+    fi
+
     info "Detected package manager: $pm"
-    command -v bash >/dev/null 2>&1 || required+=("$pkg_bash")
-    command -v dialog >/dev/null 2>&1 || required+=("$pkg_dialog")
-    command -v grep >/dev/null 2>&1 || required+=("$pkg_grep")
-    command -v sed >/dev/null 2>&1 || required+=("$pkg_sed")
-    command -v awk >/dev/null 2>&1 || required+=("$pkg_awk")
-    command -v find >/dev/null 2>&1 || required+=("$pkg_find")
-    for cmd in id mktemp head tr cut sort tee chmod rm date; do command -v "$cmd" >/dev/null 2>&1 || core_missing=1; done
-    [ "$core_missing" = 0 ] || required+=("$pkg_coreutils")
-    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then required+=("$pkg_curl"); fi
-    package_is_installed "$pm" "$pkg_ca" || required+=("$pkg_ca")
-    install_native_packages "$pm" "${required[@]}"
-    success "Dependency check complete"
+    info "Dependency tiers: $tiers"
+
+    row_file=$(mktemp) || error "Could not create a temporary file for the dependency manifest."
+    deps_rows "$col" "$tiers" > "$row_file" || true
+    if [ ! -s "$row_file" ]; then
+        rm -f "$row_file"
+        error "The dependency manifest produced no packages for $pm (tiers: $tiers)."
+    fi
+
+    local -a core_pkgs=() toolkit_pkgs=()
+    while IFS=$'\t' read -r tier pkg; do
+        [ -n "$pkg" ] || continue
+        case "$tier" in
+            core) core_pkgs+=("$pkg") ;;
+            *)    toolkit_pkgs+=("$pkg") ;;
+        esac
+    done < "$row_file"
+    rm -f "$row_file"
+
+    deps_install_tier "$pm" core "${core_pkgs[@]}"
+    [ "${#toolkit_pkgs[@]}" -eq 0 ] || deps_install_tier "$pm" toolkit "${toolkit_pkgs[@]}"
+    success "Dependency installation complete"
 }
 
 check_command() { command -v "$1" >/dev/null 2>&1; }
+
 verify_dependencies() {
     info "Verifying dependencies..."
-    local missing_commands="" cmd
-    for cmd in bash dialog sed awk grep cut tr head sort find; do check_command "$cmd" || missing_commands+="$cmd "; done
+    local tiers manifest entry tier cmd missing_commands="" cmd_list
+    tiers=$(deps_tiers)
+    if manifest=$(deps_manifest_path); then
+        cmd_list=$(mktemp) || cmd_list=""
+        if [ -n "$cmd_list" ]; then
+            deps_missing_commands "$tiers" > "$cmd_list" 2>/dev/null || true
+            while IFS= read -r entry; do
+                [ -n "$entry" ] || continue
+                case "$entry" in
+                    soft:*)
+                        entry=${entry#soft:}
+                        warn "Optional ${entry%%:*} command not available: ${entry#*:}"
+                        ;;
+                    core:*) missing_commands+="${entry#core:} " ;;
+                    *) warn "Optional ${entry%%:*} command not available: ${entry#*:}" ;;
+                esac
+            done < "$cmd_list"
+            rm -f "$cmd_list"
+        fi
+    else
+        for cmd in bash dialog sed awk grep cut tr head sort find; do check_command "$cmd" || missing_commands+="$cmd "; done
+    fi
     if ! check_command curl && ! check_command wget; then missing_commands+="curl-or-wget "; fi
     [ -z "$missing_commands" ] || error "Missing required commands: $missing_commands"
     success "All dependencies present"
@@ -292,11 +477,29 @@ cleanup() {
 }
 
 main() {
+    local deps_only=0
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+            --deps-only) deps_only=1 ;;
+            --dry-run) SYSTUI_DEPS_DRY_RUN=1 ;;
+            --minimal) SYSTUI_MINIMAL_DEPS=1 ;;
+            --no-deps) SYSTUI_SKIP_DEPS=1 ;;
+            -h|--help) usage; return 0 ;;
+            *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; return 2 ;;
+        esac
+        shift
+    done
     echo "========== systui Installation =========="
     echo "Version: $SYSTUI_VERSION"
     require_root
     install_dependencies
-    verify_dependencies
+    if [ "${SYSTUI_DEPS_DRY_RUN:-0}" != "1" ]; then
+        verify_dependencies
+    fi
+    if [ "$deps_only" -eq 1 ]; then
+        success "Dependency setup complete (--deps-only)"
+        return 0
+    fi
     install_project
     create_executable
     create_manpage

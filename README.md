@@ -155,34 +155,55 @@ override them.
 ### What `install.sh` Does
 
 1. **Detects package manager** (APT, APK, pacman, DNF, Zypper, XBPS, or Portage)
-2. **Installs only missing runtime dependencies, without recommended/weak packages:**
-   - bash
-   - dialog
-   - Minimal text and file utilities (coreutils, grep, sed, awk, find)
-   - curl or an already-installed wget, plus CA certificates, for the synchronized software catalogue
+2. **Pre-installs every dependency declared in `share/systui-deps.tsv`**, without
+   recommended/weak packages, in three tiers:
 
-   Feature-specific tools for rootfs creation, storage, networking, archives,
-   builds, and managed applications are installed only when their menu action
-   explicitly requires them.
+   | Tier | Contents | On failure |
+   |------|----------|------------|
+   | `core` | bash, dialog, coreutils, grep, sed, gawk, findutils, diffutils, tar, gzip, bzip2, xz, unzip, ca-certificates, curl, procps, util-linux, less, ncurses | aborts the install |
+   | `extra` | git, wget, rsync, jq, openssh-client, iproute2, iputils, dnsutils, netcat, socat, lsof, pv, tree, ncdu, tmux, nano, vim, neovim, micro, htop, ripgrep, fd, fzf, bat, eza, w3m, lynx, most, zip, p7zip, zstd, strace, mtr, nmap, tcpdump, fastfetch, figlet, python3, gnupg, file, which | warns and continues |
+   | `build` | make, gcc, cmake, ninja, pip, python3-venv | warns and continues |
+
+   Because the toolkit is installed up front, no menu has to install a tool
+   mid-flow, and a package a distribution does not ship cannot fail the install.
 
 3. **Replaces managed project files** in `/usr/local/lib/systui/` with the latest copy
 4. **Creates or replaces the executable** at `/usr/local/bin/systui`
 5. **Creates man page** for documentation
 6. **Verifies installation**
 
+#### Dependency options
+
+```bash
+sudo ./install.sh                 # all tiers (default)
+sudo ./install.sh --minimal       # core tier only
+sudo ./install.sh --deps-only     # install dependencies, then exit
+sudo ./install.sh --dry-run       # print the dependency plan, change nothing
+sudo ./install.sh --no-deps       # skip dependency installation
+```
+
+Environment overrides: `SYSTUI_DEPS_TIERS=core,extra,build`,
+`SYSTUI_MINIMAL_DEPS=1`, `SYSTUI_DEPS_DRY_RUN=1`, `SYSTUI_DEPS_STRICT=0`
+(never fail on an unavailable package), and `SYSTUI_PM_OVERRIDE=<pm>` to force a
+package-manager backend.
+
 ### Dependencies
 
-**Minimum required:**
-- bash 4.0+
-- dialog
-- grep, sed, awk, cut, tr (standard utilities)
-- openssl (for cryptography)
-- curl or wget (for network operations)
+Everything installed automatically from `share/systui-deps.tsv`:
 
-**Optional:**
-- man-db (for documentation)
-- git (for cloning)
-- tzdata (for timezone support)
+**Core (required to start):**
+- bash 4.0+, dialog
+- coreutils, grep, sed, gawk, findutils, diffutils
+- tar, gzip, bzip2, xz, unzip
+- procps, util-linux, less, ncurses
+- curl, ca-certificates
+
+**Toolkit and build tiers (installed by default):**
+- git, wget, rsync, jq, openssh-client, iproute2, iputils, dnsutils, netcat, socat
+- lsof, pv, tree, ncdu, tmux, nano, vim, neovim, micro, htop, ripgrep, fd, fzf, bat, eza
+- w3m, lynx, most, zip, p7zip, zstd, strace, mtr, nmap, tcpdump, fastfetch, figlet
+- python3, gnupg, file, which
+- make, gcc, cmake, ninja, pip, python3-venv
 
 ## Usage Examples
 
@@ -618,7 +639,9 @@ After installation, the same updater is available globally:
 sudo systui-update
 ```
 
-The updater fetches the current branch from `origin`, backs up and stashes local source changes, fast-forwards to the latest revision, and reruns `install.sh`. Use `--no-deps` to skip package dependency installation or `--force` to reset the source checkout after creating a backup.
+The updater replaces the local tree with a fresh `main` clone (fixed root-owned checkout at `/var/lib/systui/source`) and then reruns `install.sh`, which pre-installs the full dependency manifest before the new tree is used.
+
+Options: `--minimal` (core dependency tier only), `--dry-run` (print the clone/install/dependency plan and exit without touching anything), `--no-deps` (skip dependency installation), `--force` (accepted for compatibility; updates are always full replacements).
 
 ## RootFS additional package catalogue
 
