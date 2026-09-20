@@ -44,8 +44,10 @@ rootfs_wb_ish_repair_choices() { # <target> -> tag|description|on/off
         fi
     fi
 
-    if [ -r "$t/var/lib/dpkg/status" ] && \
-       grep -qE '^Status: .* (half-configured|unpacked|half-installed|triggers-awaited|triggers-pending)$' "$t/var/lib/dpkg/status" 2>/dev/null; then
+    if declare -F rootfs_deb_base_incomplete >/dev/null 2>&1 && rootfs_deb_base_incomplete "$t"; then
+        printf '%s\n' 'bootstrap|Restore missing Debian-family bootstrap base (apt-get/libc)|on'
+    elif [ -r "$t/var/lib/dpkg/status" ] && \
+         grep -qE '^Status: .* (half-configured|unpacked|half-installed|triggers-awaited|triggers-pending)$' "$t/var/lib/dpkg/status" 2>/dev/null; then
         printf '%s\n' 'dpkg|Complete interrupted dpkg configuration and repair dependencies|on'
     fi
 
@@ -98,8 +100,31 @@ EOF
     esac
 }
 
+rootfs_wb_ish_fix_bootstrap() { # <target>
+    local t="$1" distro release arch mirror pkgs use_qemu backend
+    distro=$(rootfs_state_get "$t" DISTRO 2>/dev/null || true)
+    release=$(rootfs_state_get "$t" RELEASE 2>/dev/null || true)
+    arch=$(rootfs_state_get "$t" ARCH 2>/dev/null || true)
+    mirror=$(rootfs_state_get "$t" MIRROR 2>/dev/null || true)
+    pkgs=$(rootfs_state_get "$t" PACKAGES 2>/dev/null || true)
+    use_qemu=$(rootfs_state_get "$t" USE_QEMU 2>/dev/null || true)
+    backend=$(rootfs_state_get "$t" BACKEND 2>/dev/null || true)
+
+    [ -n "$distro" ] || distro=$(sed -n 's/^ID=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
+    [ -n "$release" ] || release=$(sed -n 's/^VERSION_CODENAME=//p' "$t/etc/os-release" 2>/dev/null | tr -d '"' | head -n1)
+    [ -n "$arch" ] || arch=$(host_debarch)
+    [ -n "$use_qemu" ] || { needs_qemu "$arch" && use_qemu=1 || use_qemu=0; }
+    backend=$(rootfs_resolve_backend "$distro" "${backend:-auto}" "$arch" "$release" 2>/dev/null || true)
+
+    rootfs_recover_deb_base "$t" "$distro" "$release" "$arch" "$mirror" "$pkgs" "$use_qemu" "$backend"
+}
+
 rootfs_wb_ish_fix_dpkg() { # <target>
     local t="$1" mounted_before=0 rc=0
+    if declare -F rootfs_deb_base_incomplete >/dev/null 2>&1 && rootfs_deb_base_incomplete "$t"; then
+        rootfs_wb_ish_fix_bootstrap "$t" || return 1
+        rootfs_deb_base_incomplete "$t" && return 1
+    fi
     [ "$(rootfs_wb_mount_count "$t" 2>/dev/null || echo 0)" -gt 0 ] && mounted_before=1
     if [ "$mounted_before" -eq 0 ]; then
         rootfs_wb_mount_persistent "$t" || return 1
@@ -146,6 +171,7 @@ rootfs_wb_ish_apply_repair() { # <target> <tag>
             fi
             ln -s openrc-init "$t/sbin/init"
             ;;
+        bootstrap) rootfs_wb_ish_fix_bootstrap "$t" ;;
         dpkg) rootfs_wb_ish_fix_dpkg "$t" ;;
         dns|hosts|hostname|machine-id) rootfs_wb_ish_fix_runtime_files "$t" "$tag" ;;
         continue) rootfs_continue_generation "$t" ;;
@@ -215,5 +241,5 @@ rootfs_wb_ish_boot_analyze() { # <target>
 }
 
 export -f rootfs_wb_ish_repair_choices rootfs_wb_ish_fix_dirs \
-    rootfs_wb_ish_fix_runtime_files rootfs_wb_ish_fix_dpkg \
+    rootfs_wb_ish_fix_runtime_files rootfs_wb_ish_fix_bootstrap rootfs_wb_ish_fix_dpkg \
     rootfs_wb_ish_apply_repair rootfs_wb_ish_repair_menu rootfs_wb_ish_boot_analyze
