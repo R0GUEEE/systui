@@ -75,16 +75,17 @@ else
 fi
 
 
-scan_calls=0
+scan_log="$TMP/strata-scans"
+: > "$scan_log"
 bedrock_bootstrap_strata() {
-    scan_calls=$((scan_calls + 1))
+    printf 'scan\n' >> "$scan_log"
     printf '%s\n' debian arch void systemd qemu tools
 }
 systui_bootstrap_status_cache_clear
 rootfs_bs_installed debootstrap
 rootfs_bs_installed mmdebstrap
 rootfs_bs_installed arch-install-scripts
-if [ "$scan_calls" -eq 1 ]; then
+if [ "$(wc -l < "$scan_log")" -eq 1 ]; then
     ok "bootstrap menu status enumerates Bedrock strata once"
 else
     not_ok "bootstrap menu status enumerates Bedrock strata once"
