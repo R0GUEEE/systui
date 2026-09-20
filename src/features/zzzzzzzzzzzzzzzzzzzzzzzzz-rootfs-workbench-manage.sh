@@ -75,7 +75,14 @@ rootfs_wb_ish_boot_analyze() { # <target>
         echo "--- Core filesystem ---"
 
         [ -d "$t" ] && rootfs_wb_ish_emit PASS "Rootfs directory" "present" || rootfs_wb_ish_emit FAIL "Rootfs directory" "missing"
-        [ -x "$t/bin/sh" ] && rootfs_wb_ish_emit PASS "/bin/sh" "executable" || rootfs_wb_ish_emit FAIL "/bin/sh" "missing or not executable"
+        local _sh_state _sh_status _sh_detail
+        _sh_state=$(rootfs_wb_shell_state "$t" 2>/dev/null || true)
+        IFS='|' read -r _sh_status _sh_path _sh_detail <<< "$_sh_state"
+        if [ "$_sh_status" = ok ]; then
+            rootfs_wb_ish_emit PASS "/bin/sh" "resolves and is executable"
+        else
+            rootfs_wb_ish_emit FAIL "/bin/sh" "${_sh_detail:-missing or not executable}"
+        fi
         if [ -x "$t/bin/bash" ]; then
             rootfs_wb_ish_emit PASS "/bin/bash" "available for Workbench sessions"
         else
@@ -304,10 +311,16 @@ rootfs_wb_delete() { # <target>
 
 rootfs_wb_menu_for() { # <target>
     local t="$1" c engine mounts
-    [ -x "$t/bin/sh" ] || tui_msg "Warning" \
+    # Diagnose and offer to repair a broken shell entry instead of quoting a
+    # bare "no executable /bin/sh" at the user (see the shell repair module).
+    if declare -F rootfs_wb_shell_check_prompt >/dev/null 2>&1; then
+        rootfs_wb_shell_check_prompt "$t" || true
+    elif [ ! -x "$t/bin/sh" ]; then
+        tui_msg "Warning" \
 "$t has no executable /bin/sh.
 
 You can still inspect, mount, pack, or delete it, but entering it will fail."
+    fi
     while true; do
         engine=$(rootfs_wb_engine_get "$t")
         mounts=$(rootfs_wb_mount_count "$t")

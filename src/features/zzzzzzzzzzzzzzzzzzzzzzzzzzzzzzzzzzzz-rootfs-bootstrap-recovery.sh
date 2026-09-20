@@ -74,7 +74,14 @@ rootfs_deb_base_incomplete() { # <target>
     # Another distribution (Alpine, Arch, Fedora, ...) never has a Debian-family
     # bootstrap base to restore; do not report it as incomplete.
     rootfs_tree_is_deb_family "$t" || return 1
-    [ -x "$t/bin/sh" ] || [ -x "$t/usr/bin/sh" ] || return 0
+    # A healthy tree can hold "/bin/sh -> /usr/bin/dash", which the host's
+    # [ -x ] resolves against the HOST root and reports as missing. Ask the
+    # in-tree resolver first so a good rootfs is never sent to base recovery.
+    if declare -F rootfs_tree_shell_usable >/dev/null 2>&1; then
+        rootfs_tree_shell_usable "$t" || return 0
+    else
+        [ -x "$t/bin/sh" ] || [ -x "$t/usr/bin/sh" ] || return 0
+    fi
     [ -x "$t/usr/bin/dpkg" ] || [ -x "$t/bin/dpkg" ] || return 0
     [ -x "$t/usr/bin/apt-get" ] || [ -x "$t/bin/apt-get" ] || return 0
     rootfs_deb_libc_present "$t" || return 0

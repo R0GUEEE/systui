@@ -125,4 +125,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-final-init-provider-switch.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-adapters.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-repair-hardening.sh
+zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-shell-repair.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh

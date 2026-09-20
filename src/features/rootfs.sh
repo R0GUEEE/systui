@@ -960,6 +960,14 @@ rootfs_chroot_option_set() { # <target> <key> <value>
 rootfs_shell_path() { # <target> <shell-name-or-path>
     local t="$1" shv="$2" p
     case "$shv" in /*) p="$shv";; bash|sh|dash|ash|zsh|ksh) p="/bin/$shv";; fish) p="/usr/bin/fish";; *) p="/bin/sh";; esac
+    # Resolve inside the rootfs: a link like "/bin/sh -> /usr/bin/dash" is
+    # healthy, but the host's [ -x ] would resolve it against the HOST root.
+    if declare -F rootfs_tree_path_usable >/dev/null 2>&1; then
+        rootfs_tree_path_usable "$t" "$p" && { printf '%s\n' "$p"; return 0; }
+        rootfs_tree_shell_usable "$t" && { printf '/bin/sh\n'; return 0; }
+        printf '%s\n' "$p"
+        return 0
+    fi
     [ -x "$t$p" ] && printf '%s\n' "$p" || printf '/bin/sh\n'
 }
 
@@ -3278,7 +3286,12 @@ moving or deleting the tree."
 rootfs_wb_enter() { # <target>
     local t="$1" engine shell rc=0 owned=0
     local -a argv=()
-    [ -x "$t/bin/sh" ] || { tui_msg "Not a rootfs" "$t has no executable /bin/sh."; return 1; }
+    if declare -F rootfs_wb_shell_check_prompt >/dev/null 2>&1; then
+        rootfs_wb_shell_check_prompt "$t" || return 1
+    elif [ ! -x "$t/bin/sh" ]; then
+        tui_msg "Not a rootfs" "$t has no executable /bin/sh."
+        return 1
+    fi
     engine=$(rootfs_wb_engine_get "$t")
     if ! rootfs_wb_engine_available "$engine"; then
         tui_msg "Engine unavailable" "$engine is not installed. Choose another engine."
@@ -6375,7 +6388,12 @@ rootfs_validate_integrity() { # <target>
 # ---- Rootfs management -------------------------------------------------------
 enter_chroot() { # enter_chroot <target>
     local t="$1" mounts="" rc=0 shell workdir launch_cmd boot_cmd
-    [ -x "$t/bin/sh" ] || { tui_msg "Error" "$t does not look like a rootfs (no /bin/sh)."; return 1; }
+    if declare -F rootfs_wb_shell_check_prompt >/dev/null 2>&1; then
+        rootfs_wb_shell_check_prompt "$t" || return 1
+    elif [ ! -x "$t/bin/sh" ]; then
+        tui_msg "Error" "$t does not look like a rootfs (no /bin/sh)."
+        return 1
+    fi
     shell=$(rootfs_chroot_option_get "$t" SHELL /bin/bash)
     shell=$(rootfs_shell_path "$t" "$shell")
     workdir=$(rootfs_chroot_option_get "$t" WORKDIR /root)
