@@ -5468,8 +5468,20 @@ menu_shell_hierarchy() {
     home_dir=$(user_home "$u"); [ -n "$home_dir" ] || { tui_msg "Error" "User not found."; return 0; }
     cur_shell=$(basename "$(getent passwd "$u" | cut -d: -f7)")
     while true; do
-        systui_refresh_cmd_status zsh fish
-        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" bash "Bash $(st bash)" "$([ "$cur_shell" = bash ] && echo on || echo off)" zsh "Zsh ${SYSTUI_CMD_STATUS[zsh]}" "$([ "$cur_shell" = zsh ] && echo on || echo off)" fish "Fish ${SYSTUI_CMD_STATUS[fish]}" "$([ "$cur_shell" = fish ] && echo on || echo off)" nu "Nushell $(st nu)" "$([ "$cur_shell" = nu ] && echo on || echo off)" tmux "tmux" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
+        local bash_on=off zsh_on=off fish_on=off nu_on=off
+        systui_refresh_cmd_status bash zsh fish nu
+        case "$cur_shell" in
+            bash) bash_on=on ;;
+            zsh) zsh_on=on ;;
+            fish) fish_on=on ;;
+            nu) nu_on=on ;;
+        esac
+        sh_=$(tui_radio "Shell Managers — $u" "SPACE selects a shell:" \
+            bash "Bash ${SYSTUI_CMD_STATUS[bash]}" "$bash_on" \
+            zsh "Zsh ${SYSTUI_CMD_STATUS[zsh]}" "$zsh_on" \
+            fish "Fish ${SYSTUI_CMD_STATUS[fish]}" "$fish_on" \
+            nu "Nushell ${SYSTUI_CMD_STATUS[nu]}" "$nu_on" \
+            tmux "tmux" off more "More shells (dash, ksh, tcsh, elvish...)" off) || return 0
         case "$sh_" in
             bash) m=$(tui_menu "Bash Manager" "Install, remove or configure:" install "Install/reinstall Bash" uninstall "Uninstall Bash" omb "oh-my-bash" bashit "Bash-it" blesh "ble.sh" back "Back") || continue; case "$m" in install) pm_install bash;; uninstall) safe_remove_shell bash;; omb) menu_omb "$u" "$home_dir";; bashit) menu_bashit "$u" "$home_dir";; blesh) menu_blesh "$u" "$home_dir";; esac;;
             zsh) m=$(tui_menu "Zsh Manager" "Install, remove or configure:" install "Install/reinstall Zsh" uninstall "Uninstall Zsh" omz "oh-my-zsh" zinit "zinit" back "Back") || continue; case "$m" in install) menu_zsh_install;; uninstall) safe_remove_shell zsh;; omz) menu_omz "$u" "$home_dir";; zinit) menu_zinit "$u" "$home_dir";; esac;;
