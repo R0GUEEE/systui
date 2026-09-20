@@ -54,10 +54,10 @@ systui_systemd_set_conf_value() { # <file> <section> <key> <value>
 systui_systemd_manager_settings() {
     local c v f=/etc/systemd/system.conf
     while true; do
-        c=$(tui_menu_no_tags "systemd manager settings" "Configure system.conf [Manager] values:" \
+        tui_capture_menu c tui_menu_no_tags "systemd manager settings" "Configure system.conf [Manager] values:" \
             timeout_start "DefaultTimeoutStartSec" timeout_stop "DefaultTimeoutStopSec" restart "DefaultRestartSec" \
             watchdog "RuntimeWatchdogSec" shutdown_watchdog "RebootWatchdogSec" jobs "DefaultTimeoutAbortSec" \
-            show "View system.conf" edit "Edit system.conf" back "Back") || return 0
+            show "View system.conf" edit "Edit system.conf" back "Back" || return $?
         case "$c" in
             timeout_start) v=$(tui_input "DefaultTimeoutStartSec" "Example: 90s, 30s, infinity" "90s") || continue; systui_systemd_set_conf_value "$f" Manager DefaultTimeoutStartSec "$v" ;;
             timeout_stop) v=$(tui_input "DefaultTimeoutStopSec" "Example: 90s" "90s") || continue; systui_systemd_set_conf_value "$f" Manager DefaultTimeoutStopSec "$v" ;;
@@ -75,10 +75,10 @@ systui_systemd_manager_settings() {
 systui_systemd_journald_settings() {
     local c v f=/etc/systemd/journald.conf
     while true; do
-        c=$(tui_menu_no_tags "systemd journal settings" "Configure journald storage and retention:" \
+        tui_capture_menu c tui_menu_no_tags "systemd journal settings" "Configure journald storage and retention:" \
             storage "Storage (auto/persistent/volatile/none)" maxuse "SystemMaxUse" runtimeuse "RuntimeMaxUse" maxfile "SystemMaxFileSize" \
             retention "MaxRetentionSec" rate "RateLimitBurst" forwarding "ForwardToSyslog" compress "Compress" seal "Seal" \
-            show "View journald.conf" edit "Edit journald.conf" vacuum "Vacuum journal" back "Back") || return 0
+            show "View journald.conf" edit "Edit journald.conf" vacuum "Vacuum journal" back "Back" || return $?
         case "$c" in
             storage) v=$(tui_input "Storage" "auto, persistent, volatile, none" "auto") || continue; systui_systemd_set_conf_value "$f" Journal Storage "$v" ;;
             maxuse) v=$(tui_input "SystemMaxUse" "Example: 500M" "500M") || continue; systui_systemd_set_conf_value "$f" Journal SystemMaxUse "$v" ;;
@@ -100,9 +100,9 @@ systui_systemd_journald_settings() {
 systui_systemd_logind_settings() {
     local c v f=/etc/systemd/logind.conf
     while true; do
-        c=$(tui_menu_no_tags "systemd logind settings" "Login/session/power behavior:" \
+        tui_capture_menu c tui_menu_no_tags "systemd logind settings" "Login/session/power behavior:" \
             lid "HandleLidSwitch" power "HandlePowerKey" suspend "HandleSuspendKey" hibernate "HandleHibernateKey" idle "IdleAction" idle_sec "IdleActionSec" \
-            killuser "KillUserProcesses" sessions "UserStopDelaySec" show "View logind.conf" edit "Edit logind.conf" back "Back") || return 0
+            killuser "KillUserProcesses" sessions "UserStopDelaySec" show "View logind.conf" edit "Edit logind.conf" back "Back" || return $?
         case "$c" in
             lid) v=$(tui_input "HandleLidSwitch" "ignore, poweroff, reboot, halt, suspend, hibernate, hybrid-sleep, lock" "suspend") || continue; systui_systemd_set_conf_value "$f" Login HandleLidSwitch "$v" ;;
             power) v=$(tui_input "HandlePowerKey" "poweroff, reboot, halt, ignore, lock" "poweroff") || continue; systui_systemd_set_conf_value "$f" Login HandlePowerKey "$v" ;;
@@ -123,9 +123,9 @@ systui_systemd_unit_defaults_menu() {
     local c dir=/etc/systemd/system.conf.d f=$dir/99-systui.conf v
     mkdir -p "$dir"
     while true; do
-        c=$(tui_menu_no_tags "systemd service defaults" "Global defaults applied by PID 1:" \
+        tui_capture_menu c tui_menu_no_tags "systemd service defaults" "Global defaults applied by PID 1:" \
             oom "DefaultOOMPolicy" startlimit "DefaultStartLimitBurst" interval "DefaultStartLimitIntervalSec" \
-            timer "DefaultTimerAccuracySec" env "DefaultEnvironment" edit "Edit SystUI drop-in" back "Back") || return 0
+            timer "DefaultTimerAccuracySec" env "DefaultEnvironment" edit "Edit SystUI drop-in" back "Back" || return $?
         case "$c" in
             oom) v=$(tui_input "DefaultOOMPolicy" "stop, continue, kill" "stop") || continue; systui_systemd_set_conf_value "$f" Manager DefaultOOMPolicy "$v" ;;
             startlimit) v=$(tui_input "DefaultStartLimitBurst" "Restart burst count" "5") || continue; systui_systemd_set_conf_value "$f" Manager DefaultStartLimitBurst "$v" ;;
@@ -153,11 +153,11 @@ systui_systemd_validate() {
 systui_openrc_comprehensive_config() {
     local c f
     while true; do
-        c=$(tui_menu_no_tags "OpenRC comprehensive configuration" "Global runtime, boot, logging and runlevels:" \
+        tui_capture_menu c tui_menu_no_tags "OpenRC comprehensive configuration" "Global runtime, boot, logging and runlevels:" \
             rcconf "Edit /etc/rc.conf" confd "Browse/edit /etc/conf.d" runlevels "Manage runlevels" locald "Edit /etc/local.d scripts" \
             modules "Edit /etc/conf.d/modules" hostname "Edit /etc/conf.d/hostname" keymaps "Edit /etc/conf.d/keymaps" clock "Edit /etc/conf.d/hwclock" \
             logging "Configure rc_logger / rc_log_path" parallel "Configure rc_parallel" interactive "Configure rc_interactive" timeout "Configure rc_timeout_stopsec" \
-            validate "Run OpenRC status/config diagnostics" back "Back") || return 0
+            validate "Run OpenRC status/config diagnostics" back "Back" || return $?
         case "$c" in
             rcconf) systui_init_edit_file /etc/rc.conf ;;
             confd) f=$(tui_input "OpenRC conf.d" "File name under /etc/conf.d:" "") || continue; [ -n "$f" ] && systui_init_edit_file "/etc/conf.d/$f" ;;
@@ -181,10 +181,10 @@ systui_runit_comprehensive_config() {
     local c f base
     if [ -d /etc/runit ]; then base=/etc/runit; else base=/etc; fi
     while true; do
-        c=$(tui_menu_no_tags "runit comprehensive configuration" "Boot stages, Ctrl-Alt-Del, shutdown and supervision:" \
+        tui_capture_menu c tui_menu_no_tags "runit comprehensive configuration" "Boot stages, Ctrl-Alt-Del, shutdown and supervision:" \
             stage1 "Edit stage 1" stage2 "Edit stage 2" stage3 "Edit stage 3" ctrlaltdel "Edit ctrlaltdel" stopit "Edit stopit" reboot "Edit reboot" \
             services "Edit service run script" finish "Edit service finish script" log "Edit service log/run" env "Edit service env directory" \
-            enable "Enable service directory link" disable "Disable service directory link" status "Show supervised services" back "Back") || return 0
+            enable "Enable service directory link" disable "Disable service directory link" status "Show supervised services" back "Back" || return $?
         case "$c" in
             stage1) systui_init_edit_file "$base/1" ;; stage2) systui_init_edit_file "$base/2" ;; stage3) systui_init_edit_file "$base/3" ;;
             ctrlaltdel) systui_init_edit_file "$base/ctrlaltdel" ;; stopit) systui_init_edit_file "$base/stopit" ;; reboot) systui_init_edit_file "$base/reboot" ;;
@@ -207,10 +207,10 @@ systui_runit_comprehensive_config() {
 systui_sysv_comprehensive_config() {
     local c svc
     while true; do
-        c=$(tui_menu_no_tags "SysVinit comprehensive configuration" "inittab, runlevels, startup/shutdown and service defaults:" \
+        tui_capture_menu c tui_menu_no_tags "SysVinit comprehensive configuration" "inittab, runlevels, startup/shutdown and service defaults:" \
             inittab "Edit /etc/inittab" runlevel "Set default runlevel" rcS "Edit /etc/default/rcS" tmpfs "Edit /etc/default/tmpfs" halt "Edit /etc/default/halt" \
             service "Edit init script" defaults "Edit service /etc/default file" enable "Enable service in runlevels" disable "Disable service" \
-            sequence "Show rc?.d boot ordering" status "Show service status list" back "Back") || return 0
+            sequence "Show rc?.d boot ordering" status "Show service status list" back "Back" || return $?
         case "$c" in
             inittab) systui_init_edit_file /etc/inittab ;; runlevel) systui_sysv_runlevel_menu ;; rcS) systui_init_edit_file /etc/default/rcS ;; tmpfs) systui_init_edit_file /etc/default/tmpfs ;; halt) systui_init_edit_file /etc/default/halt ;;
             service|defaults|enable|disable)
@@ -226,9 +226,9 @@ systui_sysv_comprehensive_config() {
 systui_busybox_comprehensive_config() {
     local c action line
     while true; do
-        c=$(tui_menu_no_tags "BusyBox init comprehensive configuration" "Manage /etc/inittab actions and boot lifecycle:" \
+        tui_capture_menu c tui_menu_no_tags "BusyBox init comprehensive configuration" "Manage /etc/inittab actions and boot lifecycle:" \
             edit "Edit /etc/inittab" view "View /etc/inittab" sysinit "Add sysinit entry" respawn "Add respawn service" askfirst "Add askfirst console" wait "Add wait entry" once "Add once entry" \
-            ctrlaltdel "Add ctrlaltdel action" shutdown "Add shutdown action" restart "Add restart action" initd "Edit /etc/init.d script" reload "Reload init table" back "Back") || return 0
+            ctrlaltdel "Add ctrlaltdel action" shutdown "Add shutdown action" restart "Add restart action" initd "Edit /etc/init.d script" reload "Reload init table" back "Back" || return $?
         case "$c" in
             edit) systui_init_edit_file /etc/inittab ;; view) systui_init_view_file "BusyBox /etc/inittab" /etc/inittab ;;
             sysinit|respawn|askfirst|wait|once|ctrlaltdel|shutdown|restart)
@@ -246,10 +246,10 @@ systui_init_provider_config_menu() {
         systemd)
             local c
             while true; do
-                c=$(tui_menu_no_tags "systemd comprehensive configuration" "Manager, journal, login, targets, service defaults and validation:" \
+                tui_capture_menu c tui_menu_no_tags "systemd comprehensive configuration" "Manager, journal, login, targets, service defaults and validation:" \
                     manager "PID 1 manager defaults" journal "Journal storage/retention" login "Login/session/power behavior" \
                     defaults "Global service/timer defaults" target "Default boot target" presets "Unit preset policy files" tmpfiles "tmpfiles.d configuration" sysusers "sysusers.d configuration" \
-                    generators "Generator/environment directories" validate "Validate units" reload "daemon-reload" back "Back") || return 0
+                    generators "Generator/environment directories" validate "Validate units" reload "daemon-reload" back "Back" || return $?
                 case "$c" in
                     manager) systui_systemd_manager_settings ;; journal) systui_systemd_journald_settings ;; login) systui_systemd_logind_settings ;; defaults) systui_systemd_unit_defaults_menu ;;
                     target) systui_systemd_target_menu ;; presets) systui_init_edit_file /etc/systemd/system-preset/99-systui.preset ;; tmpfiles) systui_init_edit_file /etc/tmpfiles.d/systui.conf ;; sysusers) systui_init_edit_file /etc/sysusers.d/systui.conf ;;
