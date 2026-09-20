@@ -56,7 +56,10 @@ menu_sysconfig() {
 # Bedrock managers belong under Package Managers, not beside it in Packages.
 if declare -F menu_package_managers >/dev/null 2>&1 \
     && ! declare -F _systui_package_managers_before_menu_consolidation >/dev/null 2>&1; then
-    eval "$(declare -f menu_package_managers | sed '1s/^menu_package_managers[[:space:]]*()/_systui_package_managers_before_menu_consolidation ()/')"
+    _systui_saved_fn=$(declare -f menu_package_managers)
+    _systui_saved_fn=${_systui_saved_fn/#menu_package_managers /_systui_package_managers_before_menu_consolidation }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 menu_package_managers() {
