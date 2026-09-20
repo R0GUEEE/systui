@@ -66,7 +66,10 @@ bedrock_aok_nixos_fetch_direct() {
 
 # NixOS must always be visible even when brl/LXC does not advertise it.
 if declare -F bedrock_aok_available_strata >/dev/null 2>&1 && ! declare -F _bedrock_aok_available_strata_before_nixos >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_available_strata | sed '1s/^bedrock_aok_available_strata[[:space:]]*()/_bedrock_aok_available_strata_before_nixos ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_available_strata)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_available_strata /_bedrock_aok_available_strata_before_nixos }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_available_strata() {
     {
@@ -76,7 +79,10 @@ bedrock_aok_available_strata() {
 }
 
 if declare -F bedrock_aok_fetch_stratum_resilient >/dev/null 2>&1 && ! declare -F _bedrock_aok_fetch_stratum_before_nixos >/dev/null 2>&1; then
-    eval "$(declare -f bedrock_aok_fetch_stratum_resilient | sed '1s/^bedrock_aok_fetch_stratum_resilient[[:space:]]*()/_bedrock_aok_fetch_stratum_before_nixos ()/')"
+    _systui_saved_fn=$(declare -f bedrock_aok_fetch_stratum_resilient)
+    _systui_saved_fn=${_systui_saved_fn/#bedrock_aok_fetch_stratum_resilient /_bedrock_aok_fetch_stratum_before_nixos }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 bedrock_aok_fetch_stratum_resilient() {
     local tag="$1"
