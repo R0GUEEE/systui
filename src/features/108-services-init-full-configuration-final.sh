@@ -472,7 +472,7 @@ systui_services_diagnostics() {
 systui_services_boot_analysis() {
     local out="$SYSTUI_TMP/boot-analysis" current
     systui_init_refresh
-        current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
+    current="${SYSTUI_INIT_PROVIDER:-${INIT:-unknown}}"
     : > "$out"
     case "$current" in
         systemd)
