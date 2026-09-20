@@ -1976,14 +1976,16 @@ _bs_install() {
         return $?
     fi
 
-    # Try default package manager first. Suppress pm_install's own automatic
-    # web-fallback here since this function already runs a more thorough,
-    # bootstrap-specific fallback chain right below (known repos across all
-    # cross-distribution indexes, then web/GitHub search) — avoids prompting
-    # the user with two overlapping fallback flows back-to-back.
+    # Bootstrap tools should prefer the distro/default repository first.  If
+    # that repository cannot provide the package, the final pm_install wrapper
+    # then offers every other installed package manager (snap, pip/pipx, npm,
+    # pnpm/yarn, cargo, gem, composer, go, yay/paru, nix, brew, flatpak, etc.)
+    # before this function falls through to the web/repository search chain.
     local _pm_ok=1
     export SYSTUI_PM_NO_WEB_FALLBACK=1
+    export SYSTUI_PM_FALLBACK_MANAGERS=1
     pm_install "$_pkg" 2>/dev/null || _pm_ok=0
+    unset SYSTUI_PM_FALLBACK_MANAGERS
     unset SYSTUI_PM_NO_WEB_FALLBACK
     if [ "$_pm_ok" -eq 1 ]; then
         tui_msg "Success" "$_tag installed successfully."

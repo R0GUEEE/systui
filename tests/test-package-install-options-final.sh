@@ -25,6 +25,9 @@ check "feature offers Homebrew" contains "$FILE" 'brew install'
 check "feature offers Python pip" contains "$FILE" 'python3 -m pip'
 check "feature offers npm" contains "$FILE" 'npm install -g'
 check "feature offers Nix" contains "$FILE" 'nix profile install'
+check "feature offers Snap" contains "$FILE" 'snap install'
+check "feature offers yay" contains "$FILE" 'yay -S'
+check "feature offers paru" contains "$FILE" 'paru -S'
 check "feature offers Cargo" contains "$FILE" 'cargo install'
 check "feature offers Custom command" contains "$FILE" 'Custom install command'
 check "feature preserves previous pm_install" contains "$FILE" '_systui_pm_install_before_universal_options'
@@ -59,6 +62,17 @@ check "explicit brew manager routes install" bash -c '
     source "$2"
     pm_install jq
     grep -Fxq "install --formula -- jq" "$1/brew.args"
+' _ "$tmp" "$FILE" "$tmp"
+check "fallback mode tries native before alternate manager" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ shift; "$@"; }
+    tui_menu(){ return 1; }
+    pm_install(){ printf "%s\n" "$*" > "$SYSTUI_TMP/native-fallback.args"; return 42; }
+    export SYSTUI_TMP="$1" PATH="$3:$PATH" SYSTUI_PM_FALLBACK_MANAGERS=1 SYSTUI_INSTALL_MANAGER=brew
+    source "$2"
+    pm_install missing-tool
+    grep -Fxq "missing-tool" "$1/native-fallback.args"
+    grep -Fxq "install --formula -- missing-tool" "$1/brew.args"
 ' _ "$tmp" "$FILE" "$tmp"
 
 printf '\nUniversal install options: %d passed, %d failed\n' "$pass" "$fail"

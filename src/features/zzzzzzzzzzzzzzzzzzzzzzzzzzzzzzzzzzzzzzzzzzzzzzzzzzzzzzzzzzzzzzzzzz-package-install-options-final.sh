@@ -25,6 +25,9 @@ systui_installed_install_managers() {
     [ "$have_native" -eq 1 ] && printf 'native|Native system package manager (%s)\n' "${PM:-unknown}"
     command -v brew >/dev/null 2>&1 && printf 'brew|Homebrew (brew install)\n'
     command -v nix >/dev/null 2>&1 && printf 'nix|Nix profile (nix profile install nixpkgs#...)\n'
+    command -v snap >/dev/null 2>&1 && printf 'snap|Snap packages (snap install)\n'
+    command -v yay >/dev/null 2>&1 && printf 'yay|Arch AUR/packages (yay -S)\n'
+    command -v paru >/dev/null 2>&1 && printf 'paru|Arch AUR/packages (paru -S)\n'
     if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then
         printf 'pip|Python pip (python3 -m pip install)\n'
     elif command -v pip3 >/dev/null 2>&1; then
@@ -55,6 +58,12 @@ systui_install_with_manager() { # <manager> <packages...>
             local -a refs=()
             for p in "$@"; do case "$p" in *#*) refs+=("$p") ;; *) refs+=("nixpkgs#$p") ;; esac; done
             run_cmd "nix profile install ${refs[*]}" nix profile install "${refs[@]}" ;;
+        snap)
+            run_cmd "snap install $*" snap install "$@" ;;
+        yay)
+            run_cmd "yay -S $*" yay -S --noconfirm --needed -- "$@" ;;
+        paru)
+            run_cmd "paru -S $*" paru -S --noconfirm --needed -- "$@" ;;
         pip)
             local -a pip_args=(install --upgrade)
             if command -v python3 >/dev/null 2>&1 && python3 -m pip --version >/dev/null 2>&1; then
@@ -149,7 +158,25 @@ pm_install() {
         _systui_pm_install_before_universal_options "$@"
         return
     fi
-    local mgr
+
+    local mgr rc
+    if [ "${SYSTUI_PM_FALLBACK_MANAGERS:-0}" = 1 ]; then
+        # Bootstrap/recovery mode: try the distro's default repository first.
+        # Only if it cannot provide the tool do we offer alternate installed
+        # ecosystems (snap/pip/pipx/npm/pnpm/yarn/cargo/gem/composer/go/yay/
+        # paru/nix/brew/flatpak/custom). This keeps normal bootstrap installs
+        # fast and native, while still giving every installed manager a chance
+        # before declaring the tool unavailable.
+        if SYSTUI_PM_OPTIONS_BYPASS=1 _systui_pm_install_before_universal_options "$@"; then
+            return 0
+        fi
+        rc=$?
+        mgr=$(systui_choose_install_manager "fallback after ${PM:-native} could not install the requested package(s)" "$@") || return "$rc"
+        [ "$mgr" = native ] && return "$rc"
+        systui_install_with_manager "$mgr" "$@"
+        return
+    fi
+
     mgr=$(systui_choose_install_manager "package installation" "$@") || return 1
     systui_install_with_manager "$mgr" "$@"
 }
