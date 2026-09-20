@@ -93,18 +93,30 @@ browse_category() {
 
     while true; do
         local -a args=()
+        local snapshot="${SYSTUI_TMP:-/tmp}/catalogue-installed.$"
+        local pkg
+        local -A installed_native=()
         installed=""
+        if declare -F systui_catalogue_installed_snapshot >/dev/null 2>&1 \
+            && systui_catalogue_installed_snapshot > "$snapshot" 2>/dev/null; then
+            while IFS= read -r pkg; do
+                [ -n "$pkg" ] && installed_native["$pkg"]=1
+            done < "$snapshot"
+        else
+            : > "$snapshot"
+        fi
         while IFS='|' read -r key name desc; do
             [ -n "$key" ] || continue
             native=$(app_native_name "$key" 2>/dev/null || printf SKIP)
             [ -n "$native" ] && [ "$native" != SKIP ] || continue
-            if [ "$(app_status "$key")" = installed ]; then
+            if [[ -v "installed_native[$native]" ]]; then
                 state=on; installed+="${installed:+ }$key"
             else
                 state=off
             fi
             args+=("$key" "$name — $desc [$native]" "$state")
         done <<< "$data"
+        rm -f -- "$snapshot" 2>/dev/null || true
 
         [ "${#args[@]}" -gt 0 ] || {
             tui_msg "Software Catalogue" "No entries in '$cat' map to the current package manager (${PM:-unknown})."
