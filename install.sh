@@ -225,6 +225,7 @@ case "${1:-}" in
 esac
 
 systui_startup_check
+tui_refresh_terminal_size >/dev/null
 startup_stage "opening main menu"
 main_menu() {
     while true; do
@@ -248,11 +249,11 @@ main_menu() {
                 ;;
         esac
         case "$choice" in
-            health) menu_health ;;
-            provision) menu_ultimate_provision ;;
-            rootfs) menu_rootfs ;;
-            config) menu_sysconfig ;;
-            performance) menu_performance ;;
+            health) tui_call_menu menu_health "System Health" ;;
+            provision) tui_call_menu menu_ultimate_provision "Ultimate Provision" ;;
+            rootfs) tui_call_menu menu_rootfs "Root Filesystems" ;;
+            config) tui_call_menu menu_sysconfig "System Configuration" ;;
+            performance) tui_call_menu menu_performance "Performance tuning" ;;
             quit) return ;;
             *) printf 'systui: unexpected main-menu selection: %s\n' "$choice" >&2; return 1 ;;
         esac
