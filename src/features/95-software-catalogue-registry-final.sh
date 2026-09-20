@@ -101,11 +101,12 @@ browse_category() {
     while true; do
         local -a args=()
         local snapshot="${SYSTUI_TMP:-/tmp}/catalogue-installed.$"
-        local pkg
+        local pkg snapshot_ok=0
         local -A installed_native=()
         installed=""
         if declare -F systui_catalogue_installed_snapshot >/dev/null 2>&1 \
             && systui_catalogue_installed_snapshot > "$snapshot" 2>/dev/null; then
+            snapshot_ok=1
             while IFS= read -r pkg; do
                 [ -n "$pkg" ] && installed_native["$pkg"]=1
             done < "$snapshot"
