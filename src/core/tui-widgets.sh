@@ -129,10 +129,11 @@ tui_capture_menu() { # <destination-var> <tui_menu|tui_menu_no_tags> <args...>
     esac
 }
 
-tui_call_menu() { # <function> <label>
+tui_call_menu() { # <function> <label> [args...]
     local fn="$1" label="${2:-$1}"
+    shift 2 || true
     if declare -F "$fn" >/dev/null 2>&1; then
-        "$fn"
+        "$fn" "$@"
         return $?
     fi
     local msg="Menu unavailable: $label (missing function: $fn)"
@@ -178,7 +179,7 @@ tui_menu() {
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
     local rc=0
     "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
-    tui_dialog_status "menu" "$1" "$rc"
+    tui_dialog_status "menu" "$title" "$rc"
 }
 
 tui_menu_no_tags() {
@@ -186,7 +187,7 @@ tui_menu_no_tags() {
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
     local rc=0
     "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --no-tags --menu "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
-    tui_dialog_status "menu" "$1" "$rc"
+    tui_dialog_status "menu" "$title" "$rc"
 }
 
 tui_radio() {
