@@ -120,7 +120,7 @@ systui_systemd_logind_settings() {
 }
 
 systui_systemd_unit_defaults_menu() {
-    local c dir=/etc/systemd/system.conf.d f=$dir/99-systui.conf v
+    local c dir=/etc/systemd/system.conf.d f v\n    f="$dir/99-systui.conf"
     mkdir -p "$dir"
     while true; do
         tui_capture_menu c tui_menu_no_tags "systemd service defaults" "Global defaults applied by PID 1:" \
