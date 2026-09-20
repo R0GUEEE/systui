@@ -121,7 +121,15 @@ check "Alpine tree is not offered the Debian bootstrap repair" \
 meta=$(rootfs_deb_recovery_metadata "$nomirror")
 IFS='|' read -r m_distro m_release m_arch m_mirror m_pkgs m_qemu m_backend <<< "$meta"
 check "metadata keeps the recorded distribution" is_true text_has "$m_distro" debian
-check "metadata resolves the backend" is_true text_has "$m_backend" mmdebstrap
+# The catalogue is host-aware (a cross-architecture build on an x86_64 host
+# offers qemu-debootstrap rather than mmdebstrap), so assert the family.
+debian_backend_ok() {
+    case "$m_backend" in
+        mmdebstrap|debootstrap|qemu-debootstrap|cdebootstrap|multistrap|bdebstrap) return 0 ;;
+    esac
+    return 1
+}
+check "metadata resolves a Debian-family backend" debian_backend_ok
 check "missing MIRROR falls back to the distribution default" \
     is_true text_has "$m_mirror" "deb.debian.org"
 tree_meta=$(rootfs_deb_recovery_metadata "$tree_mirror")
