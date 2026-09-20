@@ -36,6 +36,26 @@ declare -f detect_init | grep -q 'systui_detect_init'
 declare -f rootfs_wb_init_detect | grep -q 'systui_rootfs_init_detect'
 declare -f svc | grep -q 'SYSTUI_SERVICE_RUNTIME'
 
+# Final assembled menu graph: every user-visible top-level and System
+# Configuration target must exist after the complete feature manifest loads.
+for menu_fn in \
+    menu_health menu_ultimate_provision menu_rootfs menu_sysconfig menu_performance \
+    menu_sysconfig_basics menu_packages menu_shells menu_editors menu_file_managers \
+    menu_network menu_services menu_users menu_storage; do
+    declare -F "$menu_fn" >/dev/null || {
+        printf 'final menu target missing: %s\n' "$menu_fn" >&2
+        exit 1
+    }
+done
+declare -F systui_menu_dispatch >/dev/null
+
+# Stateful init refresh must execute in the caller shell, not through command
+# substitution that discards SYSTUI_INIT_STATE_DIRTY and detected state.
+! declare -f menu_services | grep -Fq 'current=$(systui_init_current)'
+! declare -f menu_init_manager | grep -Fq 'current=$(systui_init_current)'
+! declare -f systui_init_provider_admin_menu | grep -Fq 'current=$(systui_init_current)'
+
+
 # Unsafe service tokens must be rejected before any backend command runs.
 svc start 'sshd;touch /tmp/pwned' >/dev/null 2>&1 && { echo 'unsafe service name accepted' >&2; exit 1; }
 svc bogus sshd >/dev/null 2>&1 && { echo 'unsafe service action accepted' >&2; exit 1; }
