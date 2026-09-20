@@ -3,12 +3,16 @@
 # Keep capabilities intact while reducing duplicate top-level entry points.
 
 menu_sysconfig_basics() {
-    local c
+    local c host tz
     while true; do
+        host="${HOSTNAME:-unknown}"
+        [ ! -r /etc/hostname ] || read -r host < /etc/hostname || true
+        tz=unknown
+        [ ! -r /etc/timezone ] || read -r tz < /etc/timezone || true
         c=$(tui_menu_no_tags "System basics" \
             "Core host settings that do not belong to a dedicated section:" \
-            hostname "Set hostname ($(hostname 2>/dev/null || echo unknown))" \
-            timezone "Set timezone ($(cat /etc/timezone 2>/dev/null || echo unknown))" \
+            hostname "Set hostname ($host)" \
+            timezone "Set timezone ($tz)" \
             scan     "Run full system scan" \
             back     "Back") || return 0
         case "$c" in
