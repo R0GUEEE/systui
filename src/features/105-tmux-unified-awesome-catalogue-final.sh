@@ -226,7 +226,8 @@ systui_tmux_catalog_tpm_menu() {
                 "$tpm/bin/update_plugins" all || true
                 ;;
             clean)
-                local tpm\n                tpm="$(systui_tmux_plugin_dir)/tpm"
+                local tpm
+                tpm="$(systui_tmux_plugin_dir)/tpm"
                 [ -x "$tpm/bin/clean_plugins" ] || systui_tmux_tpm_install || continue
                 "$tpm/bin/clean_plugins" || true
                 ;;
