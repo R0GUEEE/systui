@@ -110,8 +110,8 @@ menu_packages() {
 systui_catalogue_categories_menu() {
     local c cat
     local -a opts=()
-    declare -F systui_catalogue_registry_ensure >/dev/null 2>&1 \
-        && systui_catalogue_registry_ensure >/dev/null 2>&1 || true
+    declare -F systui_catalogue_ensure_registry >/dev/null 2>&1 \
+        && systui_catalogue_ensure_registry >/dev/null 2>&1 || true
     for cat in ${CAT_ORDER:-}; do
         opts+=("$cat" "$(cat_title "$cat")")
     done
@@ -151,8 +151,8 @@ systui_catalogue_manage_menu() {
 # Categories and Manage submenus.
 pkg_catalogue() {
     local detected c
-    declare -F systui_catalogue_registry_ensure >/dev/null 2>&1 \
-        && systui_catalogue_registry_ensure >/dev/null 2>&1 || true
+    declare -F systui_catalogue_ensure_registry >/dev/null 2>&1 \
+        && systui_catalogue_ensure_registry >/dev/null 2>&1 || true
     if declare -F systui_catalogue_pm >/dev/null 2>&1; then
         detected=$(systui_catalogue_pm 2>/dev/null || printf unknown)
         PM="$detected"; export PM
