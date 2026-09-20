@@ -235,12 +235,15 @@ fi
 
 menu_package_managers() {
     local c
-    if ! systui_zypper_available && [ "${PM:-}" != zypper ]; then
-        _systui_package_managers_before_zypper_full "$@"
-        return $?
+    local -a opts=(existing "Native/language package managers")
+    if systui_zypper_available || [ "${PM:-}" = zypper ]; then
+        opts=(zypper "Zypper — full openSUSE/SUSE package management" "${opts[@]}")
     fi
+    opts+=(back "Back")
     while true; do
-        tui_capture_menu c tui_menu_no_tags "Package Managers"             "Configure package-manager ecosystems and native Zypper administration:"             zypper "Zypper — full openSUSE/SUSE package management"             existing "Other native/language package managers"             back "Back" || return $?
+        tui_capture_menu c tui_menu_no_tags "Package Managers" \
+            "Configure package-manager ecosystems and native tools:" \
+            "${opts[@]}" || return $?
         case "$c" in
             zypper) menu_zypper_manager ;;
             existing) _systui_package_managers_before_zypper_full ;;

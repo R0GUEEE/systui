@@ -5,9 +5,11 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 ORDER="$ROOT/src/features/.load-order"
 CONSOLIDATED="$ROOT/src/features/96-menu-consolidation-final.sh"
 RUNTIME="$ROOT/src/features/92-runtime-menu-cleanup.sh"
+ZYPFINAL="$ROOT/src/features/110-zypper-full-package-functionality-final.sh"
 
 bash -n "$CONSOLIDATED"
 bash -n "$RUNTIME"
+bash -n "$ZYPFINAL"
 
 # The old phase-86 wrapper is obsolete: final menu consolidation owns the
 # Package Configuration front door, while runtime cleanup owns Bedrock package
@@ -17,7 +19,9 @@ bash -n "$RUNTIME"
 grep -Fq 'menu_packages()' "$CONSOLIDATED"
 grep -Fq 'menu_package_managers()' "$CONSOLIDATED"
 grep -Fq 'bedrock "Bedrock strata package managers"' "$CONSOLIDATED"
-grep -Fq 'managers   "Package managers"' "$CONSOLIDATED"
+grep -Fq 'bedrock_systui_package_managers_menu()' "$RUNTIME"
+grep -Fq '_systui_package_managers_before_zypper_full' "$ZYPFINAL"
+! grep -Fq 'if ! systui_zypper_available && [ "${PM:-}" != zypper ]; then' "$ZYPFINAL"
 
 grep -Fq 'packages  "Install, remove, search and update packages"' "$CONSOLIDATED"
 grep -Fq 'catalogue "Software catalogue"' "$CONSOLIDATED"
