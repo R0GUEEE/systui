@@ -249,6 +249,9 @@ menu_package_managers() {
     done
 }
 
-export -f systui_zypper_available systui_zypper_require systui_zypper_show     systui_zypper_refresh systui_zypper_update systui_zypper_dist_upgrade     systui_zypper_install systui_zypper_remove systui_zypper_reinstall     systui_zypper_search systui_zypper_info systui_zypper_list_installed     systui_zypper_list_updates systui_zypper_verify systui_zypper_clean     systui_zypper_patches systui_zypper_patch_install systui_zypper_patterns     systui_zypper_locks_menu systui_zypper_repositories_menu menu_zypper_manager     menu_package_managers
+
+# These functions are used by the menus in this shell only. Feature files are
+# sourced into one Bash process, and modern core/rootfs/sysconfig modules must
+# not export functions (iSH ARG_MAX limits and the loader export scrubber).
 
 return 0 2>/dev/null || true
