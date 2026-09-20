@@ -8236,8 +8236,11 @@ perf_dns_cache() {
 
 # ---- 2.8 Performance -------------------------------------------------------
 menu_performance() {
+    local c irq_state tlp_state
     while true; do
-        local c
+        irq_state=""; tlp_state=""
+        command -v irqbalance >/dev/null 2>&1 && irq_state="[installed]"
+        command -v tlp >/dev/null 2>&1 && tlp_state="[installed]"
         c=$(tui_menu "Performance (advanced)" "Tuning options:" \
             ishaok     "iSH-AOK compatibility and low-overhead tuning" \
             cpu        "CPU tuning (SMT, turbo, watchdog, mitigations)" \
@@ -8254,8 +8257,8 @@ menu_performance() {
             iosched    "Set I/O scheduler for a disk" \
             thp        "Transparent Hugepages mode" \
             limits     "Raise open-file limits (nofile)" \
-            irqbalance "irqbalance (multi-core IRQ spread) $(st irqbalance)" \
-            tlp        "TLP laptop power management $(st tlp)" \
+            irqbalance "irqbalance (multi-core IRQ spread) $irq_state" \
+            tlp        "TLP laptop power management $tlp_state" \
             journald   "Cap systemd-journald disk usage" \
             trim       "Enable periodic SSD TRIM" \
             sysctl     "Apply common network/VM sysctl tweaks" \
