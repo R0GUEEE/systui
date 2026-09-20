@@ -22,17 +22,14 @@ zzzzzzzzzzzz-package-install-recovery.sh
 zzzzzzzzzzzzz-package-manager-multiselect.sh
 zzzzzzzzzzzzzz-multi-install-optimizer.sh
 zzzzzzzzzzzzzzz-rootfs-build-autoconfig.sh
-zzzzzzzzzzzzzzzz-awesome-linux-catalog-integration.sh
 zzzzzzzzzzzzzzzzz-rootfs-delete-no-confirm.sh
 zzzzzzzzzzzzzzzzzz-rootfs-unshare-probe.sh
 zzzzzzzzzzzzzzzzzzzz-apt-sources-unified-editor.sh
 zzzzzzzzzzzzzzzzzzzzz-mmdebstrap-no-unshare.sh
 zzzzzzzzzzzzzzzzzzzzzz-rootfs-no-namespace-backends.sh
-zzzzzzzzzzzzzzzzzzzzzz-sysconfig-menu.sh
 zzzzzzzzzzzzzzzzzzzzzzz-rootfs-download.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-rootfs-web-catalogue.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-extra-web-images.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-source-hub.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-oci-sources.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-download-location-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
@@ -62,7 +59,6 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-audit-polish.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-audit-feature-restore.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-omb-nonblocking.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-init-login.sh
-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-manage-integration.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ish-argmax-pre-runtime.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-shell-runtime-command.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-sysconfig-function-export-cleanup.sh
@@ -96,7 +92,6 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-platform-final.s
 83-bedrock-oci-fallback-sources.sh
 84-bedrock-nixos-direct-source.sh
 85-bedrock-full-strata-integration.sh
-86-bedrock-packages-native-nesting.sh
 87-bedrock-native-pm-status.sh
 88-bedrock-global-install-targets.sh
 89-bedrock-pm-install-routing.sh

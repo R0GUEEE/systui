@@ -2,34 +2,42 @@
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-F="$ROOT/src/features/86-bedrock-packages-native-nesting.sh"
 ORDER="$ROOT/src/features/.load-order"
+CONSOLIDATED="$ROOT/src/features/96-menu-consolidation-final.sh"
+RUNTIME="$ROOT/src/features/92-runtime-menu-cleanup.sh"
 
-bash -n "$F"
+bash -n "$CONSOLIDATED"
+bash -n "$RUNTIME"
 
-grep -Fq 'bedrock_systui_package_managers_menu()' "$F"
-grep -Fq 'tui_menu_no_tags "Package Configuration' "$F"
-grep -Fq 'bedrock "Bedrock strata package managers"' "$F"
-grep -Fq 'managers   "Package managers (native, Flatpak, Snap, language)"' "$F"
+# The old phase-86 wrapper is obsolete: final menu consolidation owns the
+# Package Configuration front door, while runtime cleanup owns Bedrock package
+# manager details.
+! grep -Fqx '86-bedrock-packages-native-nesting.sh' "$ORDER"
 
-# Native package sections must remain at the Package Configuration front door.
-grep -Fq 'packages  "Install, remove, search and update packages"' "$F"
-grep -Fq 'catalogue "Browse the application catalogue"' "$F"
-grep -Fq 'repos      "Repositories and keys"' "$F"
-grep -Fq 'managers   "Package managers (native, Flatpak, Snap, language)"' "$F"
-grep -Fq 'tags+=(advanced "Advanced package management" back "Back")' "$F"
+grep -Fq 'menu_packages()' "$CONSOLIDATED"
+grep -Fq 'menu_package_managers()' "$CONSOLIDATED"
+grep -Fq 'bedrock "Bedrock strata package managers"' "$CONSOLIDATED"
+grep -Fq 'managers   "Package managers"' "$CONSOLIDATED"
 
-# The old Bedrock-centric front-door title must not be reintroduced here.
-if grep -Fq 'Packages — host + Bedrock' "$F"; then
-    echo "phase 86 must not use the Bedrock-centric package front door" >&2
+grep -Fq 'packages  "Install, remove, search and update packages"' "$CONSOLIDATED"
+grep -Fq 'catalogue "Software catalogue"' "$CONSOLIDATED"
+grep -Fq 'repos      "Repositories and signing keys"' "$CONSOLIDATED"
+grep -Fq 'advanced   "Advanced package maintenance"' "$CONSOLIDATED"
+
+grep -Fq 'bedrock_systui_package_managers_menu()' "$RUNTIME"
+
+packages_body=$(awk '/^menu_packages\(\)/,/^}/' "$CONSOLIDATED")
+if grep -Fq 'Packages — host + Bedrock' <<<"$packages_body"; then
+    echo "Package front door must not be Bedrock-centric" >&2
+    exit 1
+fi
+if grep -Fq 'bedrock_systui_package_managers_menu' <<<"$packages_body"; then
+    echo "Bedrock managers should be nested below Package Managers" >&2
     exit 1
 fi
 
-# Phase 86 must override phase 85 before install guards/final exec layers.
-p85=$(grep -n '^85-bedrock-full-strata-integration.sh$' "$ORDER" | cut -d: -f1)
-p86=$(grep -n '^86-bedrock-packages-native-nesting.sh$' "$ORDER" | cut -d: -f1)
-p90=$(grep -n '^90-install-guard-final.sh$' "$ORDER" | cut -d: -f1)
-[ "$p85" -lt "$p86" ]
-[ "$p86" -lt "$p90" ]
+line92=$(grep -n '^92-runtime-menu-cleanup.sh$' "$ORDER" | cut -d: -f1)
+line96=$(grep -n '^96-menu-consolidation-final.sh$' "$ORDER" | cut -d: -f1)
+[ -n "$line92" ] && [ -n "$line96" ] && [ "$line92" -lt "$line96" ]
 
-echo "ok: Bedrock managers are nested under native Package Configuration"
+echo "ok: Bedrock managers are nested under final Package Configuration"
