@@ -95,7 +95,9 @@ pm_install() {
 # host-only vendor/source installer code and use the native stratum package
 # manager directly.
 systui_bedrock_rebind_install_wrappers() {
-    local fn saved canonical _decl _flag
+    local fn saved canonical _decl _flag _tmp
+    _tmp="${SYSTUI_TMP:-/tmp}/systui-bedrock-rebind-fns.$$"
+    declare -F > "$_tmp" 2>/dev/null || : > "$_tmp"
     while read -r _decl _flag fn; do
         case "$fn" in menu_*_install) ;; *) continue ;; esac
         case "$fn" in menu_bedrock_*|menu_rootfs_*|_*) continue ;; esac
@@ -103,7 +105,8 @@ systui_bedrock_rebind_install_wrappers() {
         declare -F "$saved" >/dev/null 2>&1 || continue
         canonical=${fn#menu_}; canonical=${canonical%_install}
         eval "$fn() { local _target; if ! systui_bedrock_install_active; then SYSTUI_INSTALL_TARGET=host $saved \"\$@\"; return; fi; _target=\$(systui_bedrock_install_target_menu '$canonical') || return 0; case \"\$_target\" in host|'') SYSTUI_INSTALL_TARGET=host $saved \"\$@\" ;; stratum:*) systui_bedrock_install_canonical \"\${_target#stratum:}\" '$canonical' ;; esac; }"
-    done < <(declare -F)
+    done < "$_tmp"
+    rm -f -- "$_tmp" 2>/dev/null || true
 }
 systui_bedrock_rebind_install_wrappers
 

@@ -202,10 +202,13 @@ systui_bedrock_wrap_install_menu() { # <function>
     eval "$fn() { local _target; if ! systui_bedrock_install_active; then $saved \"\$@\"; return; fi; _target=\$(systui_bedrock_install_target_menu '$canonical') || return 0; case \"\$_target\" in host|'') $saved \"\$@\" ;; stratum:*) systui_bedrock_install_canonical \"\${_target#stratum:}\" '$canonical' ;; esac; }"
 }
 
+_systui_bedrock_fn_tmp="${SYSTUI_TMP:-/tmp}/systui-bedrock-install-fns.$$"
+declare -F > "$_systui_bedrock_fn_tmp" 2>/dev/null || : > "$_systui_bedrock_fn_tmp"
 while read -r _ _flag _systui_install_fn; do
     case "$_systui_install_fn" in menu_*_install) systui_bedrock_wrap_install_menu "$_systui_install_fn" ;; esac
-done < <(declare -F)
-unset _flag _systui_install_fn
+done < "$_systui_bedrock_fn_tmp"
+rm -f -- "$_systui_bedrock_fn_tmp" 2>/dev/null || true
+unset _flag _systui_install_fn _systui_bedrock_fn_tmp
 
 if declare -F sysconfig_pm_multi_install >/dev/null 2>&1 \
     && ! declare -F _systui_bedrock_target_original_sysconfig_pm_multi_install >/dev/null 2>&1; then
