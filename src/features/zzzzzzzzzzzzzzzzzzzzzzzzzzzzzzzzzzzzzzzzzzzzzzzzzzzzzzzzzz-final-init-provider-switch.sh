@@ -6,7 +6,10 @@
 
 if declare -F sysconfig_install_init_provider >/dev/null 2>&1 \
     && ! declare -F _sysconfig_install_init_provider_before_final_switch >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_install_init_provider | sed '1s/^sysconfig_install_init_provider[[:space:]]*()/_sysconfig_install_init_provider_before_final_switch ()/')"
+    _systui_saved_fn=$(declare -f sysconfig_install_init_provider)
+    _systui_saved_fn=${_systui_saved_fn/#sysconfig_install_init_provider /_sysconfig_install_init_provider_before_final_switch }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 systui_final_debian_family() {
