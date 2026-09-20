@@ -3,18 +3,28 @@
 # ROOTFS RECOVERY — distinguish incomplete bootstrap from package repair
 ###############################################################################
 
+rootfs_deb_libc_present() { # <target>
+    local t="$1" p
+    # Readiness is about whether the bootstrap runtime physically exists, not
+    # whether dpkg has finished configuring libc6. A half-configured/unpacked
+    # libc6 is exactly the state that dpkg --configure -a is meant to repair.
+    for p in \
+        "$t"/lib/*-linux-gnu/libc.so.6 \
+        "$t"/usr/lib/*-linux-gnu/libc.so.6 \
+        "$t"/lib/libc.so.6 \
+        "$t"/usr/lib/libc.so.6; do
+        [ -e "$p" ] || [ -L "$p" ] || continue
+        return 0
+    done
+    return 1
+}
+
 rootfs_deb_base_incomplete() { # <target>
     local t="$1"
-    [ -x "$t/bin/sh" ] || return 0
+    [ -x "$t/bin/sh" ] || [ -x "$t/usr/bin/sh" ] || return 0
     [ -x "$t/usr/bin/dpkg" ] || [ -x "$t/bin/dpkg" ] || return 0
     [ -x "$t/usr/bin/apt-get" ] || [ -x "$t/bin/apt-get" ] || return 0
-    if [ -r "$t/var/lib/dpkg/status" ]; then
-        awk 'BEGIN{RS=""; ok=0}
-             $0 ~ /(^|\n)Package: libc6(:[^\n]+)?(\n|$)/ && $0 ~ /(^|\n)Status: install ok installed(\n|$)/ {ok=1}
-             END{exit ok?0:1}' "$t/var/lib/dpkg/status" 2>/dev/null || return 0
-    else
-        return 0
-    fi
+    rootfs_deb_libc_present "$t" || return 0
     return 1
 }
 
@@ -208,4 +218,4 @@ rootfs_continue_generation() { # <target>
     tui_msg "Recovery complete" "Generation recovery finished for:\n$t\n\nReview the log for any package-specific warnings: $LOGFILE"
 }
 
-export -f rootfs_deb_base_incomplete rootfs_recover_mmdebstrap_prepare rootfs_recover_deb_base rootfs_continue_generation
+export -f rootfs_deb_libc_present rootfs_deb_base_incomplete rootfs_recover_mmdebstrap_prepare rootfs_recover_deb_base rootfs_continue_generation
