@@ -25,7 +25,10 @@ systui_bedrock_cross_pkg_alias() { # <target-pm> <package>
 
 if declare -F systui_bedrock_pm_install_raw >/dev/null 2>&1 \
     && ! declare -F _systui_bedrock_pm_install_raw_before_alias_cleanup >/dev/null 2>&1; then
-    eval "$(declare -f systui_bedrock_pm_install_raw | sed '1s/^systui_bedrock_pm_install_raw[[:space:]]*()/_systui_bedrock_pm_install_raw_before_alias_cleanup ()/')"
+    _systui_saved_fn=$(declare -f systui_bedrock_pm_install_raw)
+    _systui_saved_fn=${_systui_saved_fn/#systui_bedrock_pm_install_raw /_systui_bedrock_pm_install_raw_before_alias_cleanup }
+    eval "$_systui_saved_fn"
+    unset _systui_saved_fn
 fi
 
 systui_bedrock_pm_install_raw() { # <stratum> <packages...>
