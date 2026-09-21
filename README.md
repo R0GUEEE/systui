@@ -708,6 +708,25 @@ SYSTUI_SCRUB_INTERVAL=1 tools/feature-profile.sh   # compare configurations
 
 `tests/test-startup-performance.sh` guards these optimizations.
 
+## How packages are installed by default
+
+Package installs — single, batch and catalogue — use the **distribution's own
+package manager** (`apt`, `apk`, `pacman`, `dnf`/`yum`, `zypper`, `xbps`,
+`emerge`) and do not interrupt with a source chooser. The native manager is
+re-detected whenever `$PM` is empty or was temporarily overridden, so it is
+always present in any list of managers.
+
+Other ecosystems are one action away rather than in the way:
+
+* **Packages → Package operations → Install packages** opens the manager picker,
+  with the native manager listed first and named (`Native system package manager
+  (apk)`).
+* `SYSTUI_PM_OPTION_PROMPT=1` forces the chooser for a run.
+* Bootstrap and repository-recovery paths try the native route first and only
+  offer the alternates when it cannot provide the package.
+* `SYSTUI_PM_AUTO_<TAG>` / `SYSTUI_INSTALL_MANAGER=<manager>` still script a
+  specific manager.
+
 ## Expanded package-manager configuration
 
 System Configuration > Packages > Managers now provides configuration and maintenance hubs for APT, apt-fast, Nala, aptitude, pacman, yay, paru, DNF, YUM, zypper, apk, XBPS, Portage, Flatpak, Snap, Nix, Homebrew, pip, pipx, npm, pnpm, Yarn, Cargo, RubyGems, Composer, and Go tools.

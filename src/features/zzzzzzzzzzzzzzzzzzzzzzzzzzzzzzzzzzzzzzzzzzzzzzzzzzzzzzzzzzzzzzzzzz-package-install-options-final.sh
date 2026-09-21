@@ -19,10 +19,40 @@ systui_mgr_quote_words() { # args...
     printf '%s' "$out"
 }
 
+# The distribution's own package manager. Some callers blank or temporarily
+# override $PM (submenus that switch manager context), which used to remove the
+# native entry from the chooser entirely and leave only Custom/Skip. Re-detect,
+# then probe the binaries, before concluding there is no native manager.
+systui_native_manager() {
+    local pm="${PM:-}" probe
+    case "$pm" in
+        apt|apk|pacman|dnf|yum|zypper|xbps|emerge) printf '%s\n' "$pm"; return 0 ;;
+    esac
+    if declare -F systui_detect_pm >/dev/null 2>&1; then
+        systui_detect_pm >/dev/null 2>&1 || true
+    elif declare -F detect_pm >/dev/null 2>&1; then
+        detect_pm >/dev/null 2>&1 || true
+    fi
+    pm="${PM:-}"
+    case "$pm" in
+        apt|apk|pacman|dnf|yum|zypper|xbps|emerge) printf '%s\n' "$pm"; return 0 ;;
+    esac
+    for probe in apt-get apk pacman dnf yum zypper xbps-install emerge; do
+        command -v "$probe" >/dev/null 2>&1 || continue
+        case "$probe" in
+            apt-get) probe=apt ;;
+            xbps-install) probe=xbps ;;
+        esac
+        printf '%s\n' "$probe"
+        return 0
+    done
+    return 1
+}
+
 systui_installed_install_managers() {
-    local have_native=0
-    case "${PM:-}" in apt|apk|pacman|dnf|yum|zypper|xbps|emerge) have_native=1 ;; esac
-    [ "$have_native" -eq 1 ] && printf 'native|Native system package manager (%s)\n' "${PM:-unknown}"
+    local native
+    native=$(systui_native_manager 2>/dev/null || true)
+    [ -n "$native" ] && printf 'native|Native system package manager (%s)\n' "$native"
     command -v brew >/dev/null 2>&1 && printf 'brew|Homebrew (brew install)\n'
     command -v nix >/dev/null 2>&1 && printf 'nix|Nix profile (nix profile install nixpkgs#...)\n'
     command -v snap >/dev/null 2>&1 && printf 'snap|Snap packages (snap install)\n'
@@ -51,6 +81,10 @@ systui_install_with_manager() { # <manager> <packages...>
     words=$(systui_mgr_quote_words "$@")
     case "$mgr" in
         native)
+            # Keep $PM usable even when the chooser had to re-detect it.
+            local _native_pm
+            _native_pm=$(systui_native_manager 2>/dev/null || true)
+            [ -n "$_native_pm" ] && PM="$_native_pm"
             SYSTUI_PM_OPTIONS_BYPASS=1 _systui_pm_install_before_universal_options "$@" ;;
         brew)
             run_cmd "brew install $*" brew install --formula -- "$@" ;;
@@ -142,6 +176,15 @@ systui_choose_install_manager() { # <context> <packages...>
     printf '%s\n' "$choice"
 }
 
+# Explicit "install with another package manager" action: the chooser is only
+# shown when the user asks for it.
+systui_pm_install_with_choice() { # <packages...>
+    local mgr
+    [ "$#" -gt 0 ] || return 1
+    mgr=$(SYSTUI_PM_OPTION_PROMPT=1 systui_choose_install_manager "choose a package manager" "$@") || return 1
+    systui_install_with_manager "$mgr" "$@"
+}
+
 # Preserve whichever pm_install implementation all earlier recovery/Bedrock
 # layers produced, then make this the final entrypoint.
 if declare -F pm_install >/dev/null 2>&1 \
@@ -154,7 +197,17 @@ fi
 
 pm_install() {
     validate_packages "$@" || return 1
-    if [ "${SYSTUI_PM_OPTIONS_BYPASS:-0}" = 1 ] || [ "${SYSTUI_PM_OPTION_PROMPT:-1}" = 0 ]; then
+    if [ "${SYSTUI_PM_OPTIONS_BYPASS:-0}" = 1 ]; then
+        _systui_pm_install_before_universal_options "$@"
+        return
+    fi
+
+    # Default behaviour: install with the distribution's own package manager
+    # (apt, apk, pacman, dnf/yum, zypper, xbps, emerge) and do not interrupt,
+    # including for batch installs. The alternative managers stay available
+    # through the bootstrap fallback below, the explicit "install with another
+    # package manager" action, and SYSTUI_PM_OPTION_PROMPT=1.
+    if [ "${SYSTUI_PM_FALLBACK_MANAGERS:-0}" != 1 ] && [ "${SYSTUI_PM_OPTION_PROMPT:-0}" != 1 ]; then
         _systui_pm_install_before_universal_options "$@"
         return
     fi

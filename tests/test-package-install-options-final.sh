@@ -58,7 +58,7 @@ check "explicit brew manager routes install" bash -c '
     run_cmd(){ shift; "$@"; }
     tui_menu(){ return 1; }
     pm_install(){ return 99; }
-    export SYSTUI_TMP="$1" PATH="$3:$PATH" SYSTUI_INSTALL_MANAGER=brew
+    export SYSTUI_TMP="$1" PATH="$3:$PATH" SYSTUI_INSTALL_MANAGER=brew SYSTUI_PM_OPTION_PROMPT=1
     source "$2"
     pm_install jq
     grep -Fxq "install --formula -- jq" "$1/brew.args"
@@ -74,6 +74,86 @@ check "fallback mode tries native before alternate manager" bash -c '
     grep -Fxq "missing-tool" "$1/native-fallback.args"
     grep -Fxq "install --formula -- missing-tool" "$1/brew.args"
 ' _ "$tmp" "$FILE" "$tmp"
+
+# --- distribution manager is the default, the chooser is opt-in ---------------
+check "native manager is offered even when PM was blanked" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ return 0; }
+    tui_menu(){ return 1; }
+    pm_install(){ return 0; }
+    export SYSTUI_TMP="$1"
+    source "$2"
+    PM=""
+    systui_installed_install_managers | grep -q "^native|"' _ "$tmp" "$FILE"
+
+check "the native entry names the detected manager" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ return 0; }
+    tui_menu(){ return 1; }
+    pm_install(){ return 0; }
+    export SYSTUI_TMP="$1"
+    source "$2"
+    PM=""
+    systui_native_manager | grep -qE "^(apt|apk|pacman|dnf|yum|zypper|xbps|emerge)$"' _ "$tmp" "$FILE"
+
+check "plain installs use the distribution manager without prompting" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ return 0; }
+    tui_menu(){ printf "prompted\n" >> "$SYSTUI_TMP/prompts"; return 1; }
+    pm_install(){ return 0; }
+    export SYSTUI_TMP="$1"
+    : > "$SYSTUI_TMP/prompts"
+    source "$2"
+    _systui_pm_install_before_universal_options(){ printf "native:%s\n" "$*" >> "$SYSTUI_TMP/native"; return 0; }
+    pm_install alpha beta
+    grep -q "^native:alpha beta$" "$SYSTUI_TMP/native"
+    [ ! -s "$SYSTUI_TMP/prompts" ]' _ "$tmp" "$FILE"
+
+check "explicit prompt mode still offers the choice" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ return 0; }
+    tui_menu(){ printf "prompted\n" >> "$SYSTUI_TMP/prompts"; return 1; }
+    pm_install(){ return 0; }
+    export SYSTUI_TMP="$1"
+    : > "$SYSTUI_TMP/prompts"
+    source "$2"
+    SYSTUI_PM_OPTION_PROMPT=1 pm_install alpha >/dev/null 2>&1 || true
+    [ -s "$SYSTUI_TMP/prompts" ]' _ "$tmp" "$FILE"
+
+check "bootstrap fallback offers alternatives only after the native failure" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ return 0; }
+    tui_menu(){ printf "prompted\n" >> "$SYSTUI_TMP/prompts"; return 1; }
+    pm_install(){ return 0; }
+    export SYSTUI_TMP="$1"
+    source "$2"
+    : > "$SYSTUI_TMP/prompts"
+    _systui_pm_install_before_universal_options(){ return 0; }
+    SYSTUI_PM_FALLBACK_MANAGERS=1 pm_install alpha >/dev/null 2>&1 || true
+    [ ! -s "$SYSTUI_TMP/prompts" ]' _ "$tmp" "$FILE"
+
+check "bootstrap fallback prompts when the native route fails" bash -c '
+    validate_packages(){ return 0; }
+    run_cmd(){ return 0; }
+    tui_menu(){ printf "prompted\n" >> "$SYSTUI_TMP/prompts"; return 1; }
+    pm_install(){ return 0; }
+    export SYSTUI_TMP="$1"
+    source "$2"
+    : > "$SYSTUI_TMP/prompts"
+    _systui_pm_install_before_universal_options(){ return 1; }
+    SYSTUI_PM_FALLBACK_MANAGERS=1 pm_install alpha >/dev/null 2>&1 || true
+    [ -s "$SYSTUI_TMP/prompts" ]' _ "$tmp" "$FILE"
+
+check "documented default is the distribution manager" bash -c '
+    grep -q "distribution.s own package manager" "$1"' _ "$FILE"
+
+UNIFIED="$ROOT/src/features/101-unified-package-installation-final.sh"
+check "the unified picker resolves the native manager through the shared helper" bash -c '
+    body=$(awk "/^systui_package_manager_command\(\)/,/^}/" "$1")
+    grep -q "systui_native_manager" <<<"$body"' _ "$UNIFIED"
+check "the unified picker hides an unknown native entry" bash -c '
+    body=$(awk "/^systui_package_manager_available\(\)/,/^}/" "$1")
+    grep -q "native" <<<"$body" && grep -q "unknown" <<<"$body"' _ "$UNIFIED"
 
 printf '\nUniversal install options: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

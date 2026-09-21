@@ -15,7 +15,15 @@ systui_package_manager_registry() {
 
 systui_package_manager_command() {
     case "$1" in
-        native) printf '%s\n' "${PM:-unknown}" ;;
+        # Use the shared detection so the native entry survives callers that
+        # blank or temporarily override $PM.
+        native)
+            if declare -F systui_native_manager >/dev/null 2>&1; then
+                systui_native_manager
+            else
+                printf '%s\n' "${PM:-unknown}"
+            fi
+            ;;
         apt) printf 'apt-get\n' ;; apt-fast) printf 'apt-fast\n' ;; nala) printf 'nala\n' ;; aptitude) printf 'aptitude\n' ;;
         apk) printf 'apk\n' ;; pacman) printf 'pacman\n' ;; dnf) printf 'dnf\n' ;; yum) printf 'yum\n' ;; zypper) printf 'zypper\n' ;; xbps) printf 'xbps-install\n' ;; emerge) printf 'emerge\n' ;;
         flatpak) printf 'flatpak\n' ;; snap) printf 'snap\n' ;; pip) command -v pip3 >/dev/null 2>&1 && printf 'pip3\n' || printf 'pip\n' ;;
@@ -27,9 +35,16 @@ systui_package_manager_command() {
 
 systui_package_manager_available() {
     local tag="$1" cmd
-    [ "$tag" = native ] && [ "${PM:-unknown}" != unknown ] && return 0
+    if [ "$tag" = native ]; then
+        if declare -F systui_native_manager >/dev/null 2>&1; then
+            [ -n "$(systui_native_manager 2>/dev/null || true)" ] && return 0
+        else
+            [ -n "${PM:-}" ] && [ "${PM:-unknown}" != unknown ] && return 0
+        fi
+        return 1
+    fi
     cmd=$(systui_package_manager_command "$tag" 2>/dev/null || true)
-    [ -n "$cmd" ] && command -v "$cmd" >/dev/null 2>&1
+    [ -n "$cmd" ] && [ "$cmd" != unknown ] && command -v "$cmd" >/dev/null 2>&1
 }
 
 systui_package_install_with() { # <manager> <packages...>
@@ -103,6 +118,11 @@ systui_package_manager_picker() {
         [ -n "$tag" ] || continue
         if systui_package_manager_available "$tag"; then
             cmd=$(systui_package_manager_command "$tag" 2>/dev/null || true)
+            if [ "$tag" = native ] && [ -n "$cmd" ] && [ "$cmd" != unknown ]; then
+                # Name the distribution manager so the default choice is obvious.
+                opts+=("native" "$label ($cmd)")
+                continue
+            fi
             state=${cmd:-available}
             opts+=("$tag" "$label [$state]")
         fi
