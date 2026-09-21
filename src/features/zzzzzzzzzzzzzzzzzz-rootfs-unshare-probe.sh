@@ -9,6 +9,7 @@
 # without core/common.sh (tests, reduced builds).
 if ! declare -F systui_alias_function >/dev/null 2>&1; then
     _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    # shellcheck disable=SC1090
     [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
     unset _systui_alias_mod
 fi

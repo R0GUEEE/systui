@@ -574,7 +574,10 @@ main() {
         case "$1" in
             --deps-only) deps_only=1 ;;
             --dry-run) SYSTUI_DEPS_DRY_RUN=1 ;;
-            --minimal) SYSTUI_MINIMAL_DEPS=1 ;;
+            # Exported, not merely assigned: the flag is accepted for
+            # compatibility with callers that pass it through (core is the
+            # default dependency tier), so it is part of the environment.
+            --minimal) export SYSTUI_MINIMAL_DEPS=1 ;;
             --no-deps) SYSTUI_SKIP_DEPS=1 ;;
             -h|--help) usage; return 0 ;;
             *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; return 2 ;;
