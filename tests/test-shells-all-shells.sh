@@ -344,8 +344,10 @@ check "the shell list contains every registry shell and no more-entry" bash -c '
     case "$body" in *"more "*) echo "a more-shells entry is still there"; rc=1 ;; esac
     # tmux/runtime/login/initmgr/advanced live on the Shell Managers front door,
     # not in the shell list
-    for extra in tmux runtime login initmgr advanced; do
-        case "$body" in *"$extra "*) echo "$extra should not be in the shell list"; rc=1 ;; esac
+    # Match the old front-door tags/descriptions, not the words "login" or
+    # "advanced" that may legitimately occur inside a shell status description.
+    for extra in         "tmux tmux — install/update"         "runtime Shell runtime configuration"         "login Login shells"         "initmgr Init & services manager"         "advanced Advanced shell settings"; do
+        case "$body" in *"$extra"*) echo "$extra should not be in the shell list"; rc=1 ;; esac
     done
     case "$body" in *"back Back"*) : ;; *) echo "no back entry"; rc=1 ;; esac
     rm -f "$capture"
