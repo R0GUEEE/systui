@@ -342,8 +342,12 @@ check "the shell list contains every registry shell and no more-entry" bash -c '
         case "$body" in *"$id "*) : ;; *) echo "shell not in the list: $id"; rc=1 ;; esac
     done
     case "$body" in *"more "*) echo "a more-shells entry is still there"; rc=1 ;; esac
-    case "$body" in *"tmux "*) : ;; *) echo "tmux entry lost"; rc=1 ;; esac
-    case "$body" in *"advanced "*) : ;; *) echo "advanced entry lost"; rc=1 ;; esac
+    # tmux/runtime/login/initmgr/advanced live on the Shell Managers front door,
+    # not in the shell list
+    for extra in tmux runtime login initmgr advanced; do
+        case "$body" in *"$extra "*) echo "$extra should not be in the shell list"; rc=1 ;; esac
+    done
+    case "$body" in *"back Back"*) : ;; *) echo "no back entry"; rc=1 ;; esac
     rm -f "$capture"
     exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
 
@@ -479,6 +483,132 @@ check "shell menus pass tag/description pairs to tui_menu" bash -c '
     menu_plugin_all_shells "$(id -un)" "$home" >/dev/null 2>&1 || true
     if [ -s "$arity_log" ]; then cat "$arity_log"; exit 1; fi' _ \
     "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
+# --- GitHub plugin/framework catalogue -------------------------------------
+check "the catalogue sources are well-formed and cover every shell" bash -c '
+    . "$1"; . "$2"
+    rc=0
+    while IFS="|" read -r key label repo branch file; do
+        [ -n "$key" ] || continue
+        case "$repo" in */*) : ;; *) echo "bad repo: $repo"; rc=1 ;; esac
+        [ -n "$branch" ] || { echo "no branch for $key"; rc=1; }
+        [ -n "$file" ]   || { echo "no index file for $key"; rc=1; }
+        [ -n "$label" ]  || { echo "no label for $key"; rc=1; }
+    done <<< "$(shell_plugin_sources)"
+    # every shell in the registry must have its own source or fall back to general
+    for id in $(systui_shell_ids); do
+        labels=$(shell_plugin_labels "$id")
+        case "$labels" in *general*) : ;; *) echo "$id has no catalogue source"; rc=1 ;; esac
+    done
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "each shell gets its own source plus the general one" bash -c '
+    . "$1"; . "$2"
+    out=$(shell_plugin_labels bash)
+    rc=0; n=0
+    while IFS= read -r l; do
+        n=$((n + 1))
+        case "$n:$l" in
+            1:bash\|*) : ;;
+            2:general\|*) : ;;
+            *) echo "unexpected source line $n: $l"; rc=1 ;;
+        esac
+    done <<< "$out"
+    [ "$n" = 2 ] || { echo "expected 2 sources for bash, got $n"; rc=1; }
+    # no duplicates when the shell *is* the general source
+    n=$(shell_plugin_labels general | wc -l)
+    [ "$n" = 1 ] || { echo "general listed $n times"; exit 1; }' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "the index URL and cache paths are built correctly" bash -c '
+    . "$1"; . "$2"
+    [ "$(shell_plugin_index_url unixorn/awesome-zsh-plugins main README.md)" = \
+      "https://raw.githubusercontent.com/unixorn/awesome-zsh-plugins/main/README.md" ] || exit 1
+    case "$(shell_plugin_tsv_file zsh)" in */zsh.tsv) : ;; *) exit 1 ;; esac
+    case "$(shell_plugin_raw_file zsh)" in */zsh.md) : ;; *) exit 1 ;; esac' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "the markdown parser handles bullets, tables and junk" bash -c '
+    . "$1"; . "$2"
+    raw="$3/readme.md"
+    tsv="$3/readme.tsv"
+    cat > "$raw" <<'"'"'MD'"'"'
+# Awesome Test
+## Contents
+- [Frameworks](#frameworks)
+## Frameworks
+- [oh-my-test](https://github.com/owner/oh-my-test) - A framework for testing
+* [colon-style](https://github.com/owner/colon-style): with a colon separator
+## Plugins
+- [tableplug](https://github.com/owner/tableplug) | Table style row
+| [nested](https://github.com/owner/nested/blob/main/init.sh) | Deep link shape |
+- [not-github](https://gitlab.com/owner/thing) - ignored
+- [dupe](https://github.com/owner/oh-my-test) - duplicate repo
+## License
+- [legal](https://github.com/owner/legal) - must be skipped
+MD
+    shell_plugin_parse "$raw" "$tsv"
+    body=$(<"$tsv")
+    rc=0
+    case "$body" in *"oh-my-test|owner/oh-my-test|Frameworks|"*) : ;; *) echo "framework row missing"; rc=1 ;; esac
+    case "$body" in *"colon-style|owner/colon-style|Frameworks|"*) : ;; *) echo "colon row missing"; rc=1 ;; esac
+    case "$body" in *"nested|owner/nested|Plugins|"*) : ;; *) echo "deep-link row missing"; rc=1 ;; esac
+    case "$body" in *gitlab.com*) echo "non-GitHub link kept"; rc=1 ;; esac
+    case "$body" in *"legal|owner/legal"*) echo "license section kept"; rc=1 ;; esac
+    dup=0
+    while IFS= read -r l; do
+        case "$l" in *owner/oh-my-test*) dup=$((dup + 1)) ;; esac
+    done <<< "$body"
+    [ "$dup" = 1 ] || { echo "duplicate repo kept ($dup rows)"; rc=1; }
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$SYSTUI_TMP"
+
+check "the parser feeds the framework filter" bash -c '
+    . "$1"; . "$2"
+    SYSTUI_SHELL_PLUGIN_CACHE="$3/cat"
+    mkdir -p "$SYSTUI_SHELL_PLUGIN_CACHE"
+    printf "%s\n" "oh-my-test|owner/oh-my-test|Frameworks|https://github.com/owner/oh-my-test|A framework for testing" > "$SYSTUI_SHELL_PLUGIN_CACHE/zsh.tsv"
+    printf "%s\n" "tidy-prompt|owner/tidy-prompt|Prompts|https://github.com/owner/tidy-prompt|A prompt" >> "$SYSTUI_SHELL_PLUGIN_CACHE/zsh.tsv"
+    printf "%s\n" "some-cmd|owner/some-cmd|Utilities|https://github.com/owner/some-cmd|Not a framework" >> "$SYSTUI_SHELL_PLUGIN_CACHE/zsh.tsv"
+    out=$(shell_plugin_frameworks zsh)
+    case "$out" in *oh-my-test*) : ;; *) echo "framework not matched"; exit 1 ;; esac
+    case "$out" in *tidy-prompt*) : ;; *) echo "prompt not matched"; exit 1 ;; esac
+    case "$out" in *some-cmd*) echo "utility treated as framework"; exit 1 ;; esac' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$SYSTUI_TMP"
+
+check "an empty cache falls back to the built-in catalogue" bash -c '
+    . "$1"; . "$2"; . "$4"
+    SYSTUI_SHELL_PLUGIN_CACHE="$3/empty"
+    mkdir -p "$SYSTUI_SHELL_PLUGIN_CACHE"
+    rows=$(shell_plugin_catalog bash)
+    [ -n "$rows" ] || { echo "no fallback rows"; exit 1; }
+    case "$rows" in *"built-in"*) : ;; *) echo "fallback is not marked built-in"; exit 1 ;; esac
+    # shells with no built-in shortlist (ksh, tcsh, POSIX sh) have no offline rows
+    # until the general source is synced; that must be silent, not an error
+    n=$(shell_plugin_catalog_count ksh)
+    case "$n" in
+        [0-9]*) : ;;
+        *) echo "count failed for ksh: $n"; exit 1 ;;
+    esac' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$SYSTUI_TMP" "$PROJECT_DIR/src/features/sysconfig.sh"
+
+check "the catalogue is reachable from both plugin menus" bash -c '
+    . "$1"; . "$2"
+    per_shell=$(declare -f systui_shell_plugins_menu)
+    case "$per_shell" in *"catalog"*) : ;; *) echo "per-shell menu has no catalogue entry"; exit 1 ;; esac
+    case "$per_shell" in *menu_shell_plugin_catalog*) : ;; *) echo "per-shell menu does not open the catalogue"; exit 1 ;; esac
+    cross=$(declare -f menu_shell_plugins)
+    case "$cross" in *menu_shell_catalog_all*) : ;; *) echo "cross-shell menu has no catalogue"; exit 1 ;; esac
+    cat_menu=$(declare -f menu_shell_plugin_catalog)
+    for entry in browse frameworks search install refresh; do
+        case "$cat_menu" in *"$entry "*) : ;; *) echo "catalogue menu lacks: $entry"; exit 1 ;; esac
+    done' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "each shell family installs plugins its own way" bash -c '
+    . "$1"; . "$2"
+    body=$(declare -f shell_plugin_install shell_plugin_dest)
+    for want in "fisher install" "zsh-plugins" "systui_plugin_entry_line" "plugin_add_line"; do
+        case "$body" in *"$want"*) : ;; *) echo "install path missing: $want"; exit 1 ;; esac
+    done' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
 
 # --- plugin entry-file detection -------------------------------------------
 for pair in "bash plug.sh" "elvish plug.elv" "xonsh plug.xsh" "pwsh plug.ps1" "nu plug.nu"; do

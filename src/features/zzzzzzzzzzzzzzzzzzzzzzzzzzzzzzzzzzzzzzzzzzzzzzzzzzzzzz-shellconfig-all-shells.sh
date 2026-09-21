@@ -810,6 +810,7 @@ menu_shell_plugins() {
         c=$(tui_menu "Shell Plugins — $u" "Install, configure, inspect or remove cross-shell enhancements:" \
             allshells "All-shell integration — write a tool's init line for every shell" \
             custom "Custom plugin source — integrate a file or GitHub project into any shell" \
+            catalog "GitHub catalogue — plugins and frameworks for every shell" \
             starship "Starship prompt — installer, presets and shell integration" \
             fzf "fzf — key bindings, completion and default options" \
             comp "Completions — packages and shell initialization" \
@@ -825,6 +826,7 @@ menu_shell_plugins() {
         case "$c" in
             allshells) menu_plugin_all_shells "$u" "$home_dir" ;;
             custom) menu_plugin_custom_source "$u" "$home_dir" ;;
+            catalog) menu_shell_catalog_all "$u" "$home_dir" ;;
             starship) menu_plugin_starship "$u" "$home_dir" ;;
             fzf) menu_plugin_fzf "$u" "$home_dir" ;;
             comp) menu_plugin_completions "$u" "$home_dir" ;;
@@ -1173,6 +1175,7 @@ systui_shell_plugins_menu() { # <shell> <user> <home>
             all "Write the integration line for every available tool" \
             one "Write one tool's integration line" \
             custom "Add a custom plugin/rc source line" \
+            catalog "GitHub catalogue — plugins, frameworks and managers" \
             status "Show what is configured in $rc" \
             view "View the integration file" \
             framework "Plugin framework / manager for this shell" \
@@ -1196,6 +1199,7 @@ systui_shell_plugins_menu() { # <shell> <user> <home>
                 line=$(plugin_init_line "$tool" "$id")
                 [ -n "$line" ] && plugin_add_line "$rc" "$line" "$u"
                 tui_msg "$(plugin_init_tool_label "$tool")" "Written to $rc:\n$line" ;;
+            catalog) menu_shell_plugin_catalog "$id" "$u" "$h" ;;
             custom)
                 sel=$(tui_input "Custom plugin source" "Path to a file or directory to load in $(systui_shell_label "$id"):" "") || continue
                 if [ -n "$sel" ]; then
@@ -1330,26 +1334,10 @@ systui_shell_managers_menu() {
             label=$(systui_shell_label "$id")
             args+=("$id" "$label — $(systui_shell_state_note "$id" "$u")")
         done
-        args+=(tmux "tmux — install/update, plugins, config and sessions")
-        if declare -F menu_shell_runtime_commands >/dev/null 2>&1; then
-            args+=(runtime "Shell runtime configuration (launch command / boot command)")
-        fi
-        if declare -F menu_shell_init_login >/dev/null 2>&1; then
-            args+=(login "Login shells, /etc/shells and the /bin/sh provider")
-        fi
-        if declare -F systui_shell_init_services_menu >/dev/null 2>&1; then
-            args+=(initmgr "Init & services manager")
-        fi
-        args+=(advanced "Advanced shell settings (umask, TMOUT, PATH, PS1)")
         args+=(back "Back")
-        c=$(tui_menu "Shells — $u" "Install, remove or configure any shell. Current init: ${INIT:-unknown}" "${args[@]}") || return 0
+        c=$(tui_menu "Shells — $u" "Install, remove or configure any shell:" "${args[@]}") || return 0
         case "$c" in
             ''|back) return 0 ;;
-            tmux) menu_tmux "$u" "$h" ;;
-            runtime) menu_shell_runtime_commands ;;
-            login) menu_shell_init_login ;;
-            initmgr) systui_shell_init_services_menu ;;
-            advanced) menu_shell_advanced ;;
             *) systui_shell_manager_menu "$c" "$u" "$h" ;;
         esac
     done
@@ -1375,3 +1363,438 @@ export -f systui_shell_entry_bins systui_shell_for_bin systui_shell_bin_label \
     systui_shell_manager_menu menu_shell_config_for systui_shell_managers_menu \
     _systui_base_menu_shell_hierarchy_logininit _systui_base_menu_shell_hierarchy_runtime \
     _systui_shell_hierarchy_before_tmux_final menu_plain_shell _shellcfg_file_actions
+
+# --- GitHub plugin/framework catalogue --------------------------------------
+# Plugins and frameworks for every shell come from the upstream "awesome" lists
+# on GitHub, fetched and parsed on the machine (the same approach the file-manager
+# catalogue uses). Every repository below was checked to exist, together with the
+# branch and index file:
+#
+#   general  alebcay/awesome-shell            master  README.md
+#   bash     awesome-lists/awesome-bash       master  README.md
+#   zsh      unixorn/awesome-zsh-plugins      main    README.md
+#   fish     jorgebucaran/awsm.fish           main    README.md
+#   nu       nushell/awesome-nu               main    README.md
+#   elvish   elves/awesome-elvish             master  README.md
+#   xonsh    xonsh/awesome-xontribs           main    docs/README.md
+#   pwsh     janikvonrotz/awesome-powershell  master  README.md
+#
+# ksh, tcsh and POSIX sh have no list of their own, so they are served by the
+# `general` source (awesome-shell) — which is exactly why it is a separate row
+# instead of being folded into one of the shell-specific ones.
+# Row: shell|label|owner/repo|branch|index file
+shell_plugin_sources() {
+    printf '%s\n' \
+        'general|All shells — awesome-shell (tools, frameworks, plugins)|alebcay/awesome-shell|master|README.md' \
+        'bash|Bash — awesome-bash|awesome-lists/awesome-bash|master|README.md' \
+        'zsh|Zsh — awesome-zsh-plugins|unixorn/awesome-zsh-plugins|main|README.md' \
+        'fish|Fish — awsm.fish|jorgebucaran/awsm.fish|main|README.md' \
+        'nu|Nushell — awesome-nu|nushell/awesome-nu|main|README.md' \
+        'elvish|Elvish — awesome-elvish|elves/awesome-elvish|master|README.md' \
+        'xonsh|Xonsh — awesome-xontribs|xonsh/awesome-xontribs|main|docs/README.md' \
+        'pwsh|PowerShell — awesome-powershell|janikvonrotz/awesome-powershell|master|README.md'
+}
+
+_shell_plugin_source_row() { # <key> -> the matching row, or empty
+    local key="$1" row
+    while IFS= read -r row; do
+        [ "${row%%|*}" = "$key" ] || continue
+        printf '%s\n' "$row"
+        return 0
+    done <<< "$(shell_plugin_sources)"
+    return 1
+}
+
+# shell_plugin_labels <shell>: "<key>|<label>" for the shell's own source plus
+# the general one. The general source is never listed twice, including when the
+# shell *is* the general key.
+shell_plugin_labels() { # <shell>
+    local shell="$1" row label
+    if [ "$shell" != general ]; then
+        row=$(_shell_plugin_source_row "$shell" 2>/dev/null) || row=""
+        if [ -n "$row" ]; then
+            label=${row#*|}; label=${label%%|*}
+            [ -n "$label" ] && printf '%s|%s\n' "$shell" "$label"
+        fi
+    fi
+    row=$(_shell_plugin_source_row general 2>/dev/null) || row=""
+    if [ -n "$row" ]; then
+        label=${row#*|}; label=${label%%|*}
+        [ -n "$label" ] && printf 'general|%s\n' "$label"
+    fi
+}
+
+shell_plugin_cache_dir() {
+    printf '%s\n' "${SYSTUI_SHELL_PLUGIN_CACHE:-${SYSTUI_STATE_DIR:-/var/lib/systui}/shell-plugins}"
+}
+
+shell_plugin_index_url() { # <owner/repo> <branch> <file>
+    printf 'https://raw.githubusercontent.com/%s/%s/%s\n' "$1" "$2" "$3"
+}
+
+shell_plugin_raw_file() { printf '%s/%s.md\n' "$(shell_plugin_cache_dir)" "$1"; }
+shell_plugin_tsv_file() { printf '%s/%s.tsv\n' "$(shell_plugin_cache_dir)" "$1"; }
+
+# shell_plugin_parse <raw-markdown> <out-tsv>
+# Handles the three shapes the lists actually use: `- [name](url) - desc`,
+# `* [name](url): desc` and table rows `| [name](url) | desc |`. Only GitHub
+# links are kept (table-of-contents anchors and badges fall out), the repo is
+# reduced to owner/name (so /blob/... links work), entries are de-duplicated by
+# repo and tagged with the section they appeared under.
+shell_plugin_parse() { # <raw> <tsv>
+    awk '
+      function trim(s) { gsub(/^[ \t]+|[ \t]+$/, "", s); gsub(/^[-–—:|\t ]+/, "", s); gsub(/[ \t|]+$/, "", s); return s }
+      function repo_of(url,   u, n, p) {
+          u = url
+          sub(/^https?:\/\/github\.com\//, "", u)
+          sub(/[?&#].*$/, "", u)
+          n = split(u, p, "/")
+          if (n < 2 || p[1] == "" || p[2] == "") return ""
+          r = p[1] "/" p[2]
+          sub(/\.git$/, "", r)
+          return r
+      }
+      /^#{2,4} / {
+          sec = $0
+          sub(/^#+[ \t]*/, "", sec)
+          sub(/[ \t]*<!--.*$/, "", sec)
+          current = trim(sec)
+          low = tolower(current)
+          toc = (low ~ /contents|license|contributing|acknowledg|footnote/)
+          next
+      }
+      {
+          line = $0
+          if (toc) next
+          i = index(line, "](")
+          if (i == 0) next
+          j = index(line, "https://github.com/")
+          if (j == 0) next
+          # name: text inside the last "[" before the link, url inside the parens
+          pre = substr(line, 1, j - 2)          # up to and including "](http..."? keep simple:
+          k = j - 1                             # points at "("
+          name = substr(line, 1, k)
+          sub(/.*\[/, "", name)
+          sub(/\]\($/, "", name)
+          name = trim(name)
+          rest = substr(line, j)
+          url = rest
+          sub(/\).*$/, "", url)
+          desc = substr(rest, length(url) + 2)
+          repo = repo_of(url)
+          if (repo == "" || name == "") next
+          if (repo in seen) next
+          seen[repo] = 1
+          printf "%s|%s|%s|%s|%s\n", name, repo, current, url, trim(desc) > OUT
+      }
+    ' OUT="$2" "$1"
+}
+
+# shell_plugin_sync <key...>: fetch and parse, keeping the previous cache usable
+# when the network is unavailable.
+shell_plugin_sync() {
+    local key row repo branch file raw tsv url tmp rc=0
+    command -v curl >/dev/null 2>&1 || { warn "curl is required to refresh the plugin catalogue."; return 1; }
+    mkdir -p "$(shell_plugin_cache_dir)" 2>/dev/null || true
+    for key in "$@"; do
+        row=$(_shell_plugin_source_row "$key" 2>/dev/null) || { warn "unknown plugin source: $key"; rc=1; continue; }
+        repo=$(printf '%s\n' "$row" | cut -d'|' -f3)
+        branch=$(printf '%s\n' "$row" | cut -d'|' -f4)
+        file=$(printf '%s\n' "$row" | cut -d'|' -f5)
+        raw=$(shell_plugin_raw_file "$key")
+        tsv=$(shell_plugin_tsv_file "$key")
+        url=$(shell_plugin_index_url "$repo" "$branch" "$file")
+        tmp="$raw.tmp.$$"
+        if ! curl -fL --proto "=https" --tlsv1.2 --max-time 60 -o "$tmp" "$url" 2>/dev/null; then
+            rm -f "$tmp"
+            warn "could not fetch $url (offline?)"
+            rc=1
+            continue
+        fi
+        if [ ! -s "$tmp" ]; then
+            rm -f "$tmp"
+            warn "empty index from $url"
+            rc=1
+            continue
+        fi
+        mv "$tmp" "$raw"
+        : > "$tsv"
+        shell_plugin_parse "$raw" "$tsv"
+        note "$key: $(wc -l < "$tsv" | tr -d ' ') entries from $(basename "$file")"
+    done
+    return "$rc"
+}
+
+# shell_plugin_catalog <shell>: "name|repo|section|url|description" rows for the
+# shell (its own source first, then the general one), from the cache. With no
+# cache it falls back to the built-in short catalogue so the menu still works
+# offline.
+shell_plugin_catalog() { # <shell>
+    local shell="$1" key row line found=0 general
+    general=$(shell_plugin_tsv_file general)
+    for key in "$shell" general; do
+        [ -n "$key" ] || continue
+        _shell_plugin_source_row "$key" >/dev/null 2>&1 || continue
+        row=$(shell_plugin_tsv_file "$key")
+        if [ -s "$row" ]; then
+            cat "$row"
+            found=1
+        fi
+    done
+    if [ "$found" = 0 ] && declare -F shell_github_catalog >/dev/null 2>&1; then
+        # offline fallback: the curated shortlist that ships with systui
+        while IFS='|' read -r tag desc repo shells init; do
+            [ -n "$tag" ] || continue
+            line=" $shells "
+            # the shortlist is per shell; anything marked for this shell fits
+            case "$line" in *" $shell "*) ;; *) continue ;; esac
+            printf '%s|%s|built-in|%s|%s\n' "$tag" "$repo" "$repo" "$desc"
+        done <<< "$(shell_github_catalog)"
+    fi
+}
+
+shell_plugin_catalog_count() { shell_plugin_catalog "$1" | wc -l | tr -d ' '; }
+
+# shell_plugin_sections -> the categories present, in file order, without repeats
+shell_plugin_sections() { # <shell>
+    shell_plugin_catalog "$1" | cut -d'|' -f3 | awk '!seen[$0]++ && $0 != ""'
+}
+
+shell_plugin_search() { # <shell> <term>
+    local shell="$1" term="$2"
+    shell_plugin_catalog "$shell" | grep -i -- "$term" 2>/dev/null || true
+}
+
+# shell_plugin_frameworks <shell>: the rows whose section names a framework,
+# plugin manager or prompt — the "frameworks" half of the catalogue.
+shell_plugin_frameworks() { # <shell>
+    shell_plugin_catalog "$1" | grep -iE '\|(frameworks?|plugin managers?|prompts?|themes?|plugin management)\|' 2>/dev/null || true
+}
+
+# shell_plugin_dest <shell> <name> <home>
+shell_plugin_dest() { # <shell> <name> <home>
+    case "$1" in
+        zsh) printf '%s/.local/share/zsh-plugins/%s\n' "$3" "$2" ;;
+        *)   printf '%s/.local/share/shell-plugins/%s\n' "$3" "$2" ;;
+    esac
+}
+
+# shell_plugin_install <shell> <name> <repo> <user> <home>
+# One install path per shell family: Fish plugins go through fisher (its plugin
+# manager), Zsh plugins reuse the directory convention of the AZP catalogue, and
+# everything else is cloned into a per-shell directory and integrated with that
+# shell's own source syntax — or with an explanatory comment when the project has
+# no recognisable entry point.
+shell_plugin_install() { # <shell> <name> <repo> <user> <home>
+    local id="$1" name="$2" repo="$3" u="$4" h="$5" dest line srcf
+    [ -n "$repo" ] || { tui_msg "Install" "No repository for $name."; return 1; }
+    if [ "$id" = fish ] && command -v fish >/dev/null 2>&1; then
+        if fm_as_user "$u" "fish -lc 'type -q fisher'" 2>/dev/null; then
+            run_cmd "fisher install $repo" fm_as_user "$u" "fish -lc 'fisher install $repo'" || return 1
+            tui_msg "$name" "Installed into Fish with fisher:\n$repo"
+            return 0
+        fi
+        tui_msg "$name" "fisher is not installed. Add it from $(systui_shell_label "$id") ▸ framework, then install $repo again."
+        return 1
+    fi
+    dest=$(shell_plugin_dest "$id" "$name" "$h")
+    command -v git >/dev/null 2>&1 || pm_install git
+    if ! fm_as_user "$u" "mkdir -p '$(dirname "$dest")'; if [ -d '$dest/.git' ]; then git -C '$dest' pull --ff-only; else rm -rf '$dest'; git clone --depth 1 --recurse-submodules https://github.com/$repo.git '$dest'; fi"; then
+        tui_msg "Install failed" "Could not clone $repo into $dest."
+        return 1
+    fi
+    if [ "$id" = zsh ]; then
+        srcf=$(zsh_plugin_file "$dest" 2>/dev/null || true)
+        if [ -n "$srcf" ]; then
+            line=$(plugin_source_line zsh "$dest/$srcf")
+        else
+            line="# $dest: no loadable .zsh file found — see the project README"
+        fi
+    else
+        line=$(systui_plugin_entry_line "$id" "$dest")
+    fi
+    plugin_add_line "$(plugin_rc_file "$id" "$h")" "$line" "$u"
+    tui_msg "$name" "Installed for $(systui_shell_label "$id"):\n$repo\n\nIntegration line in $(plugin_rc_file "$id" "$h"):\n$line"
+}
+
+# --- catalogue menus --------------------------------------------------------
+# The index file maps the (unique, dialog-safe) menu tag back to the entry:
+#   tag <TAB> repo <TAB> name <TAB> url <TAB> section <TAB> description
+_shell_catalog_index() { # <shell> <outfile>
+    local shell="$1" out="$2" n=0 name repo section url desc tag
+    : > "$out"
+    while IFS='|' read -r name repo section url desc; do
+        [ -n "$repo" ] || continue
+        n=$((n + 1))
+        tag=$(printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-28)
+        [ -n "$tag" ] || tag="entry$n"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$tag" "$repo" "$name" "$url" "$section" "$desc" >> "$out"
+    done < <(shell_plugin_catalog "$shell")
+}
+
+_shell_catalog_field() { # <indexfile> <tag> <field-number>
+    awk -F'\t' -v t="$2" -v f="$3" 'NF>=6 && $1==t {print $f; exit}' "$1"
+}
+
+_shell_catalog_sections() { # <indexfile> -> one section per line
+    awk -F'\t' 'NF>=6 && $5 != "" && !seen[$5]++ {print $5}' "$1"
+}
+
+_shell_catalog_install_selected() { # <index> <selection> <shell> <user> <home>
+    local index="$1" selected="$2" id="$3" u="$4" h="$5" tag repo name
+    for tag in $selected; do
+        repo=$(_shell_catalog_field "$index" "$tag" 2)
+        name=$(_shell_catalog_field "$index" "$tag" 3)
+        [ -n "$repo" ] || continue
+        [ -n "$name" ] || name=$(basename "$repo")
+        shell_plugin_install "$id" "$name" "$repo" "$u" "$h" || true
+    done
+}
+
+menu_shell_catalog_browse() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" c index selected sargs=() args=() tag name desc
+    index=$(mktemp)
+    _shell_catalog_index "$id" "$index"
+    if [ ! -s "$index" ]; then
+        rm -f "$index"
+        tui_msg "Catalogue" "Nothing cached for $(systui_shell_label "$id") yet — use Refresh."
+        return 0
+    fi
+    while true; do
+        sargs=()
+        while IFS= read -r sec; do
+            [ -n "$sec" ] && sargs+=("$sec" "$sec")
+        done < <(_shell_catalog_sections "$index")
+        sargs+=(back "Back")
+        c=$(tui_menu "Catalogue — $(systui_shell_label "$id")" "Browse by category:" "${sargs[@]}") || break
+        if [ -z "$c" ] || [ "$c" = back ]; then break; fi
+        args=()
+        while IFS=$'\t' read -r tag repo name url sec desc; do
+            [ "$sec" = "$c" ] || continue
+            args+=("$tag" "${name:0:28} — ${desc:0:64}" off)
+        done < "$index"
+        [ "${#args[@]}" -gt 0 ] || { tui_msg "Category" "No entries in $c."; continue; }
+        selected=$(tui_check "$c — $(systui_shell_label "$id")" "SPACE selects entries to install/update:" "${args[@]}") || continue
+        selected=${selected//\"/}
+        [ -n "$selected" ] || continue
+        _shell_catalog_install_selected "$index" "$selected" "$id" "$u" "$h"
+    done
+    rm -f "$index"
+}
+
+menu_shell_catalog_search() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" term index selected args=() tag repo name url sec desc
+    term=$(tui_input "Search catalogue" "Search $(systui_shell_label "$id") plugins and frameworks for:" "") || return 0
+    [ -n "$term" ] || return 0
+    index=$(mktemp)
+    _shell_catalog_index "$id" "$index"
+    while IFS=$'\t' read -r tag repo name url sec desc; do
+        case "$name $repo $desc" in
+            *"$term"*) args+=("$tag" "${name:0:28} — ${desc:0:64}" off) ;;
+        esac
+    done < "$index"
+    if [ "${#args[@]}" -eq 0 ]; then
+        rm -f "$index"
+        tui_msg "Search" "Nothing matched '$term' in the $(systui_shell_label "$id") catalogue."
+        return 0
+    fi
+    selected=$(tui_check "Search — $term" "SPACE selects entries to install:" "${args[@]}") || { rm -f "$index"; return 0; }
+    selected=${selected//\"/}
+    _shell_catalog_install_selected "$index" "$selected" "$id" "$u" "$h"
+    rm -f "$index"
+}
+
+menu_shell_catalog_frameworks() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" c name repo section url desc args=() rows
+    rows=$(shell_plugin_frameworks "$id")
+    if [ -z "$rows" ]; then
+        tui_msg "Frameworks" "The cached index for $(systui_shell_label "$id") has no framework section yet.\n\nRefresh the index, or use $(systui_shell_label "$id") ▸ framework for the\ndedicated manager (oh-my-bash, oh-my-zsh, Fisher, ...)."
+        return 0
+    fi
+    while IFS='|' read -r name repo section url desc; do
+        [ -n "$repo" ] || continue
+        args+=("$repo" "${name:0:28} — ${desc:0:70}")
+    done <<< "$rows"
+    args+=(back "Back")
+    c=$(tui_menu "Frameworks & managers — $(systui_shell_label "$id")" "From the $(systui_shell_label "$id") catalogue:" "${args[@]}") || return 0
+    if [ -z "$c" ] || [ "$c" = back ]; then return 0; fi
+    name=$(printf '%s\n' "$rows" | awk -F'|' -v r="$c" '$2==r {print $1; exit}')
+    [ -n "$name" ] || name=$(basename "$c")
+    tui_yesno "Install $name" "Clone $c into ~/.local/share and integrate it with $(systui_shell_label "$id")?\n\nLarge frameworks usually ship their own installer — the dedicated\nframework menu is the better choice for those." || return 0
+    shell_plugin_install "$id" "$name" "$c" "$u" "$h" || true
+}
+
+menu_shell_plugin_catalog() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" c key label keys="" default_key repo name
+    while IFS='|' read -r key label; do
+        [ -n "$key" ] || continue
+        keys="$keys $key"
+    done <<< "$(shell_plugin_labels "$id")"
+    default_key="${keys# }"; default_key=${default_key%% *}
+    while true; do
+        c=$(tui_menu "GitHub catalogue — $(systui_shell_label "$id")" \
+            "Sources:$keys\nCached entries: $(shell_plugin_catalog_count "$id")" \
+            browse "Browse plugins by category" \
+            frameworks "Frameworks, managers and prompts" \
+            search "Search the catalogue" \
+            install "Install from owner/repo" \
+            refresh "Refresh the index from GitHub" \
+            raw "View the cached index" \
+            back "Back") || return 0
+        case "$c" in
+            browse) menu_shell_catalog_browse "$id" "$u" "$h" ;;
+            frameworks) menu_shell_catalog_frameworks "$id" "$u" "$h" ;;
+            search) menu_shell_catalog_search "$id" "$u" "$h" ;;
+            install)
+                repo=$(tui_input "Install from GitHub" "owner/repo to clone and integrate:" "") || continue
+                [ -n "$repo" ] || continue
+                case "$repo" in
+                    */*) name=$(basename "$repo") ;;
+                    *) tui_msg "Install" "Use owner/repo (for example junegunn/fzf)."; continue ;;
+                esac
+                shell_plugin_install "$id" "$name" "$repo" "$u" "$h" || true ;;
+            refresh)
+                # shellcheck disable=SC2086
+                shell_plugin_sync $keys
+                tui_msg "Catalogue" "Entries cached for $(systui_shell_label "$id"): $(shell_plugin_catalog_count "$id")" ;;
+            raw)
+                if [ -s "$(shell_plugin_tsv_file "$default_key")" ]; then
+                    tui_text "Catalogue — $default_key" "$(shell_plugin_tsv_file "$default_key")"
+                else
+                    tui_msg "Catalogue" "Nothing cached yet — use Refresh."
+                fi ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+# menu_shell_catalog_all <user> <home>: the catalogue from the cross-shell menu.
+menu_shell_catalog_all() { # <user> <home>
+    local u="$1" h="$2" id args=() c keys="" key
+    for id in $(systui_shell_ids); do
+        args+=("$id" "$(systui_shell_label "$id")")
+    done
+    args+=(all "Refresh every cached index" back "Back")
+    c=$(tui_menu "GitHub catalogue" "Plugins and frameworks for which shell?" "${args[@]}") || return 0
+    case "$c" in
+        ''|back) return 0 ;;
+        all)
+            while IFS= read -r key; do
+                keys="$keys $key"
+            done <<< "$(shell_plugin_sources | cut -d'|' -f1)"
+            # shellcheck disable=SC2086
+            shell_plugin_sync $keys
+            tui_msg "Catalogue" "Cached indexes refreshed." ;;
+        *) menu_shell_plugin_catalog "$c" "$u" "$h" ;;
+    esac
+}
+
+export -f shell_plugin_sources shell_plugin_labels shell_plugin_cache_dir \
+    shell_plugin_index_url shell_plugin_raw_file shell_plugin_tsv_file \
+    shell_plugin_parse shell_plugin_sync shell_plugin_catalog \
+    shell_plugin_catalog_count shell_plugin_sections shell_plugin_search \
+    shell_plugin_frameworks shell_plugin_dest shell_plugin_install \
+    menu_shell_catalog_browse menu_shell_catalog_search \
+    menu_shell_catalog_frameworks menu_shell_plugin_catalog menu_shell_catalog_all \
+    _shell_catalog_index _shell_catalog_field _shell_catalog_sections \
+    _shell_catalog_install_selected _shell_plugin_source_row
