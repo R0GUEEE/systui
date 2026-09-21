@@ -652,14 +652,40 @@ The RootFS Builder now opens a categorized package catalogue after preset select
 
 `System Configuration → Shells` includes:
 
-- **Shell config files** — automatically populated targets for `.bashrc`, `.zshrc`, Fish `config.fish`, `.profile`, `.bash_profile`, `.zprofile`, and `.inputrc`. Common settings can be selected with SPACE and written into a removable systui-managed block. The tool also supports custom entries, backups, direct editing, viewing, and syntax validation.
+- **Shell config files** — every file of every shell systui knows, chosen from a
+  shell-then-file menu: Bash (`.bashrc`, `.bash_profile`, `.bash_login`,
+  `.bash_logout`), Zsh (`.zshrc`, `.zprofile`, `.zshenv`, `.zlogin`, `.zlogout`),
+  Fish (`config.fish`, `conf.d/systui.fish`), Nushell (`config.nu`, `env.nu`,
+  `login.nu`), POSIX sh (`.profile`), Korn shell (`.kshrc`, `.mkshrc`),
+  tcsh/csh (`.tcshrc`, `.cshrc`, `.login`, `.logout`), Elvish (`rc.elv`), Xonsh
+  (`rc.xsh`), PowerShell (`profile.ps1`, `Microsoft.PowerShell_profile.ps1`) and
+  Readline (`.inputrc`). Common settings are selected with SPACE and written into
+  a removable systui-managed block **in that shell's own syntax** (tcsh `setenv`,
+  Elvish `set E:…`, Xonsh `$VAR`, PowerShell `$env:VAR`, ksh `HISTSIZE`, POSIX
+  exports), and syntax validation uses the shell's own parser — `bash -n`,
+  `sh -n`, `ksh -n`, `zsh -n`, `fish -n`, `tcsh -n`, `nu -n`, or the PowerShell
+  AST parser. Custom entries, backups, direct editing and viewing are available
+  for every file.
+- **Alias dialects** — the alias manager keeps one POSIX master file and
+  regenerates a dialect for every shell family: POSIX/Bash/Zsh/ksh, Fish, tcsh
+  (`alias x "cmd"`), Nushell (`alias x = cmd`), Xonsh (`aliases['x']`), Elvish
+  (`fn x {|@a| e:cmd $@a }`) and PowerShell (`function x { cmd @args }`), each
+  sourced from the rc file of the shells that are actually installed.
+- **Plugin integration for every shell** — the plugin managers resolve the right
+  rc file and use the right "load this file" syntax per shell instead of writing
+  POSIX `. file` lines everywhere, the status view reports across all of them,
+  and an **All-shell integration** action writes one tool's init line (Starship,
+  zoxide, Atuin, direnv, Carapace, fzf) into every selected shell — including
+  tcsh, Nushell, Elvish, Xonsh and PowerShell. A **Custom plugin source** action
+  integrates any file or GitHub project into any shell, resolving the project's
+  entry file (or explaining that it has none) rather than adding a broken line.
 - **Alias manager** — installs aliases from a catalog, adds or replaces custom aliases, removes aliases, imports existing alias definitions, validates syntax, and generates Fish-compatible aliases. Managed aliases are stored under `~/.config/systui/` and sourced from supported shell files.
 
 
 
 ## Expanded system configuration
 
-- Shell plugin catalogue for Bash, Zsh, and Fish GitHub projects with installation, updates, and shell integration.
+- Shell plugin catalogue for Bash, Zsh, and Fish GitHub projects with installation, updates, and shell integration, plus per-shell integration lines for the cross-shell tools on every shell the tool manages (the catalogue also accepts any other shell id, cloning into a per-shell directory and using that shell's own source syntax).
 - Expanded GitHub add-on catalogues and update/status management for terminal file managers.
 - Full OpenSSH server configuration for authentication, access controls, keys, forwarding, keepalives, SFTP, banners, host keys, logs, and validation.
 - Additional iSH-AOK compatibility, storage, cache, logging, shell, APT, and capability-report tuning.
