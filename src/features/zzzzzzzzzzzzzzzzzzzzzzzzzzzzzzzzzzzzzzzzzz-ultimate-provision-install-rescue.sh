@@ -87,11 +87,19 @@ script_provision_run() {
     tui_yesno "Confirm Provisioning" "Run the bundled provision script now?\n\nThis installs packages and changes system-wide configuration." || return 0
     script_provision_save
     clear
-    if env TZ_NAME="$SCRIPT_PROV_TZ" \
-        TARGET_USER="$SCRIPT_PROV_USER" \
-        NEW_HOSTNAME="$SCRIPT_PROV_HOST" \
-        SUDO_NOPASSWD="$SCRIPT_PROV_NOPASS" \
-        sh "$script"; then
+    # Build the environment as arguments: values are passed verbatim (no eval
+    # or word splitting), and the optional package-set tuning from the Ultimate
+    # Provision menu travels with the run.
+    local -a env_args=(
+        TZ_NAME="$SCRIPT_PROV_TZ"
+        TARGET_USER="$SCRIPT_PROV_USER"
+        NEW_HOSTNAME="$SCRIPT_PROV_HOST"
+        SUDO_NOPASSWD="$SCRIPT_PROV_NOPASS"
+        EXTRA_PKGS="${SCRIPT_PROV_EXTRA_PKGS:-}"
+        SKIP_PKGS="${SCRIPT_PROV_SKIP_PKGS:-}"
+        SKIP_SERVICES="${SCRIPT_PROV_SKIP_SERVICES:-0}"
+    )
+    if env "${env_args[@]}" sh "$script"; then
         rc=0
     else
         rc=$?

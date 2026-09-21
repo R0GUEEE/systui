@@ -664,6 +664,26 @@ The RootFS Builder now opens a categorized package catalogue after preset select
 - Full OpenSSH server configuration for authentication, access controls, keys, forwarding, keepalives, SFTP, banners, host keys, logs, and validation.
 - Additional iSH-AOK compatibility, storage, cache, logging, shell, APT, and capability-report tuning.
 
+## Ultimate Provision
+
+Beyond install/configure/run, the Ultimate Provision menu exposes the parts of
+the run that were previously fixed in the script:
+
+* **Package set** — *extra packages* are added to the distribution's list and
+  *excluded packages* are dropped from it, using the host's own package names
+  (`EXTRA_PKGS`, `SKIP_PKGS` are passed to the script).
+* **Service configuration** — the enable/start pass (rsyslog, ssh, cron, chrony)
+  can be skipped, which is what containers and emulated hosts usually want
+  (`SKIP_SERVICES=1`). Configuration files are still written.
+* **Preview** — runs the tool with `PROVISION_DRY_RUN=1`, printing the package
+  list and the settings it would use, and changing nothing.
+
+Settings persist with the other provision options in
+`/etc/systui/provision-ultimate.conf`. Install status is compared against the
+*patched* payload, so a freshly installed tool reports **installed (current)**
+instead of looking perpetually out of date (the installer applies compatibility
+patches, so a plain byte comparison with the bundled script could never match).
+
 ## Startup performance
 
 systui loads ~126 feature modules at start. Three things dominated that cost on

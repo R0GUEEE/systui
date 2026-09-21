@@ -2,7 +2,19 @@
 # Install, configure, and manage Ultimate Provision.
 
 script_provision_source_path() {
-    printf '%s\n' "$LIBDIR/src/provision/provision-ultimate.sh"
+    local base="${LIBDIR:-${SYSTUI_LIBDIR:-}}"
+    if [ -n "$base" ] && [ -r "$base/src/provision/provision-ultimate.sh" ]; then
+        printf '%s\n' "$base/src/provision/provision-ultimate.sh"
+        return 0
+    fi
+    # Fall back to this module's own location so the tool still resolves when the
+    # feature is sourced directly (tests, reduced builds) and LIBDIR is unset.
+    local here="${BASH_SOURCE[0]%/*}/../provision/provision-ultimate.sh"
+    if [ -r "$here" ]; then
+        printf '%s\n' "$(cd -- "${here%/*}" && pwd)/${here##*/}"
+        return 0
+    fi
+    printf '%s\n' "$base/src/provision/provision-ultimate.sh"
 }
 
 script_provision_tool_path() {

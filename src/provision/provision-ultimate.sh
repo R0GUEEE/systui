@@ -162,6 +162,42 @@ case "$PACKAGE_MANAGER" in
         ;;
 esac
 
+# ---- optional package-set tuning (systui passes these through the env) -----
+# PKG_EXTRA adds to the distribution list, PKG_SKIP removes names from it, so a
+# host can tailor the provision set without editing this script. PROVISION_DRY_RUN
+# prints the final list and exits before anything is modified.
+if [ -n "${EXTRA_PKGS:-}" ]; then
+    PKGS="$PKGS $EXTRA_PKGS"
+    note "extra packages requested: $EXTRA_PKGS"
+fi
+if [ -n "${SKIP_PKGS:-}" ]; then
+    _kept=""
+    for _p in $PKGS; do
+        case " $SKIP_PKGS " in
+            *" $_p "*) continue ;;
+        esac
+        _kept="$_kept $_p"
+    done
+    PKGS="${_kept# }"
+    note "excluding packages: $SKIP_PKGS"
+fi
+if [ "${SKIP_SERVICES:-0}" = 1 ]; then
+    note "service configuration disabled (SKIP_SERVICES=1)"
+fi
+
+if [ "${PROVISION_DRY_RUN:-0}" = 1 ]; then
+    log "Dry run: no changes will be made"
+    printf '    packages (%s):\n' "$PACKAGE_MANAGER"
+    printf '      %s\n' $PKGS
+    if [ "${SKIP_SERVICES:-0}" = 1 ]; then
+        printf '    services: skipped\n'
+    else
+        printf '    services: logging, ssh, cron, chrony (enable/start)\n'
+    fi
+    printf '    timezone=%s login=%s hostname=%s init=%s\n' "$TZ_NAME" "${TARGET_USER:-<none>}" "$NEW_HOSTNAME" "$INIT_SYSTEM"
+    exit 0
+fi
+
 # Pre-seed the timezone so the tzdata postinst never tries to prompt.
 if [ -f "/usr/share/zoneinfo/$TZ_NAME" ]; then
     ln -sf "/usr/share/zoneinfo/$TZ_NAME" /etc/localtime 2>/dev/null || true
@@ -763,13 +799,17 @@ apply_svc() {  # <logical-name> <candidate>...
     note "  $_label -> $_svc"
 }
 
-# rsyslog first (so other daemons' early logs land), then user-facing daemons.
-apply_svc logging rsyslog syslog-ng socklog-unix
-apply_svc ssh ssh sshd
-apply_svc cron cron crond cronie
-apply_svc chrony chrony chronyd
+if [ "${SKIP_SERVICES:-0}" = 1 ]; then
+    note "service enable/start skipped (SKIP_SERVICES=1); configuration files were still written"
+else
+    # rsyslog first (so other daemons' early logs land), then user-facing daemons.
+    apply_svc logging rsyslog syslog-ng socklog-unix
+    apply_svc ssh ssh sshd
+    apply_svc cron cron crond cronie
+    apply_svc chrony chrony chronyd
+fi
 
-note "services enabled:"
+[ "${SKIP_SERVICES:-0}" = 1 ] || note "services enabled:"
 case "$INIT_SYSTEM" in
     systemd) systemctl list-unit-files --state=enabled --type=service 2>/dev/null | grep -E '^(rsyslog|syslog-ng|ssh|sshd|cron|crond|chrony|chronyd)' | awk '{print "      " $1}' || true ;;
     openrc) rc-status default 2>/dev/null | sed 's/^/      /' || true ;;
