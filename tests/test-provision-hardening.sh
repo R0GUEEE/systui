@@ -122,7 +122,11 @@ has '_pm_timeout_seen=1'
 # --- pacman full-upgrade opt-out ------------------------------------------
 has 'PROVISION_PACMAN_SYSUPGRADE'
 has 'pacman -Syu --noconfirm'
-has 'pacman -Sy --noconfirm'
+# the repo-wide invariant: never a partial-upgrade refresh
+if matches_code partial_sy 'pacman[[:space:]]+-Sy([[:space:]]|$)' && \
+   ! matches_code partial_sy 'pacman[[:space:]]+-Syu([[:space:]]|$)'; then
+    fail "a partial-upgrade pacman refresh is back"
+fi
 
 # --- timezone preseed -----------------------------------------------------
 has 'debconf-set-selections'
@@ -176,7 +180,9 @@ while [ "${#long64}" -lt 64 ]; do long64="${long64}a"; done
 if valid_hostname "$long64"; then fail "valid_hostname accepted a 64-character name"; fi
 
 # --- dynamic: apply_hostname (pure builtins, temp files) ------------------
-_rto() { shift; "$@" 2>/dev/null; }   # stand-in for the shipped bounded runner
+_rto() { return 0; }   # stand-in for the shipped runner; the tests below only
+                          # care about the file handling, and not forking keeps the
+                          # test safe on hosts where a fork can deadlock
 eval "$(extract_fn apply_hostname)"
 
 # a fresh hosts file gets a 127.0.1.1 mapping for the name

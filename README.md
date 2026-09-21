@@ -709,8 +709,8 @@ Knobs, passed through the environment like the settings above:
 `PROVISION_HEARTBEAT=<secs>` (0 disables the heartbeat),
 `PROVISION_TIMEOUT_MAX=<secs>` (caps every limit, useful for tests),
 `PROVISION_MAX_CONSECUTIVE_TIMEOUTS=<n>`, `PROVISION_SKIP_FILTER=1` (do not
-pre-verify package names), `PROVISION_PACMAN_SYSUPGRADE=0` (Arch: sync the index
-without a full upgrade), `PROVISION_TOTAL_TIMEOUT=<secs>` (whole-run cap applied
+pre-verify package names), `PROVISION_PACMAN_SYSUPGRADE=0` (Arch: skip the refresh
+instead of upgrading the whole system), `PROVISION_TOTAL_TIMEOUT=<secs>` (whole-run cap applied
 by the menu, default 21600; 0 disables), and `PROVISION_NO_TIMEOUT=1` (run steps
 in the foreground and block — debugging only).
 

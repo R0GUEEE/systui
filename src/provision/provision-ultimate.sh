@@ -37,7 +37,7 @@
 #       PROVISION_TIMEOUT_MAX=<secs>   # cap every per-step wall-clock limit
 #       PROVISION_MAX_CONSECUTIVE_TIMEOUTS=<n>  # stop a wedged per-package pass
 #       PROVISION_SKIP_FILTER=1        # do not pre-check package names
-#       PROVISION_PACMAN_SYSUPGRADE=0  # sync the index only, no full upgrade
+#       PROVISION_PACMAN_SYSUPGRADE=0  # skip the refresh instead of upgrading
 #       PROVISION_NO_TIMEOUT=1         # foreground/blocking (debugging only)
 # ---------------------------------------------------------------------------
 set -u
@@ -524,14 +524,14 @@ refresh_packages() {
         apt)    _rto 180 apt-get update ;;
         apk)    _rto 180 apk update ;;
         pacman)
-            # -Sy alone desynchronises the system, so a full upgrade is the
-            # correct default on Arch -- but it is a whole-system change, so it
-            # can be opted out of.
+            # A full upgrade is the only correct refresh on Arch (-Sy alone
+            # desynchronises the system, so a partial refresh is never run), but
+            # it is a whole-system change and can be refused: then the refresh is
+            # skipped entirely and the operator is told what to run.
             if [ "${PROVISION_PACMAN_SYSUPGRADE:-1}" = 1 ]; then
                 _rto 300 pacman -Syu --noconfirm
             else
-                warn "pacman: syncing the index only; Arch does not support partial upgrades (PROVISION_PACMAN_SYSUPGRADE=0)"
-                _rto 300 pacman -Sy --noconfirm
+                warn "pacman: refresh skipped (PROVISION_PACMAN_SYSUPGRADE=0); Arch has no partial upgrades, so run 'pacman -Syu' yourself and re-run provisioning"
             fi ;;
         dnf)    _rto 180 dnf -y makecache ;;
         yum)    _rto 180 yum -y makecache ;;
