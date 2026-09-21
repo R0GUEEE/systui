@@ -604,7 +604,18 @@ System Configuration > Packages now contains Package Managers, Repos, Catalogue,
 
 APT repository management includes both `/etc/apt/sources.list` and `/etc/apt/sources.list.d/`. The signing-key menu can install available Debian, Ubuntu, Devuan, and Kali archive keyrings using a SPACE-to-select checklist.
 
-System Configuration > Shells separates Managers from Plugins. Each Bash, Zsh, Fish, and Nushell manager includes installation, removal, and its framework/plugin-manager configuration (oh-my-bash, Bash-it, ble.sh, oh-my-zsh, zinit, Fisher, TPM). A "More shells" entry covers dash, ksh, mksh, tcsh, Elvish, xonsh, yash, and PowerShell (pwsh) — with per-distro package names and a GitHub-release installer for PowerShell. Cross-shell plugins include Starship, fzf, completion packages, zoxide, Atuin, direnv, Carapace, syntax highlighting, and autosuggestions.
+System Configuration > Shells separates Managers from Plugins. The manager list
+contains **every shell systui knows** — Bash, Zsh, Fish, Nushell, POSIX sh
+(dash/ash/yash), Korn shell (ksh/mksh), tcsh/csh, Elvish, Xonsh and PowerShell —
+and each entry opens the **same manager surface**: install/reinstall (with
+per-distro package names, pip for xonsh, and a GitHub-release installer for
+PowerShell), uninstall, set as the default login shell, that shell's
+configuration files, its plugin integration, its alias dialect, plus its own
+plugin framework when it has one (oh-my-bash, Bash-it, ble.sh, oh-my-zsh, zinit,
+awesome-zsh-plugins, Fisher, nushell plugins). There is no separate "More shells"
+install-only list any more. Cross-shell plugins include Starship, fzf, completion
+packages, zoxide, Atuin, direnv, Carapace, syntax highlighting, and
+autosuggestions.
 
 ### Shell plugin configuration managers
 System Configuration > Shells > Plugins now opens a per-user manager for each plugin. Starship, fzf, completions, zoxide, Atuin, direnv, Carapace, Zsh syntax highlighting, and Zsh autosuggestions include install/remove actions, shell integration, editable configuration, status inspection, and cleanup controls.

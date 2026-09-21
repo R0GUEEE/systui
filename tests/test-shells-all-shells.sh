@@ -271,6 +271,97 @@ check "aliases_enable maps every shell to its own dialect file" bash -c '
     case "$body" in *"systui_shell_installed"*) : ;; *) echo "no installed-shell guard"; exit 1 ;; esac' _ \
     "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
 
+# --- unified shell list and per-shell managers ------------------------------
+# Every shell is in the main list: no shells are hidden behind a "more" entry.
+check "the shell list contains every registry shell and no more-entry" bash -c '
+    . "$1"; . "$2"
+    home="$3"
+    tui_input() { printf "root\n"; }
+    user_home() { printf "%s\n" "$home"; }
+    capture=$(mktemp)
+    tui_menu() { printf "%s\n" "$*" >> "$capture"; printf "back\n"; }
+    systui_shell_managers_menu >/dev/null 2>&1 || true
+    body=$(<"$capture")
+    rc=0
+    for id in $(systui_shell_ids); do
+        case "$body" in *"$id "*) : ;; *) echo "shell not in the list: $id"; rc=1 ;; esac
+    done
+    case "$body" in *"more "*) echo "a more-shells entry is still there"; rc=1 ;; esac
+    case "$body" in *"tmux "*) : ;; *) echo "tmux entry lost"; rc=1 ;; esac
+    case "$body" in *"advanced "*) : ;; *) echo "advanced entry lost"; rc=1 ;; esac
+    rm -f "$capture"
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
+check "the runtime hierarchy dispatches to the all-shell list" bash -c '
+    . "$1"; . "$2"
+    for fn in _systui_base_menu_shell_hierarchy_logininit _systui_base_menu_shell_hierarchy_runtime _systui_shell_hierarchy_before_tmux_final; do
+        body=$(declare -f "$fn")
+        [ -n "$body" ] || { echo "missing dispatcher: $fn"; exit 1; }
+        case "$body" in *systui_shell_managers_menu*) : ;; *) echo "$fn does not reach the shell list"; exit 1 ;; esac
+    done' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "every shell gets the same manager surface" bash -c '
+    . "$1"; . "$2"
+    home="$3"
+    tui_input() { printf "root\n"; }
+    user_home() { printf "%s\n" "$home"; }
+    rc=0
+    for id in $(systui_shell_ids); do
+        capture=$(mktemp)
+        tui_menu() { printf "%s\n" "$*" >> "$capture"; printf "back\n"; }
+        systui_shell_manager_menu "$id" "$(id -un)" "$home" >/dev/null 2>&1 || true
+        body=$(<"$capture")
+        for entry in "config " "plugins " "aliases " "install " "uninstall " "default "; do
+            case "$body" in *"$entry"*) : ;; *) echo "$id manager lacks: $entry"; rc=1 ;; esac
+        done
+        rm -f "$capture"
+    done
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
+check "the additional shells have config and plugin management" bash -c '
+    . "$1"; . "$2"
+    home="$3"
+    tui_input() { printf "root\n"; }
+    user_home() { printf "%s\n" "$home"; }
+    rc=0
+    for id in posix ksh tcsh elvish xonsh pwsh; do
+        capture=$(mktemp)
+        tui_menu() { printf "%s\n" "$*" >> "$capture"; printf "back\n"; }
+        systui_shell_manager_menu "$id" "$(id -un)" "$home" >/dev/null 2>&1 || true
+        body=$(<"$capture")
+        case "$body" in *"config "*) : ;; *) echo "$id has no config entry"; rc=1 ;; esac
+        case "$body" in *"plugins "*) : ;; *) echo "$id has no plugin entry"; rc=1 ;; esac
+        case "$body" in *"Integration file:"*) : ;; *) echo "$id manager does not name its rc file"; rc=1 ;; esac
+        rm -f "$capture"
+    done
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
+check "menu_plain_shell now opens the full manager" bash -c '
+    . "$1"; . "$2"
+    home="$3"
+    user_home() { printf "%s\n" "$home"; }
+    capture=$(mktemp)
+    tui_menu() { printf "%s\n" "$*" >> "$capture"; printf "back\n"; }
+    menu_plain_shell "$(id -un)" "$home" dash "dash" "blurb" >/dev/null 2>&1 || true
+    body=$(<"$capture")
+    rm -f "$capture"
+    case "$body" in *"POSIX sh"*) exit 0 ;; *) echo "dash did not route to the posix manager"; exit 1 ;; esac' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
+check "integration lines are written for a shell that supports them" bash -c '
+    . "$1"; . "$2"
+    user_home() { printf "%s\n" "$3"; }
+    plugin_add_line() { printf "%s\n" "$2" >> "$1"; }
+    body=$(declare -f systui_shell_plugins_write_all)
+    case "$body" in *"plugin_init_line"*) : ;; *) echo "does not use the init table"; exit 1 ;; esac
+    case "$body" in *"plugin_add_line"*) : ;; *) echo "does not write the line"; exit 1 ;; esac' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "the init table is filtered per shell (POSIX has no starship)" bash -c '
+    . "$1"; . "$2"
+    [ -z "$(plugin_init_line starship posix)" ] && [ -n "$(plugin_init_line zoxide posix)" ]' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
 # --- plugin entry-file detection -------------------------------------------
 for pair in "bash plug.sh" "elvish plug.elv" "xonsh plug.xsh" "pwsh plug.ps1" "nu plug.nu"; do
     sh="${pair%% *}"; fn="${pair#* }"
@@ -297,8 +388,11 @@ check "the plugins menu exposes the all-shell actions" bash -c '
 check "the shell-config menu offers another file and another shell" bash -c '
     . "$1"; . "$2"
     body=$(declare -f menu_shell_config)
-    case "$body" in *"Select another config file"*) : ;; *) exit 1 ;; esac
-    case "$body" in *"shellcfg_choose_shell "*) : ;; *) exit 1 ;; esac' _ \
+    case "$body" in *"shellcfg_choose_shell "*) : ;; *) echo "no shell chooser"; exit 1 ;; esac
+    actions=$(declare -f _shellcfg_file_actions)
+    case "$actions" in *"Select another config file"*) : ;; *) echo "no file chooser"; exit 1 ;; esac
+    case "$actions" in *"shellcfg_populated_entries"*) : ;; *) echo "no populate action"; exit 1 ;; esac
+    case "$actions" in *"shellcfg_validate"*) : ;; *) echo "no validate action"; exit 1 ;; esac' _ \
     "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
 check "the module is registered in the load manifest" bash -c '
     want=$(basename "$1"); found=0

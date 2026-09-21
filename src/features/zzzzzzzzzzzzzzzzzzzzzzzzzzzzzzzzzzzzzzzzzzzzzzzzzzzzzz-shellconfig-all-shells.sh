@@ -507,8 +507,39 @@ _shellcfg_kind_shell() { # <kind> -> owning shell id (fallback: the kind itself)
 }
 
 # --- config menu ------------------------------------------------------------
+# The per-file action loop is shared: the global menu (pick a shell, then a file)
+# and the per-shell menu both use it. Return codes: 0 = choose another file,
+# 1 = back out, 2 = the user was retargeted.
+_shellcfg_file_actions() { # <kind> <file> <user>
+    local k="$1" f="$2" u="$3" c line
+    while true; do
+        c=$(tui_menu "Shell config — $(basename "$f")" \
+            "User: $u\nShell: $(systui_shell_label "$(_shellcfg_kind_shell "$k")")\nFile: $f" \
+            populate "Populate common configuration entries" \
+            add "Add a custom configuration line" \
+            edit "Open in editor" \
+            view "View current configuration" \
+            validate "Validate syntax" \
+            backup "Create timestamped backup" \
+            reset "Remove only the systui-managed settings block" \
+            file "Select another config file" user "Change target user" back "Back") || return 1
+        case "$c" in
+            populate) shellcfg_populated_entries "$k" "$f" "$u" ;;
+            add) line=$(tui_input "Add entry" "Enter the exact configuration line:" "") || continue; [ -n "$line" ] && plugin_add_line "$f" "$line" "$u" ;;
+            edit) mkdir -p "$(dirname "$f")"; touch "$f"; chown "$u" "$f" 2>/dev/null || true; safe_edit "$f" || true ;;
+            view) [ -f "$f" ] && tui_text "$f" "$f" || tui_msg "Shell config" "$f does not exist yet." ;;
+            validate) shellcfg_validate "$k" "$f" ;;
+            backup) shellcfg_backup "$f" "$u" ;;
+            reset) [ -f "$f" ] && sed -i '/^# >>> systui shell settings >>>$/,/^# <<< systui shell settings <<<$/{d}' "$f"; tui_msg "Done" "Removed the systui-managed settings block." ;;
+            file) return 0 ;;
+            user) return 2 ;;
+            back|"") return 1 ;;
+        esac
+    done
+}
+
 menu_shell_config() {
-    local target u home_dir id k f c line
+    local target u home_dir id k f rc
     target=$(shellcfg_target) || return 0; u=${target%%|*}; home_dir=${target#*|}
     while true; do
         id=$(shellcfg_choose_shell "$home_dir") || return 0
@@ -517,33 +548,14 @@ menu_shell_config() {
             k=$(shellcfg_choose_shell_file "$id" "$home_dir") || break
             [ -z "$k" ] || [ "$k" = back ] && break
             f=$(shellcfg_file_for "$k" "$home_dir")
-            while true; do
-                c=$(tui_menu "Shell config — $(basename "$f")" \
-                    "User: $u\nShell: $(systui_shell_label "$id")\nFile: $f" \
-                    populate "Populate common configuration entries" \
-                    add "Add a custom configuration line" \
-                    edit "Open in editor" \
-                    view "View current configuration" \
-                    validate "Validate syntax" \
-                    backup "Create timestamped backup" \
-                    reset "Remove only the systui-managed settings block" \
-                    file "Select another config file" user "Change target user" back "Back") || return 0
-                case "$c" in
-                    populate) shellcfg_populated_entries "$k" "$f" "$u" ;;
-                    add) line=$(tui_input "Add entry" "Enter the exact configuration line:" "") || continue; [ -n "$line" ] && plugin_add_line "$f" "$line" "$u" ;;
-                    edit) mkdir -p "$(dirname "$f")"; touch "$f"; chown "$u" "$f" 2>/dev/null || true; safe_edit "$f" || true ;;
-                    view) [ -f "$f" ] && tui_text "$f" "$f" || tui_msg "Shell config" "$f does not exist yet." ;;
-                    validate) shellcfg_validate "$k" "$f" ;;
-                    backup) shellcfg_backup "$f" "$u" ;;
-                    reset) [ -f "$f" ] && sed -i '/^# >>> systui shell settings >>>$/,/^# <<< systui shell settings <<<$/{d}' "$f"; tui_msg "Done" "Removed the systui-managed settings block." ;;
-                    file) break ;;
-                    user)
-                        target=$(shellcfg_target) || continue
-                        u=${target%%|*}; home_dir=${target#*|}
-                        break 2 ;;
-                    back|"") return 0 ;;
-                esac
-            done
+            rc=0
+            _shellcfg_file_actions "$k" "$f" "$u" || rc=$?
+            if [ "$rc" = 2 ]; then
+                target=$(shellcfg_target) || return 0
+                u=${target%%|*}; home_dir=${target#*|}
+                break
+            fi
+            [ "$rc" = 1 ] && return 0
         done
     done
 }
@@ -1015,3 +1027,346 @@ export -f systui_shell_registry systui_shell_ids systui_shell_field \
     aliases_dialect_file \
     alias_pairs aliases_write_dialects aliases_write_fish aliases_enable \
     systui_plugin_entry_file systui_plugin_entry_line
+
+# --- per-shell managers -----------------------------------------------------
+# Every shell systui knows gets the same manager surface — install/reinstall,
+# uninstall, default login shell, configuration files, plugins and the alias
+# dialect — instead of only bash/zsh/fish/nushell having one and the rest living
+# behind a separate "More shells" install-only list.
+
+# The concrete binaries a registry entry stands for. Entries that cover a family
+# (POSIX sh, Korn shell, C shell) can be installed as any of their members.
+systui_shell_entry_bins() { # <shell>
+    case "$1" in
+        posix) printf 'dash yash ash\n' ;;
+        ksh)   printf 'ksh mksh\n' ;;
+        tcsh)  printf 'tcsh csh\n' ;;
+        *)     systui_shell_bin "$1" ;;
+    esac
+}
+
+systui_shell_for_bin() { # <binary> -> registry id
+    case "$1" in
+        dash|ash|yash|sh) printf 'posix\n' ;;
+        ksh|mksh|pdksh)   printf 'ksh\n' ;;
+        tcsh|csh)         printf 'tcsh\n' ;;
+        nu)               printf 'nu\n' ;;
+        pwsh|powershell)  printf 'pwsh\n' ;;
+        bash|zsh|fish|elvish|xonsh) printf '%s\n' "$1" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+systui_shell_bin_label() { # <binary>
+    case "$1" in
+        dash)  printf 'dash — Debian Almquist shell (fast, minimal POSIX sh)\n' ;;
+        ash)   printf 'ash — BusyBox/POSIX shell\n' ;;
+        yash)  printf 'yash — yet another shell (POSIX, advanced scripting)\n' ;;
+        ksh)   printf 'KornShell 93u+m (AT&T ksh93 with modern fixes)\n' ;;
+        mksh)  printf 'mksh — MirBSD Korn shell (small, fast, portable)\n' ;;
+        csh)   printf 'csh — classic C shell\n' ;;
+        tcsh)  printf 'tcsh — TENEX C shell (completion, history)\n' ;;
+        nu)    printf 'Nushell — structured-data shell\n' ;;
+        pwsh)  printf 'PowerShell — cross-platform automation shell (.NET)\n' ;;
+        *)     printf '%s\n' "$(systui_shell_label "$(systui_shell_for_bin "$1")")" ;;
+    esac
+}
+
+# systui_shell_state_note <shell> <user>: what the menu says about a shell.
+systui_shell_state_note() {
+    local id="$1" u="$2" bins b found="" cur cur_flag=""
+    cur=$(getent passwd "$u" 2>/dev/null | cut -d: -f7)
+    [ -n "$cur" ] && cur=$(basename "$cur")
+    for b in $(systui_shell_entry_bins "$id"); do
+        if command -v "$b" >/dev/null 2>&1; then found="$found $b"; fi
+        if [ -n "$cur" ] && [ "$b" = "$cur" ]; then cur_flag=", current login shell"; fi
+    done
+    if [ -n "$found" ]; then printf 'installed:%s%s' "$found" "$cur_flag"
+    else printf 'not installed%s' "$cur_flag"; fi
+}
+
+systui_shell_install_action() { # <shell> <user> <home>
+    local id="$1" bins b n choice args=()
+    bins=$(systui_shell_entry_bins "$id")
+    n=0
+    for b in $bins; do n=$((n + 1)); done
+    if [ "$n" -gt 1 ]; then
+        for b in $bins; do args+=("$b" "$(systui_shell_bin_label "$b")" off); done
+        args+=(back "Back")
+        choice=$(tui_menu "Install $(systui_shell_label "$id")" "Which shell from this family?" "${args[@]}") || return 0
+        if [ -z "$choice" ] || [ "$choice" = back ]; then return 0; fi
+        b="$choice"
+    else
+        b="$bins"
+    fi
+    case "$id" in
+        bash) pm_install bash ;;
+        zsh)  menu_zsh_install ;;
+        fish) menu_fish_install ;;
+        nu)   menu_nushell_install ;;
+        *)    menu_shell_install_any "$b" "$(systui_shell_bin_label "$b")" ;;
+    esac
+}
+
+# The frameworks/plugin managers that exist for a given shell. Shells without an
+# ecosystem get an explanation instead of an empty menu.
+systui_shell_framework_menu() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" c
+    case "$id" in
+        bash) c=$(tui_menu "Bash frameworks — $u" "Plugin frameworks for Bash:" \
+                  omb "oh-my-bash (framework, themes, plugins)" \
+                  bashit "Bash-it (framework with plugins and aliases)" \
+                  blesh "ble.sh (line editor: autosuggestions, highlighting)" \
+                  back "Back") || return 0
+              case "$c" in omb) menu_omb "$u" "$h" ;; bashit) menu_bashit "$u" "$h" ;; blesh) menu_blesh "$u" "$h" ;; esac ;;
+        zsh)  c=$(tui_menu "Zsh frameworks — $u" "Plugin frameworks for Zsh:" \
+                  omz "oh-my-zsh (framework)" \
+                  zinit "zinit (plugin manager)" \
+                  azp "awesome-zsh-plugins catalogue (space-select)" \
+                  back "Back") || return 0
+              case "$c" in omz) menu_omz "$u" "$h" ;; zinit) menu_zinit "$u" "$h" ;; azp) menu_azp "$u" "$h" ;; esac ;;
+        fish) c=$(tui_menu "Fish plugins — $u" "Plugin manager for Fish:" \
+                  fisher "Fisher (install/update/remove Fish plugins)" \
+                  back "Back") || return 0
+              case "$c" in fisher) menu_fisher "$u" "$h" ;; esac ;;
+        nu)   c=$(tui_menu "Nushell plugins — $u" "Nushell:" \
+                  plugins "Manage nushell plugins (nu_plugin_*)" \
+                  install "Install/reinstall Nushell" \
+                  back "Back") || return 0
+              case "$c" in plugins) menu_nushell_plugins ;; install) menu_nushell_install ;; esac ;;
+        *)
+            tui_msg "$(systui_shell_label "$id") plugins" \
+                "$(systui_shell_label "$id") has no plugin framework of its own.\n\nUse the integration lines in the plugins menu (Starship, zoxide, fzf and\nfriends all support it) or a custom plugin source." ;;
+    esac
+}
+
+# systui_shell_plugins_write_all <shell> <user> <home>: every tool in the init
+# table that supports this shell.
+systui_shell_plugins_write_all() {
+    local id="$1" u="$2" h="$3" tool line rc written="" absent=""
+    rc=$(plugin_rc_file "$id" "$h")
+    while IFS= read -r tool; do
+        line=$(plugin_init_line "$tool" "$id")
+        if [ -n "$line" ]; then
+            plugin_add_line "$rc" "$line" "$u"
+            written="$written $tool"
+        else
+            absent="$absent $tool"
+        fi
+    done <<< "$(plugin_init_tools)"
+    [ -n "$absent" ] && note "no integration line for:$absent"
+    tui_msg "$(systui_shell_label "$id") plugins" "Integration lines written to $rc${written:+ for:}$written${absent:+
+
+(not available for this shell:$absent)}"
+}
+
+systui_shell_plugins_menu() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" rc c tool args=() line sel status_file
+    rc=$(plugin_rc_file "$id" "$h")
+    while true; do
+        c=$(tui_menu "$(systui_shell_label "$id") plugins — $u" "Integration file: $rc" \
+            all "Write the integration line for every available tool" \
+            one "Write one tool's integration line" \
+            custom "Add a custom plugin/rc source line" \
+            status "Show what is configured in $rc" \
+            view "View the integration file" \
+            framework "Plugin framework / manager for this shell" \
+            back "Back") || return 0
+        case "$c" in
+            all) systui_shell_plugins_write_all "$id" "$u" "$h" ;;
+            one)
+                args=()
+                while IFS= read -r tool; do
+                    line=$(plugin_init_line "$tool" "$id")
+                    [ -n "$line" ] || continue
+                    args+=("$tool" "$(plugin_init_tool_label "$tool")" off)
+                done <<< "$(plugin_init_tools)"
+                if [ "${#args[@]}" -eq 0 ]; then
+                    tui_msg "No tools" "No cross-shell tool has an integration line for $(systui_shell_label "$id")."
+                    continue
+                fi
+                args+=(back "Back")
+                tool=$(tui_menu "Integration line" "Which tool?" "${args[@]}") || continue
+                if [ -z "$tool" ] || [ "$tool" = back ]; then continue; fi
+                line=$(plugin_init_line "$tool" "$id")
+                [ -n "$line" ] && plugin_add_line "$rc" "$line" "$u"
+                tui_msg "$(plugin_init_tool_label "$tool")" "Written to $rc:\n$line" ;;
+            custom)
+                sel=$(tui_input "Custom plugin source" "Path to a file or directory to load in $(systui_shell_label "$id"):" "") || continue
+                if [ -n "$sel" ]; then
+                    if [ -d "$sel" ]; then
+                        line=$(systui_plugin_entry_line "$id" "$sel")
+                    else
+                        line=$(plugin_source_line "$id" "$sel")
+                    fi
+                    plugin_add_line "$rc" "$line" "$u"
+                    tui_msg "Custom plugin" "Written to $rc:\n$line"
+                fi ;;
+            status)
+                status_file="${SYSTUI_TMP}/shell-plugin-status.$$"
+                {
+                    echo "Shell : $(systui_shell_label "$id")"
+                    echo "File  : $rc"
+                    echo
+                    if [ -f "$rc" ]; then
+                        printf 'Lines matching a known tool:\n'
+                        while IFS= read -r tool; do
+                            line=$(plugin_init_line "$tool" "$id")
+                            [ -n "$line" ] || continue
+                            grep -nF "$line" "$rc" 2>/dev/null | sed 's/^/  /'
+                        done <<< "$(plugin_init_tools)"
+                        printf '\nCustom source lines:\n'
+                        grep -n '^\. \|^source ' "$rc" 2>/dev/null | sed 's/^/  /'
+                    else
+                        echo "(no integration file yet)"
+                    fi
+                } > "$status_file"
+                tui_text "$(systui_shell_label "$id") plugin status" "$status_file"
+                rm -f "$status_file" ;;
+            view) if [ -f "$rc" ]; then tui_text "$rc" "$rc"; else tui_msg "Integration file" "$rc does not exist yet."; fi ;;
+            framework) systui_shell_framework_menu "$id" "$u" "$h" ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+systui_shell_alias_action() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" af f line
+    af=$(alias_file_for "$h")
+    mkdir -p "$(dirname "$af")" 2>/dev/null || true
+    [ -f "$af" ] || { : > "$af"; chown "$u" "$af" 2>/dev/null || true; }
+    aliases_write_dialects "$af" "$u"
+    case "$id" in
+        bash|zsh|posix|ksh) f="$af" ;;
+        fish)   f=$(aliases_dialect_file "$h" fish) ;;
+        tcsh)   f=$(aliases_dialect_file "$h" tcsh) ;;
+        nu)     f=$(aliases_dialect_file "$h" nu) ;;
+        xonsh)  f=$(aliases_dialect_file "$h" xonsh) ;;
+        elvish) f=$(aliases_dialect_file "$h" elvish) ;;
+        pwsh)   f=$(aliases_dialect_file "$h" ps1) ;;
+        *)      f="$af" ;;
+    esac
+    if systui_shell_installed "$id"; then
+        line=$(plugin_source_line "$id" "$f")
+        plugin_add_line "$(plugin_rc_file "$id" "$h")" "$line" "$u"
+        tui_msg "$(systui_shell_label "$id") aliases" "Regenerated from the managed alias list and sourced from\n$(plugin_rc_file "$id" "$h"):\n$f"
+    else
+        tui_msg "$(systui_shell_label "$id") aliases" "$(systui_shell_label "$id") is not installed; the dialect file was\nwritten to $f and will be sourced once the shell is installed."
+    fi
+}
+
+systui_shell_manager_menu() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" c rc bins
+    bins=$(systui_shell_entry_bins "$id")
+    rc=$(plugin_rc_file "$id" "$h")
+    while true; do
+        c=$(tui_menu "$(systui_shell_label "$id") — $u" "Binaries: $bins\nIntegration file: $rc\n$(systui_shell_state_note "$id" "$u")" \
+            config "Configuration files (populate, edit, validate, back up)" \
+            plugins "Plugins (integration lines, custom sources, status)" \
+            aliases "Alias dialect for this shell" \
+            view "View the integration file" \
+            install "Install/reinstall $(systui_shell_label "$id")" \
+            default "Set as the default login shell" \
+            uninstall "Uninstall $(systui_shell_label "$id")" \
+            framework "Plugin framework / manager for this shell" \
+            advanced "Advanced shell settings (umask, TMOUT, PATH, PS1)" \
+            back "Back") || return 0
+        case "$c" in
+            config) menu_shell_config_for "$id" "$u" "$h" ;;
+            plugins) systui_shell_plugins_menu "$id" "$u" "$h" ;;
+            aliases) systui_shell_alias_action "$id" "$u" "$h" ;;
+            view) if [ -f "$rc" ]; then tui_text "$rc" "$rc"; else tui_msg "Integration file" "$rc does not exist yet."; fi ;;
+            install) systui_shell_install_action "$id" "$u" "$h" ;;
+            default) menu_set_default_shell ;;
+            uninstall)
+                if [ "$id" = posix ] || [ "$id" = ksh ] || [ "$id" = tcsh ]; then
+                    local b choice args=()
+                    for b in $bins; do args+=("$b" "$(systui_shell_bin_label "$b")" off); done
+                    args+=(back "Back")
+                    choice=$(tui_menu "Uninstall $(systui_shell_label "$id")" "Which one?" "${args[@]}") || continue
+                    if [ -z "$choice" ] || [ "$choice" = back ]; then continue; fi
+                    safe_remove_shell "$choice"
+                else
+                    safe_remove_shell "$(systui_shell_bin "$id")"
+                fi ;;
+            framework) systui_shell_framework_menu "$id" "$u" "$h" ;;
+            advanced) menu_shell_advanced ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+# Configuration menu scoped to one shell (also used by the shell list below).
+menu_shell_config_for() { # <shell> <user> <home>
+    local id="$1" u="$2" h="$3" k f rc
+    while true; do
+        k=$(shellcfg_choose_shell_file "$id" "$h") || return 0
+        if [ -z "$k" ] || [ "$k" = back ]; then return 0; fi
+        f=$(shellcfg_file_for "$k" "$h")
+        rc=0
+        _shellcfg_file_actions "$k" "$f" "$u" || rc=$?
+        # 2 (change user) has no meaning here: the manager menu owns the user.
+        [ "$rc" = 0 ] || return 0
+    done
+}
+
+# The shell list: every shell systui manages, in one menu, with the same manager
+# behind each entry. The old front door listed bash/zsh/fish/nushell plus tmux and
+# hid dash/ksh/mksh/tcsh/elvish/xonsh/yash/pwsh behind a separate install-only
+# "More shells" entry.
+systui_shell_managers_menu() {
+    local u h c id label args=()
+    u=$(tui_input "Shell Managers" "Manage shells for which user?" "${SUDO_USER:-root}") || return 0
+    h=$(user_home "$u")
+    [ -n "$h" ] || { tui_msg "Error" "User '$u' was not found."; return 0; }
+    while true; do
+        args=()
+        for id in $(systui_shell_ids); do
+            label=$(systui_shell_label "$id")
+            args+=("$id" "$label — $(systui_shell_state_note "$id" "$u")" off)
+        done
+        args+=(tmux "tmux — install/update, plugins, config and sessions" off)
+        if declare -F menu_shell_runtime_commands >/dev/null 2>&1; then
+            args+=(runtime "Shell runtime configuration (launch command / boot command)" off)
+        fi
+        if declare -F menu_shell_init_login >/dev/null 2>&1; then
+            args+=(login "Login shells, /etc/shells and the /bin/sh provider" off)
+        fi
+        if declare -F systui_shell_init_services_menu >/dev/null 2>&1; then
+            args+=(initmgr "Init & services manager" off)
+        fi
+        args+=(advanced "Advanced shell settings (umask, TMOUT, PATH, PS1)" off)
+        args+=(back "Back")
+        c=$(tui_menu "Shells — $u" "Install, remove or configure any shell. Current init: ${INIT:-unknown}" "${args[@]}") || return 0
+        case "$c" in
+            ''|back) return 0 ;;
+            tmux) menu_tmux "$u" "$h" ;;
+            runtime) menu_shell_runtime_commands ;;
+            login) menu_shell_init_login ;;
+            initmgr) systui_shell_init_services_menu ;;
+            advanced) menu_shell_advanced ;;
+            *) systui_shell_manager_menu "$c" "$u" "$h" ;;
+        esac
+    done
+}
+
+# The runtime hierarchy dispatches through these names, so pointing them at the
+# all-shell list is what puts every shell in the main menu.
+_systui_base_menu_shell_hierarchy_logininit() { systui_shell_managers_menu "$@"; }
+_systui_base_menu_shell_hierarchy_runtime() { systui_shell_managers_menu "$@"; }
+_systui_shell_hierarchy_before_tmux_final() { systui_shell_managers_menu "$@"; }
+
+# menu_plain_shell was the install-only manager for the additional shells; keep
+# it as an entry point but give it the full manager surface.
+menu_plain_shell() { # <user> <home> <shell> <display> <blurb>
+    local id
+    id=$(systui_shell_for_bin "$3")
+    systui_shell_manager_menu "$id" "$1" "$2"
+}
+
+export -f systui_shell_entry_bins systui_shell_for_bin systui_shell_bin_label \
+    systui_shell_state_note systui_shell_install_action systui_shell_framework_menu \
+    systui_shell_plugins_write_all systui_shell_plugins_menu systui_shell_alias_action \
+    systui_shell_manager_menu menu_shell_config_for systui_shell_managers_menu \
+    _systui_base_menu_shell_hierarchy_logininit _systui_base_menu_shell_hierarchy_runtime \
+    _systui_shell_hierarchy_before_tmux_final menu_plain_shell _shellcfg_file_actions
