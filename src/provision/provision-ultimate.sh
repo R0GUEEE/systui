@@ -37,6 +37,20 @@ if [ "$(id -u)" != 0 ]; then
 fi
 
 log()  { printf '\n\033[1;36m==>\033[0m \033[1m%s\033[0m\n' "$*"; }
+
+# Wall-clock markers: a long provisioning run is much easier to trust (and to
+# report as "stuck") when each milestone says how long the run has taken.
+_PROV_T0=0
+_elapsed() {  # seconds since the run started (empty when `date` is unavailable)
+    _now="$(date +%s 2>/dev/null)"
+    case "${_now:-}" in ''|*[!0-9]*) return 0 ;; esac
+    [ "${_PROV_T0:-0}" -gt 0 ] 2>/dev/null || return 0
+    printf '%s' "$((_now - _PROV_T0))"
+}
+_milestone() {  # _milestone <label>
+    _el="$(_elapsed)"
+    if [ -n "$_el" ]; then note "$1 (elapsed ${_el}s)"; else note "$1"; fi
+}
 note() { printf '    %s\n' "$*"; }
 warn() { printf '\033[1;33mWARN\033[0m %s\n' "$*"; }
 
@@ -56,18 +70,35 @@ detect_distro() {
 }
 
 detect_init_system() {
-    if [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; then
+    # INSPECTION ONLY -- /sbin/init is NEVER executed here.
+    # On iSH-AOK /sbin/init is a live PID-1 supervisor (systui's systemd
+    # compatibility launcher), so probing it with `/sbin/init --version` starts
+    # a real init; the probe then blocks forever waiting for that init, and
+    # provisioning appears frozen before its first status line. Every check
+    # below is a file/process inspection that cannot block.
+    SYSTUI_NONBLOCKING_INIT_DETECT=1
+    _init_pid1="$(cat /proc/1/comm 2>/dev/null)"
+    _init_link="$(readlink /sbin/init 2>/dev/null)"
+    _init_is() {  # _init_is <name>: does the PID-1 name or /sbin/init target match?
+        case "$_init_pid1 $_init_link" in
+            *"$1"*) return 0 ;;
+        esac
+        return 1
+    }
+    if _init_is systemd || { [ -d /run/systemd/system ] && command -v systemctl >/dev/null 2>&1; } || \
+       [ -r /etc/systui/ish-systemd-compat.conf ] || \
+       [ -x /lib/systemd/systemd ] || [ -x /usr/lib/systemd/systemd ]; then
         INIT_SYSTEM="systemd"
-    elif ([ -L /sbin/init ] && readlink /sbin/init 2>/dev/null | grep -q sysvinit) || \
-         ([ -x /sbin/init ] && /sbin/init --version 2>&1 | grep -qi sysvinit); then
+    elif _init_is sysvinit || [ -x /lib/sysvinit/init ] || [ -x /usr/lib/sysvinit/init ]; then
         INIT_SYSTEM="sysvinit"
-    elif command -v rc-service >/dev/null 2>&1; then
+    elif command -v rc-service >/dev/null 2>&1 || command -v openrc >/dev/null 2>&1; then
         INIT_SYSTEM="openrc"
-    elif command -v sv >/dev/null 2>&1; then
+    elif _init_is runit || command -v sv >/dev/null 2>&1; then
         INIT_SYSTEM="runit"
     else
         INIT_SYSTEM="unknown"
     fi
+    return 0
 }
 
 detect_package_manager() {
@@ -86,18 +117,135 @@ detect_package_manager() {
 detect_distro
 detect_init_system
 detect_package_manager
+_PROV_T0="$(date +%s 2>/dev/null)"
+case "${_PROV_T0:-}" in ''|*[!0-9]*) _PROV_T0=0 ;; esac
 note "Detected: $DISTRO_NAME ($DISTRO_ID) - packages: $PACKAGE_MANAGER - init: $INIT_SYSTEM"
 [ "$PACKAGE_MANAGER" != unknown ] || {
     warn "No supported package manager was found (apt, apk, pacman, dnf/yum, zypper, XBPS, or Portage)."
     exit 2
 }
 
-# Timeout helper: wraps a command with 'timeout' when available so stalled
-# network downloads never hang the script indefinitely.
-_HAS_TIMEOUT=0
-command -v timeout >/dev/null 2>&1 && _HAS_TIMEOUT=1
-_rto() {  # _rto <secs> <cmd...>
-    if [ "$_HAS_TIMEOUT" = 1 ]; then timeout "$@"; else shift; "$@"; fi
+# ---- bounded, non-interactive command runner ------------------------------
+# Every step that can block (package managers, service managers, account and
+# ssh tooling) must go through _rto. It exists because "provisioning is stuck"
+# had three separate causes on emulated hosts, and it removes all three:
+#
+#   1. a command that waits for input. stdin is always /dev/null, so a
+#      maintainer script, a licence/GPG prompt or a compat launcher asking a
+#      question gets EOF instead of blocking the whole run forever;
+#   2. no wall-clock limit. A hard limit is enforced by a watchdog subshell, so
+#      it works even where coreutils 'timeout' is missing or cannot kill a
+#      wedged child;
+#   3. no feedback. The watchdog prints a heartbeat, so a slow-but-alive step
+#      is visibly different from a hang.
+#
+# Knobs: PROVISION_HEARTBEAT=<secs> (0 disables), PROVISION_TIMEOUT_MAX=<secs>
+# caps every limit, PROVISION_NO_TIMEOUT=1 opts out (foreground, blocking).
+_STEP_T0=0
+_heartbeat="${PROVISION_HEARTBEAT:-20}"
+case "$_heartbeat" in ''|*[!0-9]*) _heartbeat=20 ;; esac
+_timeout_max="${PROVISION_TIMEOUT_MAX:-}"
+case "$_timeout_max" in ''|*[!0-9]*) _timeout_max=0 ;; esac
+_HAS_SLEEP=0
+command -v sleep >/dev/null 2>&1 && _HAS_SLEEP=1
+_heartbeat_tick="$_heartbeat"
+[ "$_heartbeat_tick" -gt 0 ] 2>/dev/null || _heartbeat_tick=1
+note "Step limits: ${_timeout_max:-no} cap per step, heartbeat every ${_heartbeat}s (PROVISION_NO_TIMEOUT=1 / PROVISION_TIMEOUT_MAX=<s> adjust this)."
+
+_rto() {  # _rto <secs> <cmd...>  -> command status, 124 when the limit fired
+    _rto_secs="$1"; shift
+    case "$_rto_secs" in ''|*[!0-9]*) _rto_secs=300 ;; esac
+    if [ "$_timeout_max" -gt 0 ] && [ "$_rto_secs" -gt "$_timeout_max" ]; then
+        _rto_secs="$_timeout_max"
+    fi
+    if [ "${PROVISION_NO_TIMEOUT:-0}" = 1 ] || [ "$_HAS_SLEEP" != 1 ]; then
+        [ "$_HAS_SLEEP" = 1 ] || warn "no 'sleep' on this host: steps cannot be time-bounded"
+        ( "$@" ) < /dev/null
+        return $?
+    fi
+    _rto_label="$1"
+    ( "$@" ) < /dev/null &
+    _rto_pid=$!
+    (
+        _rto_wait=0
+        while kill -0 "$_rto_pid" 2>/dev/null; do
+            sleep "$_heartbeat_tick"
+            _rto_wait=$((_rto_wait + _heartbeat_tick))
+            if [ "$_rto_wait" -ge "$_rto_secs" ]; then
+                printf '    ... limit reached (%ss): %s -- terminating it\n' \
+                    "$_rto_secs" "$_rto_label" >&2
+                kill -TERM "$_rto_pid" 2>/dev/null
+                sleep 3
+                kill -KILL "$_rto_pid" 2>/dev/null
+                exit 0
+            fi
+            [ "$_heartbeat" -gt 0 ] || continue
+            printf '    ... still running (%ss): %s\n' "$_rto_wait" "$_rto_label" >&2
+        done
+    ) &
+    _rto_wd=$!
+    wait "$_rto_pid"
+    _rto_rc=$?
+    kill "$_rto_wd" 2>/dev/null
+    wait "$_rto_wd" 2>/dev/null
+    case "$_rto_rc" in
+        143|137) return 124 ;;  # TERM/KILL -> report it as a time-out, like `timeout`
+    esac
+    return "$_rto_rc"
+}
+
+# ---- bounded service helpers ----------------------------------------------
+# Defined before their first use: the SSH section needs them long before the
+# service pass runs. (The script used to call an undefined `service_restart`,
+# so the hardened sshd_config was never actually picked up by a running sshd.)
+_svc_pick() {  # _svc_pick <candidate>... -> first service that exists (stdout)
+    _sp_name=""
+    for _sp_cand in "$@"; do
+        case "$INIT_SYSTEM" in
+            systemd) _rto 30 systemctl list-unit-files "$_sp_cand.service" 2>/dev/null | grep -q "^$_sp_cand\.service" && _sp_name="$_sp_cand" ;;
+            runit) [ -d "/etc/sv/$_sp_cand" ] && _sp_name="$_sp_cand" ;;
+            *) [ -x "/etc/init.d/$_sp_cand" ] && _sp_name="$_sp_cand" ;;
+        esac
+        [ -z "$_sp_name" ] || break
+    done
+    [ -n "$_sp_name" ] && printf '%s\n' "$_sp_name"
+    return 0
+}
+
+_svc_activate() {  # _svc_activate <service> -> 0 ok, 124 the service manager hung
+    _sa_svc="$1"; _sa_rc=0
+    case "$INIT_SYSTEM" in
+        systemd)
+            _rto 60 systemctl enable "$_sa_svc" >/dev/null 2>&1 || true
+            _rto 90 systemctl restart "$_sa_svc" >/dev/null 2>&1 \
+                || _rto 90 systemctl start "$_sa_svc" >/dev/null 2>&1 \
+                || _sa_rc=$?
+            ;;
+        openrc)
+            _rto 90 rc-update add "$_sa_svc" default >/dev/null 2>&1 || true
+            _rto 90 rc-service "$_sa_svc" restart >/dev/null 2>&1 \
+                || _rto 90 rc-service "$_sa_svc" start >/dev/null 2>&1 \
+                || _sa_rc=$?
+            ;;
+        runit)
+            if [ -d "/etc/sv/$_sa_svc" ]; then
+                mkdir -p /var/service
+                ln -sfn "/etc/sv/$_sa_svc" "/var/service/$_sa_svc"
+            fi
+            _rto 90 sv restart "$_sa_svc" >/dev/null 2>&1 \
+                || _rto 90 sv up "$_sa_svc" >/dev/null 2>&1 \
+                || _sa_rc=$?
+            ;;
+        sysvinit)
+            command -v update-rc.d >/dev/null 2>&1 && _rto 60 update-rc.d "$_sa_svc" defaults >/dev/null 2>&1 || true
+            command -v chkconfig >/dev/null 2>&1 && _rto 60 chkconfig "$_sa_svc" on >/dev/null 2>&1 || true
+            _rto 90 service "$_sa_svc" restart >/dev/null 2>&1 \
+                || _rto 90 service "$_sa_svc" start >/dev/null 2>&1 \
+                || _sa_rc=$?
+            ;;
+        *) _sa_rc=1 ;;
+    esac
+    return "$_sa_rc"
 }
 
 # ---- config (env overrides; prompts interactively when run on a TTY) ------
@@ -257,26 +405,50 @@ if [ "$_bulk_ok" = 1 ]; then
     INSTALLED_COUNT=$(echo $PKGS | wc -w); SKIPPED_COUNT=0
 else
     note "bulk install failed or timed out; falling back to per-package (slower)..."
+    # Progress matters here: a 90-package fallback pass at 300s each can run for
+    # hours, and with no output that looks exactly like a hang. Report the
+    # position, and stop early when the package manager is wedged instead of
+    # grinding through the whole list.
+    _pkg_total=0
+    for _p in $PKGS; do _pkg_total=$((_pkg_total + 1)); done
+    _pkg_idx=0
+    _consec_timeouts=0
+    _max_consec="${PROVISION_MAX_CONSECUTIVE_TIMEOUTS:-3}"
+    case "$_max_consec" in ''|*[!0-9]*) _max_consec=3 ;; esac
     for p in $PKGS; do
+        _pkg_idx=$((_pkg_idx + 1))
+        note "[$_pkg_idx/$_pkg_total] $p"
         if install_one "$p"; then
             INSTALLED_COUNT=$((INSTALLED_COUNT + 1))
+            _consec_timeouts=0
         else
+            _install_rc=$?
             SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
             note "skipped: $p (unavailable or timed out)"
+            if [ "$_install_rc" = 124 ]; then
+                _consec_timeouts=$((_consec_timeouts + 1))
+            else
+                _consec_timeouts=0
+            fi
+            if [ "$_consec_timeouts" -ge "$_max_consec" ]; then
+                warn "$_consec_timeouts timed-out package operations in a row -- the package manager looks wedged, not merely slow."
+                note "Stopping the per-package pass at $_pkg_idx/$_pkg_total; re-run provisioning once the package manager responds."
+                break
+            fi
         fi
     done
 fi
-note "package pass complete: $INSTALLED_COUNT installed/already present, $SKIPPED_COUNT skipped"
+_milestone "package pass complete: $INSTALLED_COUNT installed/already present, $SKIPPED_COUNT skipped"
 if [ "$PACKAGE_MANAGER" = apt ]; then
-    dpkg --force-confold --configure -a || warn "Some Debian packages remain unconfigured; run: dpkg --configure -a"
-    apt-get clean || true
+    _rto 600 dpkg --force-confold --configure -a || warn "Some Debian packages remain unconfigured; run: dpkg --configure -a"
+    _rto 120 apt-get clean || true
 fi
 
 # Account tools and Bash now exist even on a minimal image.
 if [ -n "$TARGET_USER" ] && [ "$TARGET_USER" != root ] && ! id "$TARGET_USER" >/dev/null 2>&1; then
-    adduser --disabled-password --gecos "" --shell /bin/bash "$TARGET_USER" >/dev/null 2>&1 \
-        || adduser -D -s /bin/bash "$TARGET_USER" >/dev/null 2>&1 \
-        || useradd -m -s /bin/bash "$TARGET_USER" 2>/dev/null \
+    _rto 60 adduser --disabled-password --gecos "" --shell /bin/bash "$TARGET_USER" >/dev/null 2>&1 \
+        || _rto 60 adduser -D -s /bin/bash "$TARGET_USER" >/dev/null 2>&1 \
+        || _rto 60 useradd -m -s /bin/bash "$TARGET_USER" 2>/dev/null \
         || warn "Could not create login '$TARGET_USER'"
     id "$TARGET_USER" >/dev/null 2>&1 && note "created login '$TARGET_USER' (set its password with: passwd $TARGET_USER)"
 fi
@@ -305,9 +477,9 @@ if [ -f "/usr/share/zoneinfo/$TZ_NAME" ]; then
     ln -sf "/usr/share/zoneinfo/$TZ_NAME" /etc/localtime
     echo "$TZ_NAME" > /etc/timezone
     if [ "$INIT_SYSTEM" = "systemd" ]; then
-        timedatectl set-timezone "$TZ_NAME" 2>/dev/null || true
+        _rto 30 timedatectl set-timezone "$TZ_NAME" 2>/dev/null || true
     fi
-    command -v dpkg-reconfigure >/dev/null 2>&1 && dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1 || true
+    command -v dpkg-reconfigure >/dev/null 2>&1 && _rto 90 dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1 || true
     note "$(date)"
 else
     note "zoneinfo for '$TZ_NAME' not found; leaving clock as-is"
@@ -378,8 +550,8 @@ if command -v visudo >/dev/null 2>&1 && ! visudo -cf /etc/sudoers.d/aok-sudo >/d
 fi
 if [ -n "$TARGET_USER" ] && id "$TARGET_USER" >/dev/null 2>&1; then
     id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx "$ADMIN_GROUP" \
-        || usermod -aG "$ADMIN_GROUP" "$TARGET_USER" >/dev/null 2>&1 \
-        || adduser "$TARGET_USER" "$ADMIN_GROUP" >/dev/null 2>&1 \
+        || _rto 60 usermod -aG "$ADMIN_GROUP" "$TARGET_USER" >/dev/null 2>&1 \
+        || _rto 60 adduser "$TARGET_USER" "$ADMIN_GROUP" >/dev/null 2>&1 \
         || warn "Could not add $TARGET_USER to $ADMIN_GROUP"
     note "$TARGET_USER is in: $(id -nG "$TARGET_USER")"
 fi
@@ -390,7 +562,7 @@ log "Login shells -> bash"
 grep -qx /bin/bash /etc/shells 2>/dev/null || echo /bin/bash >> /etc/shells
 for u in root $TARGET_USER; do
     id "$u" >/dev/null 2>&1 || continue
-    chsh -s /bin/bash "$u" >/dev/null 2>&1 || usermod -s /bin/bash "$u" 2>/dev/null || true
+    _rto 60 chsh -s /bin/bash "$u" >/dev/null 2>&1 || _rto 60 usermod -s /bin/bash "$u" 2>/dev/null || true
 done
 note "root + ${TARGET_USER:-} now use bash"
 
@@ -521,9 +693,16 @@ _SSHEOF
             fi
         done
     fi
-    if sshd -t 2>/dev/null; then
-        service_restart sshd ssh 2>/dev/null || true
-        note "SSH hardening applied"
+    if _rto 30 sshd -t 2>/dev/null; then
+        _ssh_svc="$(_svc_pick ssh sshd)"
+        if [ -n "$_ssh_svc" ]; then
+            _svc_activate "$_ssh_svc"
+            _sshd_rc=$?
+            [ "$_sshd_rc" = 124 ] && warn "sshd did not restart within the limit; restart it manually: service $_ssh_svc restart"
+            note "SSH hardening applied"
+        else
+            note "SSH hardening written; no sshd service found to restart"
+        fi
     else
         warn "sshd -t validation failed after hardening -- check $_SSH_MAIN"
     fi
@@ -765,37 +944,16 @@ write_tmux /root root
 log "Enable + start services"
 # ===========================================================================
 apply_svc() {  # <logical-name> <candidate>...
-    _label="$1"; shift; _svc=""
-    for _candidate in "$@"; do
-        case "$INIT_SYSTEM" in
-            systemd) systemctl list-unit-files "$_candidate.service" 2>/dev/null | grep -q "^$_candidate\.service" && _svc="$_candidate" ;;
-            openrc|sysvinit) [ -x "/etc/init.d/$_candidate" ] && _svc="$_candidate" ;;
-            runit) [ -d "/etc/sv/$_candidate" ] && _svc="$_candidate" ;;
-        esac
-        [ -z "$_svc" ] || break
-    done
+    _label="$1"; shift
+    _svc="$(_svc_pick "$@")"
     [ -n "$_svc" ] || { note "  no service for $_label (skipped)"; return 0; }
 
-    case "$INIT_SYSTEM" in
-        systemd)
-            systemctl enable "$_svc" >/dev/null 2>&1 || true
-            systemctl restart "$_svc" >/dev/null 2>&1 || systemctl start "$_svc" >/dev/null 2>&1 || true
-            ;;
-        openrc)
-            rc-update add "$_svc" default >/dev/null 2>&1 || true
-            rc-service "$_svc" restart >/dev/null 2>&1 || rc-service "$_svc" start >/dev/null 2>&1 || true
-            ;;
-        runit)
-            mkdir -p /var/service
-            ln -sfn "/etc/sv/$_svc" "/var/service/$_svc"
-            sv restart "$_svc" >/dev/null 2>&1 || sv up "$_svc" >/dev/null 2>&1 || true
-            ;;
-        sysvinit)
-            command -v update-rc.d >/dev/null 2>&1 && update-rc.d "$_svc" defaults >/dev/null 2>&1 || true
-            command -v chkconfig >/dev/null 2>&1 && chkconfig "$_svc" on >/dev/null 2>&1 || true
-            service "$_svc" restart >/dev/null 2>&1 || service "$_svc" start >/dev/null 2>&1 || true
-            ;;
-    esac
+    # Service managers are bounded too: a compatible-but-wedged launcher (an
+    # iSH-AOK systemd shim, a hanging rc-script) must not freeze the whole run
+    # at the last step. 124 = the limit fired.
+    _svc_activate "$_svc"
+    _svc_rc=$?
+    [ "$_svc_rc" = 124 ] && warn "  $_label service call was terminated after its limit; configuration is complete but the service may not be running"
     note "  $_label -> $_svc"
 }
 
@@ -811,8 +969,8 @@ fi
 
 [ "${SKIP_SERVICES:-0}" = 1 ] || note "services enabled:"
 case "$INIT_SYSTEM" in
-    systemd) systemctl list-unit-files --state=enabled --type=service 2>/dev/null | grep -E '^(rsyslog|syslog-ng|ssh|sshd|cron|crond|chrony|chronyd)' | awk '{print "      " $1}' || true ;;
-    openrc) rc-status default 2>/dev/null | sed 's/^/      /' || true ;;
+    systemd) _rto 30 systemctl list-unit-files --state=enabled --type=service 2>/dev/null | grep -E '^(rsyslog|syslog-ng|ssh|sshd|cron|crond|chrony|chronyd)' | awk '{print "      " $1}' || true ;;
+    openrc) _rto 30 rc-status default 2>/dev/null | sed 's/^/      /' || true ;;
     runit) ls /var/service 2>/dev/null | sed 's/^/      /' || true ;;
     *) ls /etc/rc2.d/ 2>/dev/null | sed -n 's/^S[0-9]*//p' | sort -u | sed 's/^/      /' || true ;;
 esac
@@ -821,12 +979,13 @@ esac
 log "Done"
 # ===========================================================================
 printf '    %s\n' "$(date)"
+_milestone "provisioning finished"
 note "Running services:"
 case "$INIT_SYSTEM" in
-    systemd) systemctl list-units --type=service --state=running 2>/dev/null | awk '/\.service/{sub(/\.service/,"",$1); printf "%s ",$1} END{print ""}' | sed 's/^/      /' ;;
-    openrc) rc-status 2>/dev/null | sed -n '/started/s/^/      /p' || true ;;
-    runit) sv status /var/service/* 2>/dev/null | sed 's/^/      /' || true ;;
-    *) command -v service >/dev/null 2>&1 && service --status-all 2>&1 | grep -E '\[ \+ \]' | awk '{print $4}' | sort | tr '\n' ' ' | sed 's/^/      /' || true; echo ;;
+    systemd) _rto 30 systemctl list-units --type=service --state=running 2>/dev/null | awk '/\.service/{sub(/\.service/,"",$1); printf "%s ",$1} END{print ""}' | sed 's/^/      /' ;;
+    openrc) _rto 30 rc-status 2>/dev/null | sed -n '/started/s/^/      /p' || true ;;
+    runit) _rto 30 sv status /var/service/* 2>/dev/null | sed 's/^/      /' || true ;;
+    *) command -v service >/dev/null 2>&1 && _rto 30 service --status-all 2>&1 | grep -E '\[ \+ \]' | awk '{print $4}' | sort | tr '\n' ' ' | sed 's/^/      /' || true; echo ;;
 esac
 
 cat <<EOF

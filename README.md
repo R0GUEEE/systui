@@ -678,6 +678,40 @@ the run that were previously fixed in the script:
 * **Preview** — runs the tool with `PROVISION_DRY_RUN=1`, printing the package
   list and the settings it would use, and changing nothing.
 
+### Why provisioning no longer gets stuck
+
+Every step that can block goes through one bounded runner, so a single wedged
+child can no longer freeze the whole run:
+
+* **stdin is detached** (`/dev/null`) for every package and service command, so a
+  maintainer script, a licence/GPG prompt or a compatibility launcher asking a
+  question gets EOF instead of waiting for input that will never arrive.
+* **every step has a wall-clock limit**, enforced by a watchdog subshell rather
+  than by coreutils `timeout`, so it also works on hosts where `timeout` is
+  missing or cannot kill a wedged child. A step that reaches its limit is
+  terminated, reported, and the run continues (exit status 124, the same
+  convention as `timeout`).
+* **long steps print a heartbeat** (`... still running (120s): apk add ...`), so
+  slow-but-alive is visibly different from hung.
+* **the init system is detected by inspection only.** The old SysVinit probe ran
+  `/sbin/init --version`; on iSH-AOK `/sbin/init` is a live PID-1 supervisor
+  (systui's systemd compatibility launcher), so the probe started a real init and
+  then blocked forever — provisioning froze before printing its first status
+  line.
+* **the per-package fallback reports its position** (`[12/89] curl`) and stops
+  after `PROVISION_MAX_CONSECUTIVE_TIMEOUTS` (default 3) timed-out operations in
+  a row, instead of grinding through the whole list against a wedged package
+  manager.
+* **service activation is bounded too** (60–90 s per service), so a hanging
+  service manager cannot freeze the final step.
+
+Knobs, passed through the environment like the settings above:
+`PROVISION_HEARTBEAT=<secs>` (0 disables the heartbeat),
+`PROVISION_TIMEOUT_MAX=<secs>` (caps every limit, useful for tests),
+`PROVISION_MAX_CONSECUTIVE_TIMEOUTS=<n>`, and `PROVISION_NO_TIMEOUT=1` (run
+steps in the foreground and block — debugging only).
+
+
 Settings persist with the other provision options in
 `/etc/systui/provision-ultimate.conf`. Install status is compared against the
 *patched* payload, so a freshly installed tool reports **installed (current)**
