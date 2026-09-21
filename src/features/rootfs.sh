@@ -4357,7 +4357,13 @@ rootfs_bs_native_pkg() { # <tag>
 rootfs_backend_missing_cmds() { # <distro> <backend> [arch] [compression]
     local distro="$1" backend="$2" want_curl=0 i
     # Archive/compression and the Alpine key-seed path both want a downloader.
-    rootfs_archive_missing_tool "${4:-gz}" >/dev/null 2>&1  # no-op; we handle arch tools separately below
+    # The packer for the requested archive format is a real requirement: without
+    # this the build only fails at the very end, after the slow bootstrap.
+    case "${4:-gz}" in
+        gz|gz-fast) command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (tar.gz archives)\n' ;;
+        zst)        command -v zstd >/dev/null 2>&1 || printf 'zstd|zstd (tar.zst archives)\n' ;;
+        xz)         command -v xz   >/dev/null 2>&1 || printf 'xz|xz-utils (tar.xz archives)\n' ;;
+    esac
     case "$backend" in
         apk-static)      command -v gzip >/dev/null 2>&1 || printf 'gzip|gzip (for compressed archives)\n'; want_curl=1 ;;
         alpine-chroot-install) want_curl=1 ;;
@@ -4398,13 +4404,16 @@ rootfs_check_host_deps() { # <distro> <backend> [arch] [compression]
     local distro="$1" backend="$2" arch="${3:-}" comp="${4:-gz}"
     local missing pkg tag line
     missing=$(rootfs_backend_missing_cmds "$distro" "$backend" "$arch" "$comp")
+    # Several checks can name the same tool (for example gzip for both the
+    # archive format and the backend); ask once per tag.
+    [ -n "$missing" ] && missing=$(printf '%s\n' "$missing" | awk -F'|' 'NF && !seen[$1]++')
     [ -n "$missing" ] || return 0
     local text="The host is missing tools required to build a ${distro} rootfs with '$backend'."
     while IFS='|' read -r tag _; do
         [ -n "$tag" ] || continue
         # Don't try to install meta-commands that resolve to small packages;
         # gzip/xz/tar usually ship in base. Only offer ones with a real mapping.
-        case "$tag" in tar|gzip|xz) continue ;; esac
+        case "$tag" in tar|gzip) continue ;; esac
         if ! command -v "$tag" >/dev/null 2>&1; then
             pkg=$(rootfs_bs_native_pkg "$tag")
             if tui_yesno "Install required tool" "Missing host tool: $tag\n\nInstall '$pkg' via $PM?"; then
@@ -4421,7 +4430,7 @@ rootfs_check_host_deps() { # <distro> <backend> [arch] [compression]
     # {tar,gzip,xz} are treated as near-universal base utilities and skipped.
     local still blocker
     still=$(rootfs_backend_missing_cmds "$distro" "$backend" "$arch" "$comp")
-    blocker=$(printf '%s\n' "$still" | grep -E '^(mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap|qemu-debootstrap|zstd|apk-tools-static|alpine-chroot-install)') || true
+    blocker=$(printf '%s\n' "$still" | grep -E '^(mmdebstrap|debootstrap|cdebootstrap|multistrap|pacstrap|dnf|zypper|rinse|bdebstrap|qemu-debootstrap|zstd|xz|apk-tools-static|alpine-chroot-install)') || true
     if [ -n "$blocker" ]; then
         tui_msg "Missing tool" "Still missing after the install attempt:\n$blocker\n\nCheck the log and the package name, then retry."
         return 1
@@ -4811,6 +4820,10 @@ user creation). Install on the host first if you haven't:
         zst  "tar.zst — faster and usually smaller" off \
         xz   "tar.xz — smallest, slowest" off \
         none "No archive — directory only" off) || return 0
+
+    # The archive packer is only known now, after the early dependency check ran
+    # with the default format, so verify the chosen one before the long build.
+    rootfs_check_host_deps "$distro" "$backend" "$arch" "$comp" || return 0
 
     # ---- 11b: (Bedrock only) fetch extra strata after the base hijack ----
     local bedrock_strata="" bedrock_extra_arch="" bedrock_extra_strata=""
