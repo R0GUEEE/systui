@@ -59,10 +59,15 @@ systui_shell_registry() {
         'pwsh|PowerShell|pwsh|psprofile|psprofile psprofile_host|pwsh'
 }
 
-declare -A SYSTUI_SHELL_LABEL=() SYSTUI_SHELL_BINARY=() SYSTUI_SHELL_RCKIND=() \
-             SYSTUI_SHELL_KINDS=() SYSTUI_SHELL_FAMILY=()
-SYSTUI_SHELL_IDS=""
-SYSTUI_SHELL_CACHE_LOADED=0
+# -g is required, not decorative: the loader sources every feature from inside
+# systui_load_features(), so a plain `declare -A` here would create *function*
+# locals. The cache would then be empty at menu time and
+# `SYSTUI_SHELL_LABEL[$id]=...` would silently collapse into a single element
+# (every shell showing the last entry's label).
+declare -gA SYSTUI_SHELL_LABEL=() SYSTUI_SHELL_BINARY=() SYSTUI_SHELL_RCKIND=() \
+              SYSTUI_SHELL_KINDS=() SYSTUI_SHELL_FAMILY=()
+declare -g SYSTUI_SHELL_IDS=""
+declare -g SYSTUI_SHELL_CACHE_LOADED=0
 
 _systui_shell_load() {
     [ "$SYSTUI_SHELL_CACHE_LOADED" = 1 ] && return 0
@@ -842,7 +847,7 @@ menu_shell_plugins() {
 # dialect (`alias x 'cmd'` in tcsh, `alias x = cmd` in nushell, `aliases['x']` in
 # xonsh, `fn x {|@a| e:cmd $@a }` in elvish, `function x { cmd @args }` in
 # PowerShell). All of them are regenerated from the master on every change.
-ALIAS_DIR_NAME=".config/systui"
+declare -g ALIAS_DIR_NAME=".config/systui"   # global for the same reason as the registry cache
 
 aliases_dialect_file() { # <home> <dialect>
     printf '%s/%s/aliases.%s\n' "$1" "$ALIAS_DIR_NAME" "$2"

@@ -76,6 +76,61 @@ check "the registry has no duplicate ids" bash -c '
     [ "$(systui_shell_ids | sort -u | wc -l)" = "$(systui_shell_ids | wc -l)" ]' _ \
     "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
 
+# The loader sources every feature from inside systui_load_features(), so a
+# module-level `declare -A` becomes a function local and its state is gone at
+# menu time. That produced the broken Shell Managers list where every shell
+# showed the last registry entry's label ("PowerShell — not installed").
+check "the registry survives being sourced inside a function (as the loader does)" bash -c '
+    . "$1"
+    mod="$2"
+    load_like_loader() { . "$mod"; }
+    load_like_loader
+    rc=0
+    [ "$(systui_shell_label bash)" = "Bash" ]          || { echo "bash label: $(systui_shell_label bash)"; rc=1; }
+    [ "$(systui_shell_label pwsh)" = "PowerShell" ]    || { echo "pwsh label: $(systui_shell_label pwsh)"; rc=1; }
+    [ "$(systui_shell_label tcsh)" = "tcsh / csh" ]    || { echo "tcsh label: $(systui_shell_label tcsh)"; rc=1; }
+    [ "$(systui_shell_bin ksh)" = "ksh" ]              || { echo "ksh binary"; rc=1; }
+    [ "$(systui_shell_rc_kind nu)" = "nuconfig" ]      || { echo "nu rc kind"; rc=1; }
+    [ "$(systui_shell_kinds zsh)" = "zsh zprofile zshenv zlogin zlogout inputrc" ] || { echo "zsh kinds"; rc=1; }
+    [ "$(systui_shell_validator xonsh)" = "python" ]   || { echo "xonsh validator"; rc=1; }
+    [ "$(systui_shell_of_kind tcshrc)" = "tcsh" ]      || { echo "reverse lookup"; rc=1; }
+    [ -n "$ALIAS_DIR_NAME" ]                           || { echo "ALIAS_DIR_NAME lost"; rc=1; }
+    seen=""
+    for id in $(systui_shell_ids); do
+        l=$(systui_shell_label "$id")
+        case "$seen" in *"|$l|"*) echo "duplicate label: $l"; rc=1 ;; esac
+        seen="$seen|$l|"
+    done
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
+
+check "the shell list renders one distinct entry per shell" bash -c '
+    . "$1"; . "$2"
+    mod="$2"; home="$3"
+    tui_input() { printf "root\n"; }
+    user_home() { printf "%s\n" "$home"; }
+    desc_file="$home/descriptions.txt"
+    : > "$desc_file"
+    # parse the menu the way dialog --menu does: tag/description pairs
+    tui_menu() {
+        shift 2
+        while [ $# -ge 2 ]; do printf "%s\n" "$2" >> "$desc_file"; shift 2; done
+        printf "back\n"
+    }
+    systui_shell_managers_menu >/dev/null 2>&1 || true
+    rc=0
+    seen=""
+    while IFS= read -r d; do
+        case "$seen" in *"|$d|"*) echo "duplicate menu entry: $d"; rc=1 ;; esac
+        seen="$seen|$d|"
+    done < "$desc_file"
+    all=$(cat "$desc_file")
+    for id in $(systui_shell_ids); do
+        l=$(systui_shell_label "$id")
+        case "$all" in *"$l"*) : ;; *) echo "shell missing from the menu: $l"; rc=1 ;; esac
+    done
+    case "$all" in *"PowerShell"*) : ;; *) echo "the pwsh entry is missing"; rc=1 ;; esac
+    exit $rc' _ "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
 # --- config file resolution -------------------------------------------------
 check "every kind of every shell resolves to an absolute path" bash -c '
     . "$1"; . "$2"
