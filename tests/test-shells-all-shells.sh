@@ -372,13 +372,30 @@ check "shell menus pass tag/description pairs to tui_menu" bash -c '
     # dialog --menu (tui_menu) takes tag/description PAIRS; a third field is the
     # tui_radio/tui_check shape and corrupts the entry list. This guard fails if
     # any menu hands it an odd number of arguments.
+    # Scripted responses so nested menus (the tool pickers) are actually entered
+    # instead of being skipped by an immediate "back". Menu selections are read
+    # through command substitution, so the counter has to live in a file.
+    responses=(one starship back back back back back back)
+    idx_file="$home/.arity_idx"
+    printf '0' > "$idx_file"
     tui_menu() {
         shift 2
         if [ $(( $# % 2 )) -ne 0 ]; then
             printf "odd tui_menu args (%d): %s\n" "$#" "$*" >> "$arity_log"
         fi
-        printf "back\n"
+        n=$(( $(cat "$idx_file") + 1 ))
+        printf '%s' "$n" > "$idx_file"
+        printf "%s\n" "${responses[$n]:-back}"
     }
+    # the menus call housekeeping helpers that the real tool provides
+    tui_msg() { :; }
+    note() { :; }
+    warn() { :; }
+    log() { :; }
+    plugin_add_line() { printf "%s\n" "$2" >> "$1"; }
+    safe_edit() { :; }
+    fm_as_user() { :; }
+    pm_install() { :; }
     # tui_check/tui_radio (dialog --checklist/--radiolist) take TRIPLETS instead.
     tui_check() {
         shift 2
@@ -404,6 +421,7 @@ check "shell menus pass tag/description pairs to tui_menu" bash -c '
     systui_shell_install_action posix "$(id -un)" "$home" >/dev/null 2>&1 || true
     menu_shell_config_for bash "$(id -un)" "$home" >/dev/null 2>&1 || true
     plugin_choose_shells >/dev/null 2>&1 || true
+    menu_plugin_all_shells "$(id -un)" "$home" >/dev/null 2>&1 || true
     if [ -s "$arity_log" ]; then cat "$arity_log"; exit 1; fi' _ \
     "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
 

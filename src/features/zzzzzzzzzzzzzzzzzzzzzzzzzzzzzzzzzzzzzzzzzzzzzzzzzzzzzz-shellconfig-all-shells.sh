@@ -677,7 +677,7 @@ plugin_init_tool_label() { # <tool>
 menu_plugin_all_shells() {
     local u="$1" h="$2" tool args=() id sh line rc done_list="" missing="" state
     while IFS= read -r tool; do
-        args+=("$tool" "$(plugin_init_tool_label "$tool")" off)
+        args+=("$tool" "$(plugin_init_tool_label "$tool")")
     done <<< "$(plugin_init_tools)"
     args+=(back "Back")
     tool=$(tui_menu "All-shell integration" "Write the integration line for which tool?" "${args[@]}") || return 0
@@ -1179,7 +1179,7 @@ systui_shell_plugins_menu() { # <shell> <user> <home>
                 while IFS= read -r tool; do
                     line=$(plugin_init_line "$tool" "$id")
                     [ -n "$line" ] || continue
-                    args+=("$tool" "$(plugin_init_tool_label "$tool")" off)
+                    args+=("$tool" "$(plugin_init_tool_label "$tool")")
                 done <<< "$(plugin_init_tools)"
                 if [ "${#args[@]}" -eq 0 ]; then
                     tui_msg "No tools" "No cross-shell tool has an integration line for $(systui_shell_label "$id")."
