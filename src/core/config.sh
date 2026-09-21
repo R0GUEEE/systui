@@ -17,7 +17,10 @@ export SYSTUI_LIBDIR
 
 # Project info
 if [ -r "$SYSTUI_LIBDIR/src/VERSION" ]; then
-    SYSTUI_VERSION=$(head -n1 "$SYSTUI_LIBDIR/src/VERSION" | tr -d '[:space:]')
+    # builtin read + parameter expansion: avoids the head/tr pipeline forks
+    read -r SYSTUI_VERSION < "$SYSTUI_LIBDIR/src/VERSION" || SYSTUI_VERSION=""
+    SYSTUI_VERSION=${SYSTUI_VERSION//[[:space:]]/}
+    [ -n "$SYSTUI_VERSION" ] || SYSTUI_VERSION="dev"
 else
     SYSTUI_VERSION="dev"
 fi
@@ -30,7 +33,13 @@ export SYSTUI_TITLE BACKTITLE
 # choose the parent directory through SYSTUI_TMP_ROOT or TMPDIR instead.
 SYSTUI_TMP_ROOT="${SYSTUI_TMP_ROOT:-${TMPDIR:-/tmp}}"
 [ -d "$SYSTUI_TMP_ROOT" ] || { echo "Temporary directory does not exist: $SYSTUI_TMP_ROOT" >&2; exit 1; }
-SYSTUI_TMP_ROOT=$(cd -- "$SYSTUI_TMP_ROOT" && pwd -P)
+    # canonicalise without a subshell fork ($PWD is maintained by bash)
+    _systui_cwd=$PWD
+    if cd -- "$SYSTUI_TMP_ROOT" 2>/dev/null; then
+        SYSTUI_TMP_ROOT=$PWD
+        cd -- "$_systui_cwd" || exit 1
+    fi
+    unset _systui_cwd
 if [ "${SYSTUI_STRICT_CHILD:-0}" = 1 ] && [ -n "${SYSTUI_TMP:-}" ] && [ -f "${SYSTUI_TMP}/.systui-owned" ]; then
     SYSTUI_TMP_INHERITED=1
 else

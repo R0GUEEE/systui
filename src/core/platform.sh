@@ -18,7 +18,15 @@ systui_is_container() {
         grep -qaE '(docker|containerd|lxc|podman|kubepods)' /proc/1/cgroup 2>/dev/null
 }
 
-systui_pid1_name() { cat /proc/1/comm 2>/dev/null || printf 'unknown\n'; }
+systui_pid1_name() {
+    # Builtin read: this runs at startup and on every init refresh, and a fork
+    # per probe is measurable on constrained hosts.
+    local name=''
+    if [ -r /proc/1/comm ]; then
+        read -r name < /proc/1/comm 2>/dev/null || name=''
+    fi
+    printf '%s\n' "${name:-unknown}"
+}
 
 systui_detect_pm() {
     if command -v apt-get >/dev/null 2>&1; then PM=apt

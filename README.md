@@ -685,6 +685,20 @@ constrained hosts, and all three are now addressed:
    when `SYSTUI_BEDROCK_WRAP_INSTALL_MENUS=1` forces it); the wrappers are
    created on first confirmed Bedrock detection otherwise.
 
+Remaining startup (~4.5 s here) is **parse-bound**: ~1.7 s is bash reading and
+parsing the 42k lines of feature code, and most of the rest is bash re-parsing
+function bodies while load-time wrappers copy them. Two things were measured and
+deliberately *not* adopted because they do not pay off:
+
+* stripping comments/blank lines from the features (13% fewer lines, only ~90 ms
+  faster parse and ~115 ms end to end);
+* lazy-loading modules on first use — 64 features have no load-time references
+  from later features, but only 2 of them are safe to defer once wrappers,
+  global data and cleanup passes are excluded, for ~26 ms.
+
+Going further means removing the load-time wrapping architecture itself (menus
+intercepting each other by copying bodies), not tuning it.
+
 Measure a change with the bundled profiler:
 
 ```bash
