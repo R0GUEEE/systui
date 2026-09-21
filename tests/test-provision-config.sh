@@ -135,5 +135,20 @@ check "dry run reports the service pass state" bash -c '
     out=$(PROVISION_DRY_RUN=1 SKIP_SERVICES=1 TZ_NAME=UTC sh "$1" 2>&1)
     grep -q "services: skipped" <<<"$out"' _ "$SCRIPT"
 
+# A dry run writes nothing, so it must not demand root: the two checks above
+# used to fail on any CI runner (they are the only checks that execute the
+# script, and the script refused to run as a non-root user).
+check "dry run works without root" bash -c '
+    mkdir -p "$2"
+    printf "#!/bin/sh\n[ \"\$1\" = -u ] && { echo 1000; exit 0; }\nexit 1\n" > "$2/id"
+    chmod 0755 "$2/id"
+    out=$(PATH="$2:$PATH" PROVISION_DRY_RUN=1 SKIP_SERVICES=1 TZ_NAME=UTC sh "$1" 2>&1)
+    grep -q "Dry run" <<<"$out" &&
+    ! grep -q "must run as root" <<<"$out"' _ "$SCRIPT" "$tmp/fakebin"
+
+check "a real run still requires root" bash -c '
+    out=$(PATH="$2:/usr/bin:/bin" TZ_NAME=UTC sh "$1" 2>&1) || true
+    grep -q "must run as root" <<<"$out"' _ "$SCRIPT" "$tmp/fakebin"
+
 printf '\nUltimate Provision configuration: %d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

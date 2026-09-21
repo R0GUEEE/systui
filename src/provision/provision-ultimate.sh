@@ -30,8 +30,11 @@
 set -u
 export DEBIAN_FRONTEND=noninteractive
 
-# ---- must be root --------------------------------------------------------
-if [ "$(id -u)" != 0 ]; then
+# ---- must be root (a dry run changes nothing, so it does not) -------------
+# PROVISION_DRY_RUN=1 prints the package set and exits before anything is
+# written, so it must stay usable without privileges -- otherwise the dry run
+# cannot even be checked on a host where you are not root (CI, a shared box).
+if [ "$(id -u)" != 0 ] && [ "${PROVISION_DRY_RUN:-0}" != 1 ]; then
     echo "This script must run as root:  sudo sh $0" >&2
     exit 1
 fi
