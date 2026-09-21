@@ -708,8 +708,24 @@ child can no longer freeze the whole run:
 Knobs, passed through the environment like the settings above:
 `PROVISION_HEARTBEAT=<secs>` (0 disables the heartbeat),
 `PROVISION_TIMEOUT_MAX=<secs>` (caps every limit, useful for tests),
-`PROVISION_MAX_CONSECUTIVE_TIMEOUTS=<n>`, and `PROVISION_NO_TIMEOUT=1` (run
-steps in the foreground and block — debugging only).
+`PROVISION_MAX_CONSECUTIVE_TIMEOUTS=<n>`, `PROVISION_SKIP_FILTER=1` (do not
+pre-verify package names), `PROVISION_PACMAN_SYSUPGRADE=0` (Arch: sync the index
+without a full upgrade), `PROVISION_TOTAL_TIMEOUT=<secs>` (whole-run cap applied
+by the menu, default 21600; 0 disables), and `PROVISION_NO_TIMEOUT=1` (run steps
+in the foreground and block — debugging only).
+
+Two more things the audit fixed:
+
+* **package names are verified before the bulk install.** The bulk transaction is
+  all-or-nothing, so one name the index does not know (renamed, release-specific,
+  or living in an overlay) used to throw the whole list into the per-package pass.
+  Unknown names are now dropped up front and listed.
+* **sshd hardening can no longer lock you out.** The in-place path keeps a
+  timestamped backup and restores it when `sshd -t` rejects the result; the
+  drop-in path removes its fragment on the same failure. The advertised daily
+  maintenance job also exists now (package-cache trim, `/tmp` tidy, one-line
+  disk record), registered with `/etc/periodic/daily` on Alpine and
+  `/etc/cron.daily` elsewhere.
 
 
 Settings persist with the other provision options in

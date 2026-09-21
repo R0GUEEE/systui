@@ -12,7 +12,14 @@
 #   * US/Pacific timezone (configurable)
 #   * chrony in iSH-aware monitoring mode (the guest clock is the host clock)
 #   * shell niceties: bash login shells, colour prompt, MOTD, login summary,
-#     fzf/dircolors integration, machine-id, periodic maintenance via cron
+#     fzf/dircolors integration, machine-id
+#   * a dependency-free daily maintenance job (package-cache trim, /tmp tidy,
+#     one-line disk-usage record), registered with the run-parts directory the
+#     detected distribution's cron actually reads (/etc/periodic/daily on Alpine,
+#     /etc/cron.daily elsewhere)
+#   * every step that can block runs under a wall-clock limit with a heartbeat
+#     and detached stdin, so a wedged package or service manager can neither
+#     freeze the run nor wait forever for input
 #   * a dependency-free Neovim starter config (OSC52 clipboard on nvim >= 0.10)
 #
 # It is IDEMPOTENT: safe to run repeatedly. Run as root:
@@ -26,6 +33,12 @@
 #       TARGET_USER=mke                # primary login to set up (else prompted)
 #       NEW_HOSTNAME=                  # hostname to set (else prompted)
 #       SUDO_NOPASSWD=0                # 1 = passwordless sudo-group sudo
+#       PROVISION_HEARTBEAT=<secs>     # heartbeat for long steps (0 disables)
+#       PROVISION_TIMEOUT_MAX=<secs>   # cap every per-step wall-clock limit
+#       PROVISION_MAX_CONSECUTIVE_TIMEOUTS=<n>  # stop a wedged per-package pass
+#       PROVISION_SKIP_FILTER=1        # do not pre-check package names
+#       PROVISION_PACMAN_SYSUPGRADE=0  # sync the index only, no full upgrade
+#       PROVISION_NO_TIMEOUT=1         # foreground/blocking (debugging only)
 # ---------------------------------------------------------------------------
 set -u
 export DEBIAN_FRONTEND=noninteractive
@@ -79,6 +92,8 @@ detect_init_system() {
     # a real init; the probe then blocks forever waiting for that init, and
     # provisioning appears frozen before its first status line. Every check
     # below is a file/process inspection that cannot block.
+    # Marker consumed by systui's install-time patch (not by this script).
+    # shellcheck disable=SC2034
     SYSTUI_NONBLOCKING_INIT_DETECT=1
     _init_pid1="$(cat /proc/1/comm 2>/dev/null)"
     _init_link="$(readlink /sbin/init 2>/dev/null)"
@@ -240,8 +255,12 @@ _svc_activate() {  # _svc_activate <service> -> 0 ok, 124 the service manager hu
                 || _sa_rc=$?
             ;;
         sysvinit)
-            command -v update-rc.d >/dev/null 2>&1 && _rto 60 update-rc.d "$_sa_svc" defaults >/dev/null 2>&1 || true
-            command -v chkconfig >/dev/null 2>&1 && _rto 60 chkconfig "$_sa_svc" on >/dev/null 2>&1 || true
+            if command -v update-rc.d >/dev/null 2>&1; then
+                _rto 60 update-rc.d "$_sa_svc" defaults >/dev/null 2>&1 || true
+            fi
+            if command -v chkconfig >/dev/null 2>&1; then
+                _rto 60 chkconfig "$_sa_svc" on >/dev/null 2>&1 || true
+            fi
             _rto 90 service "$_sa_svc" restart >/dev/null 2>&1 \
                 || _rto 90 service "$_sa_svc" start >/dev/null 2>&1 \
                 || _sa_rc=$?
@@ -249,6 +268,132 @@ _svc_activate() {  # _svc_activate <service> -> 0 ok, 124 the service manager hu
         *) _sa_rc=1 ;;
     esac
     return "$_sa_rc"
+}
+
+# ---- builtin file checks --------------------------------------------------
+# The membership/prefix checks below used to fork a grep. On a host that can
+# deadlock a fork that is an unbounded step in the middle of the run (one was
+# reproduced freezing the whole provision), and these files are tiny, so read
+# them with the shell itself instead.
+file_has_word() {    # file_has_word <file> <word>     -- whitespace-separated word
+    _fw_found=0
+    [ -r "$1" ] || return 1
+    while IFS= read -r _fw_line || [ -n "$_fw_line" ]; do
+        for _fw_w in $_fw_line; do
+            if [ "$_fw_w" = "$2" ]; then _fw_found=1; break 2; fi
+        done
+    done < "$1"
+    [ "$_fw_found" = 1 ]
+}
+file_has_prefix() {  # file_has_prefix <file> <prefix>  -- line starts with it
+    _fp_found=0
+    [ -r "$1" ] || return 1
+    while IFS= read -r _fp_line || [ -n "$_fp_line" ]; do
+        case "$_fp_line" in "$2"*) _fp_found=1; break ;; esac
+    done < "$1"
+    [ "$_fp_found" = 1 ]
+}
+file_has_text() {    # file_has_text <file> <substring>
+    _fx_found=0
+    [ -r "$1" ] || return 1
+    while IFS= read -r _fx_line || [ -n "$_fx_line" ]; do
+        case "$_fx_line" in *"$2"*) _fx_found=1; break ;; esac
+    done < "$1"
+    [ "$_fx_found" = 1 ]
+}
+
+# ---- hostname -------------------------------------------------------------
+# valid_hostname <name>: RFC1123-ish, shell builtins only (no external tool).
+valid_hostname() {
+    case "$1" in
+        ''|*[!A-Za-z0-9.-]*) return 1 ;;
+        .*|-*|*.|*-|*..*) return 1 ;;
+    esac
+    [ "${#1}" -le 63 ] || return 1
+    return 0
+}
+
+# apply_hostname <name> <hostname-file> <hosts-file>
+# Deliberately builtin-only: this used to be a `grep` on /etc/hosts, which on a
+# host that can deadlock a fork froze the whole run with no output (reproduced).
+# It also (a) replaces any existing 127.0.1.1 mapping instead of leaving the old
+# hostname behind, and (b) compares whole words, so a hostname containing regex
+# metacharacters cannot mis-match.
+apply_hostname() {
+    _ah_name="$1" _ah_file="$2" _ah_hosts="$3"
+    [ -n "$_ah_name" ] || return 0
+    printf '%s\n' "$_ah_name" > "$_ah_file" 2>/dev/null || return 1
+    if command -v hostname >/dev/null 2>&1; then _rto 20 hostname "$_ah_name" 2>/dev/null || true; fi
+
+    [ -r "$_ah_hosts" ] || return 0
+    _ah_tmp="$_ah_hosts.systui.$$"
+    : > "$_ah_tmp" 2>/dev/null || return 0
+    _ah_found=0
+    _ah_mapped=0
+    while IFS= read -r _ah_line || [ -n "$_ah_line" ]; do
+        case "$_ah_line" in
+            127.0.1.1[[:space:]]*)
+                if [ "$_ah_mapped" = 0 ]; then
+                    printf '127.0.1.1\t%s\n' "$_ah_name" >> "$_ah_tmp"
+                    _ah_mapped=1
+                fi
+                ;;
+            *) printf '%s\n' "$_ah_line" >> "$_ah_tmp" ;;
+        esac
+        for _ah_w in $_ah_line; do
+            [ "$_ah_w" = "$_ah_name" ] && _ah_found=1
+        done
+    done < "$_ah_hosts"
+    [ "$_ah_found" = 1 ] || [ "$_ah_mapped" = 1 ] || printf '127.0.1.1\t%s\n' "$_ah_name" >> "$_ah_tmp"
+    mv "$_ah_tmp" "$_ah_hosts" 2>/dev/null || rm -f "$_ah_tmp"
+    return 0
+}
+
+# ---- package-name filtering ----------------------------------------------
+# pkg_available <name>: does the configured package manager's index know this
+# name? Local index lookups only (never installs), used to keep the all-or-
+# nothing bulk transaction from being thrown away by one unknown name.
+pkg_available() {
+    case "$PACKAGE_MANAGER" in
+        apt)     apt-cache show "$1" >/dev/null 2>&1 ;;
+        apk)     apk search -e "$1" >/dev/null 2>&1 ;;
+        pacman)  pacman -Si "$1" >/dev/null 2>&1 ;;
+        dnf)     dnf info "$1" >/dev/null 2>&1 ;;
+        yum)     yum info "$1" >/dev/null 2>&1 ;;
+        zypper)  zypper --non-interactive search -e "$1" >/dev/null 2>&1 ;;
+        xbps)    xbps-query -Rs "$1" >/dev/null 2>&1 ;;
+        portage) [ -n "$(portageq match / "$1" 2>/dev/null)" ] ;;
+        *)       return 0 ;;
+    esac
+}
+
+# ---- sshd ----------------------------------------------------------------
+# harden_sshd_inplace <config>: rewrite the directives in place, keeping a
+# timestamped backup and restoring it when the result does not validate. Without
+# the rollback a rejected edit stayed on disk, and sshd then refused to start at
+# the next boot -- a silent remote lockout with only a warning in the log.
+harden_sshd_inplace() {
+    _hs_cfg="$1"
+    [ -f "$_hs_cfg" ] || return 1
+    _hs_bak="$_hs_cfg.systui.bak.$(date +%Y%m%d-%H%M%S)"
+    cp -a "$_hs_cfg" "$_hs_bak" 2>/dev/null || return 1
+    for _hs_pair in "Port:22" "PermitRootLogin:no" "PasswordAuthentication:yes" \
+                    "PubkeyAuthentication:yes" "StrictModes:yes" \
+                    "ClientAliveInterval:300" "ClientAliveCountMax:3"; do
+        _hs_k="${_hs_pair%%:*}"; _hs_v="${_hs_pair#*:}"
+        if grep -qE "^[[:space:]]*#?[[:space:]]*${_hs_k}[[:space:]]" "$_hs_cfg" 2>/dev/null; then
+            sed -i "s|^[[:space:]]*#*[[:space:]]*${_hs_k}[[:space:]].*|${_hs_k} ${_hs_v}|" "$_hs_cfg"
+        else
+            printf '%s %s\n' "$_hs_k" "$_hs_v" >> "$_hs_cfg"
+        fi
+    done
+    if command -v sshd >/dev/null 2>&1 && ! _rto 30 sshd -t 2>/dev/null; then
+        cp -a "$_hs_bak" "$_hs_cfg" 2>/dev/null || true
+        warn "sshd_config validation failed; restored the previous configuration from $_hs_bak"
+        return 1
+    fi
+    note "SSH hardening applied in place (backup: $_hs_bak)"
+    return 0
 }
 
 # ---- config (env overrides; prompts interactively when run on a TTY) ------
@@ -271,9 +416,12 @@ ask() {
     eval "_cur=\${$1:-}"
     [ -n "$_cur" ] && return
     if [ -t 0 ]; then
-        printf '%s [%s]: ' "$2" "$3"
-        read _a || _a=""
-        [ -n "$_a" ] || _a="$3"
+        printf '%s [%s] ("-" to leave empty): ' "$2" "$3"
+        read -r _a || _a=""
+        case "$_a" in
+            '') _a="$3" ;;   # Enter keeps the default
+            -)  _a="" ;;     # "-" sets it empty where that is meaningful
+        esac
     else
         _a="$3"
     fi
@@ -339,7 +487,7 @@ fi
 if [ "${PROVISION_DRY_RUN:-0}" = 1 ]; then
     log "Dry run: no changes will be made"
     printf '    packages (%s):\n' "$PACKAGE_MANAGER"
-    printf '      %s\n' $PKGS
+    for _p in $PKGS; do printf '      %s\n' "$_p"; done
     if [ "${SKIP_SERVICES:-0}" = 1 ]; then
         printf '    services: skipped\n'
     else
@@ -349,19 +497,42 @@ if [ "${PROVISION_DRY_RUN:-0}" = 1 ]; then
     exit 0
 fi
 
-# Pre-seed the timezone so the tzdata postinst never tries to prompt.
+# Pre-seed the timezone. On a minimal rootfs /usr/share/zoneinfo only appears
+# with tzdata -- which this script installs further down -- so the symlink step
+# below can only help hosts that already ship zoneinfo. What actually keeps the
+# tzdata postinst silent is the debconf preseed; the authoritative symlink is
+# applied again after the package pass.
 if [ -f "/usr/share/zoneinfo/$TZ_NAME" ]; then
     ln -sf "/usr/share/zoneinfo/$TZ_NAME" /etc/localtime 2>/dev/null || true
     printf '%s\n' "$TZ_NAME" > /etc/timezone
 else
-    warn "Timezone $TZ_NAME not found in zoneinfo; clock preset skipped"
+    note "zoneinfo for '$TZ_NAME' is not installed yet (tzdata arrives with the package pass); applied afterwards"
+fi
+if command -v debconf-set-selections >/dev/null 2>&1; then
+    case "$TZ_NAME" in
+        */*)
+            # Not wrapped in _rto: the selections arrive on stdin.
+            _tz_area="${TZ_NAME%%/*}"
+            printf 'tzdata tzdata/Areas select %s\ntzdata tzdata/Zones/%s select %s\n' \
+                "$_tz_area" "$_tz_area" "${TZ_NAME#*/}" | debconf-set-selections 2>/dev/null || true
+            ;;
+    esac
 fi
 
 refresh_packages() {
     case "$PACKAGE_MANAGER" in
         apt)    _rto 180 apt-get update ;;
         apk)    _rto 180 apk update ;;
-        pacman) _rto 300 pacman -Syu --noconfirm ;;   # -Sy alone desynchronises the system
+        pacman)
+            # -Sy alone desynchronises the system, so a full upgrade is the
+            # correct default on Arch -- but it is a whole-system change, so it
+            # can be opted out of.
+            if [ "${PROVISION_PACMAN_SYSUPGRADE:-1}" = 1 ]; then
+                _rto 300 pacman -Syu --noconfirm
+            else
+                warn "pacman: syncing the index only; Arch does not support partial upgrades (PROVISION_PACMAN_SYSUPGRADE=0)"
+                _rto 300 pacman -Sy --noconfirm
+            fi ;;
         dnf)    _rto 180 dnf -y makecache ;;
         yum)    _rto 180 yum -y makecache ;;
         zypper) _rto 180 zypper --non-interactive refresh ;;
@@ -388,10 +559,50 @@ refresh_packages || warn "Package index refresh failed; continuing with the curr
 
 # Fast path: install all packages in one shot — far fewer PM round-trips and
 # much less likely to stall on a single download under slow emulation.
-# If the bulk install fails (e.g. one package name not found), fall back to
-# per-package installs so the rest still get through.
+# The bulk transaction is ALL-OR-NOTHING, so verify the names against the package
+# index first: a single unknown name (renamed, release-specific, or overlay-only)
+# otherwise throws the entire list into the per-package pass below, which on slow
+# emulation is the difference between minutes and hours.
 INSTALLED_COUNT=0 SKIPPED_COUNT=0
 _bulk_ok=0
+_pm_timeout_seen=0
+_pkg_total=0
+for _p in $PKGS; do _pkg_total=$((_pkg_total + 1)); done
+if [ "${PROVISION_SKIP_FILTER:-0}" = 1 ]; then
+    note "package-name verification skipped (PROVISION_SKIP_FILTER=1)"
+else
+    _pkg_kept=""
+    _pkg_dropped=""
+    _pkg_known=0
+    _pkg_unverified=0
+    note "verifying $_pkg_total package names against the index..."
+    for _p in $PKGS; do
+        _rto 30 pkg_available "$_p"
+        _pk_rc=$?
+        if [ "$_pk_rc" = 0 ]; then
+            _pkg_kept="$_pkg_kept $_p"
+            _pkg_known=$((_pkg_known + 1))
+        elif [ "$_pk_rc" = 124 ]; then
+            # The check itself stalled: keep the name and do not trust the filter.
+            _pkg_unverified=1
+            _pkg_known=$((_pkg_known + 1))
+        else
+            _pkg_dropped="$_pkg_dropped $_p"
+        fi
+    done
+    if [ "$_pkg_unverified" = 1 ]; then
+        warn "a package-name check timed out; using the unfiltered list"
+    elif [ "$_pkg_known" -gt 0 ]; then
+        if [ -n "$_pkg_dropped" ]; then
+            note "not in this distribution's index (dropped):$_pkg_dropped"
+        fi
+        PKGS="$_pkg_kept"
+    else
+        warn "no package name could be verified (the index looks empty or unreachable); using the unfiltered list"
+    fi
+fi
+
+# shellcheck disable=SC2086  # $PKGS has to word-split into separate arguments
 case "$PACKAGE_MANAGER" in
     apt)    _rto 1800 apt-get -o Dpkg::Options::="--force-confold" install -y --no-install-recommends $PKGS && _bulk_ok=1 ;;
     apk)    _rto 1800 apk add $PKGS && _bulk_ok=1 ;;
@@ -403,9 +614,14 @@ case "$PACKAGE_MANAGER" in
     portage) _rto 3600 emerge --noreplace $PKGS && _bulk_ok=1 ;;
 esac
 if [ "$_bulk_ok" = 1 ]; then
-    note "bulk install succeeded"
-    # shellcheck disable=SC2086
-    INSTALLED_COUNT=$(echo $PKGS | wc -w); SKIPPED_COUNT=0
+    # The manager only reports success for the whole transaction, so this is the
+    # number of packages *requested*, not a per-package confirmation.
+    _pkg_requested=0
+    for _p in $PKGS; do _pkg_requested=$((_pkg_requested + 1)); done
+    INSTALLED_COUNT=$_pkg_requested
+    SKIPPED_COUNT=0
+    note "bulk install succeeded ($_pkg_requested packages requested; already-present ones are included)"
+    _pass_note="package pass complete: bulk install of $_pkg_requested packages requested"
 else
     note "bulk install failed or timed out; falling back to per-package (slower)..."
     # Progress matters here: a 90-package fallback pass at 300s each can run for
@@ -430,6 +646,7 @@ else
             note "skipped: $p (unavailable or timed out)"
             if [ "$_install_rc" = 124 ]; then
                 _consec_timeouts=$((_consec_timeouts + 1))
+                _pm_timeout_seen=1
             else
                 _consec_timeouts=0
             fi
@@ -441,10 +658,27 @@ else
         fi
     done
 fi
-_milestone "package pass complete: $INSTALLED_COUNT installed/already present, $SKIPPED_COUNT skipped"
+[ -n "${_pass_note:-}" ] || _pass_note="package pass complete: $INSTALLED_COUNT installed/already present, $SKIPPED_COUNT skipped"
+_milestone "$_pass_note"
 if [ "$PACKAGE_MANAGER" = apt ]; then
     _rto 600 dpkg --force-confold --configure -a || warn "Some Debian packages remain unconfigured; run: dpkg --configure -a"
     _rto 120 apt-get clean || true
+fi
+
+# A step we terminated may have left children behind holding the manager's lock,
+# which would make every later operation fail with "resource temporarily
+# unavailable". Killing those children automatically is not safe (a real install
+# may be running), so say exactly what to check and do instead.
+if [ "$_pm_timeout_seen" = 1 ]; then
+    warn "a package-manager step was terminated after its limit; if the next run reports lock errors, confirm nothing is running (ps aux | grep -E 'apt|dpkg|apk|rpm') and then remove the stale lock:"
+    case "$PACKAGE_MANAGER" in
+        apt)    note "    rm -f /var/lib/dpkg/lock-frontend /var/lib/dpkg/lock /var/cache/apt/archives/lock" ;;
+        apk)    note "    rm -f /lib/apk/db/lock" ;;
+        pacman) note "    rm -f /var/lib/pacman/db.lck" ;;
+        dnf|yum) note "    rm -f /var/lib/rpm/.rpm.lock" ;;
+        zypper) note "    rm -f /var/run/zypp.pid" ;;
+        *)      note "    remove the leftover lock file in the package manager's state directory" ;;
+    esac
 fi
 
 # Account tools and Bash now exist even on a minimal image.
@@ -482,7 +716,9 @@ if [ -f "/usr/share/zoneinfo/$TZ_NAME" ]; then
     if [ "$INIT_SYSTEM" = "systemd" ]; then
         _rto 30 timedatectl set-timezone "$TZ_NAME" 2>/dev/null || true
     fi
-    command -v dpkg-reconfigure >/dev/null 2>&1 && _rto 90 dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1 || true
+    if command -v dpkg-reconfigure >/dev/null 2>&1; then
+        _rto 90 dpkg-reconfigure -f noninteractive tzdata >/dev/null 2>&1 || true
+    fi
     note "$(date)"
 else
     note "zoneinfo for '$TZ_NAME' not found; leaving clock as-is"
@@ -493,7 +729,7 @@ log "Locale -> C.UTF-8"
 # ===========================================================================
 mkdir -p /etc/default /etc/profile.d
 printf 'LANG=C.UTF-8\n' > /etc/default/locale
-if ! grep -q '^LANG=' /etc/environment 2>/dev/null; then
+if ! file_has_prefix /etc/environment 'LANG='; then
     printf 'LANG=C.UTF-8\nLC_ALL=C.UTF-8\n' >> /etc/environment
 fi
 update-locale LANG=C.UTF-8 2>/dev/null || true
@@ -515,28 +751,28 @@ note "$(cat /etc/machine-id)"
 # ===========================================================================
 log "Hostname"
 # ===========================================================================
-if [ -n "$NEW_HOSTNAME" ]; then
-    echo "$NEW_HOSTNAME" > /etc/hostname
-elif [ ! -s /etc/hostname ] || [ "$(cat /etc/hostname 2>/dev/null)" = localhost ]; then
-    echo "linux-ultimate" > /etc/hostname
+_hn="${NEW_HOSTNAME:-}"
+if [ -n "$_hn" ] && ! valid_hostname "$_hn"; then
+    warn "Ignoring invalid hostname '$_hn' (letters, digits, dot and hyphen only)"
+    _hn=""
 fi
-hostname "$(cat /etc/hostname)" 2>/dev/null || true
-if [ "$INIT_SYSTEM" = "systemd" ]; then
-    hostnamectl set-hostname "$(cat /etc/hostname)" 2>/dev/null || true
+if [ -z "$_hn" ]; then
+    _hn="$(cat /etc/hostname 2>/dev/null)"
+    if [ -z "$_hn" ] || [ "$_hn" = localhost ]; then _hn=linux-ultimate; fi
 fi
-# Make sure the hostname resolves (Debian expects a 127.0.1.1 line).
-_hn="$(cat /etc/hostname 2>/dev/null)"
-if [ -n "$_hn" ] && ! grep -qE "[[:space:]]$_hn(\$|[[:space:]])" /etc/hosts 2>/dev/null; then
-    printf '127.0.1.1\t%s\n' "$_hn" >> /etc/hosts
+if apply_hostname "$_hn" /etc/hostname /etc/hosts; then
+    if [ "$INIT_SYSTEM" = "systemd" ]; then _rto 20 hostnamectl set-hostname "$_hn" 2>/dev/null || true; fi
+    note "$_hn"
+else
+    warn "Could not update the hostname (keeping the current one)"
 fi
-note "$(cat /etc/hostname)"
 
 # ===========================================================================
 ADMIN_GROUP=sudo
 case "$PACKAGE_MANAGER" in apt) ;; *) ADMIN_GROUP=wheel ;; esac
 log "sudo for the $ADMIN_GROUP group"
 # ===========================================================================
-getent group "$ADMIN_GROUP" >/dev/null 2>&1 || groupadd "$ADMIN_GROUP" 2>/dev/null || true
+_rto 20 getent group "$ADMIN_GROUP" >/dev/null 2>&1 || _rto 20 groupadd "$ADMIN_GROUP" 2>/dev/null || true
 mkdir -p /etc/sudoers.d
 if [ "$SUDO_NOPASSWD" = 1 ]; then
     printf '%%%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$ADMIN_GROUP" > /etc/sudoers.d/aok-sudo
@@ -547,22 +783,29 @@ else
 fi
 chmod 0440 /etc/sudoers.d/aok-sudo
 # Refuse to leave an invalid sudoers fragment in place.
-if command -v visudo >/dev/null 2>&1 && ! visudo -cf /etc/sudoers.d/aok-sudo >/dev/null 2>&1; then
-    rm -f /etc/sudoers.d/aok-sudo
-    note "WARNING: generated sudoers fragment failed validation; removed it"
+if command -v visudo >/dev/null 2>&1; then
+    if ! _rto 30 visudo -cf /etc/sudoers.d/aok-sudo >/dev/null 2>&1; then
+        rm -f /etc/sudoers.d/aok-sudo
+        warn "generated sudoers fragment failed validation; removed it"
+    fi
 fi
 if [ -n "$TARGET_USER" ] && id "$TARGET_USER" >/dev/null 2>&1; then
-    id -nG "$TARGET_USER" | tr ' ' '\n' | grep -qx "$ADMIN_GROUP" \
-        || _rto 60 usermod -aG "$ADMIN_GROUP" "$TARGET_USER" >/dev/null 2>&1 \
-        || _rto 60 adduser "$TARGET_USER" "$ADMIN_GROUP" >/dev/null 2>&1 \
-        || warn "Could not add $TARGET_USER to $ADMIN_GROUP"
+    _in_admin=0
+    for _ug in $(id -nG "$TARGET_USER" 2>/dev/null); do
+        [ "$_ug" = "$ADMIN_GROUP" ] && _in_admin=1
+    done
+    if [ "$_in_admin" = 0 ]; then
+        _rto 60 usermod -aG "$ADMIN_GROUP" "$TARGET_USER" >/dev/null 2>&1 \
+            || _rto 60 adduser "$TARGET_USER" "$ADMIN_GROUP" >/dev/null 2>&1 \
+            || warn "Could not add $TARGET_USER to $ADMIN_GROUP"
+    fi
     note "$TARGET_USER is in: $(id -nG "$TARGET_USER")"
 fi
 
 # ===========================================================================
 log "Login shells -> bash"
 # ===========================================================================
-grep -qx /bin/bash /etc/shells 2>/dev/null || echo /bin/bash >> /etc/shells
+file_has_word /etc/shells /bin/bash || printf '/bin/bash\n' >> /etc/shells
 for u in root $TARGET_USER; do
     id "$u" >/dev/null 2>&1 || continue
     _rto 60 chsh -s /bin/bash "$u" >/dev/null 2>&1 || _rto 60 usermod -s /bin/bash "$u" 2>/dev/null || true
@@ -670,8 +913,9 @@ log "SSH hardening"
 if command -v sshd >/dev/null 2>&1; then
     _SSH_MAIN=/etc/ssh/sshd_config
     _SSH_DROP=/etc/ssh/sshd_config.d/20-systui.conf
+    _ssh_ok=0
     # Use a drop-in if the main config already has an Include directive (sshd >=7.3)
-    if grep -q "^Include" "$_SSH_MAIN" 2>/dev/null && [ -d /etc/ssh/sshd_config.d ]; then
+    if file_has_prefix "$_SSH_MAIN" "Include" && [ -d /etc/ssh/sshd_config.d ]; then
         note "Writing SSH hardening drop-in: $_SSH_DROP"
         cat > "$_SSH_DROP" <<'_SSHEOF'
 # Managed by systui provision -- do not edit manually.
@@ -683,20 +927,19 @@ StrictModes yes
 ClientAliveInterval 300
 ClientAliveCountMax 3
 _SSHEOF
+        if _rto 30 sshd -t 2>/dev/null; then
+            _ssh_ok=1
+        else
+            # Take the fragment away again: a rejected edit must never be able to
+            # stop sshd from starting at the next boot.
+            rm -f "$_SSH_DROP"
+            warn "the hardening drop-in failed validation; removed $_SSH_DROP"
+        fi
     else
         note "Applying SSH hardening in-place: $_SSH_MAIN"
-        for _pair in "Port:22" "PermitRootLogin:no" "PasswordAuthentication:yes" \
-                     "PubkeyAuthentication:yes" "StrictModes:yes" \
-                     "ClientAliveInterval:300" "ClientAliveCountMax:3"; do
-            _k=${_pair%%:*}; _v=${_pair#*:}
-            if grep -qE "^[[:space:]]*#?[[:space:]]*${_k}[[:space:]]" "$_SSH_MAIN" 2>/dev/null; then
-                sed -i "s|^[[:space:]]*#*[[:space:]]*${_k}[[:space:]].*|${_k} ${_v}|" "$_SSH_MAIN"
-            else
-                printf '%s %s\n' "$_k" "$_v" >> "$_SSH_MAIN"
-            fi
-        done
+        if harden_sshd_inplace "$_SSH_MAIN"; then _ssh_ok=1; fi
     fi
-    if _rto 30 sshd -t 2>/dev/null; then
+    if [ "$_ssh_ok" = 1 ]; then
         _ssh_svc="$(_svc_pick ssh sshd)"
         if [ -n "$_ssh_svc" ]; then
             _svc_activate "$_ssh_svc"
@@ -706,8 +949,6 @@ _SSHEOF
         else
             note "SSH hardening written; no sshd service found to restart"
         fi
-    else
-        warn "sshd -t validation failed after hardening -- check $_SSH_MAIN"
     fi
 fi
 
@@ -732,11 +973,22 @@ CHRONYCONF
     chown _chrony:_chrony /var/log/chrony 2>/dev/null || chown chrony:chrony /var/log/chrony 2>/dev/null || true
 
     if [ -f /etc/default/chrony ]; then
-        if grep -q '^DAEMON_OPTS=' /etc/default/chrony 2>/dev/null; then
-            sed -i 's/^DAEMON_OPTS=.*/DAEMON_OPTS="-x"/' /etc/default/chrony
-        else
-            echo 'DAEMON_OPTS="-x"' >> /etc/default/chrony
-        fi
+        _ch_tmp=/etc/default/chrony.systui.$$
+        : > "$_ch_tmp" 2>/dev/null
+        _ch_done=0
+        while IFS= read -r _ch_line || [ -n "$_ch_line" ]; do
+            case "$_ch_line" in
+                DAEMON_OPTS=*)
+                    if [ "$_ch_done" = 0 ]; then
+                        printf 'DAEMON_OPTS="-x"\n' >> "$_ch_tmp"
+                        _ch_done=1
+                    fi
+                    ;;
+                *) printf '%s\n' "$_ch_line" >> "$_ch_tmp" ;;
+            esac
+        done < /etc/default/chrony
+        [ "$_ch_done" = 1 ] || printf 'DAEMON_OPTS="-x"\n' >> "$_ch_tmp"
+        mv "$_ch_tmp" /etc/default/chrony 2>/dev/null || rm -f "$_ch_tmp"
     elif [ "$PACKAGE_MANAGER" = apt ]; then
         echo 'DAEMON_OPTS="-x"' > /etc/default/chrony
     fi
@@ -747,8 +999,52 @@ fi
 log "Periodic maintenance (cron)"
 # ===========================================================================
 mkdir -p /etc/cron.hourly /etc/cron.daily /etc/cron.weekly /etc/cron.monthly
-[ "$PACKAGE_MANAGER" = apt ] && { mkdir -p /var/spool/cron/crontabs; chmod 1730 /var/spool/cron/crontabs 2>/dev/null || true; }
-note "cron run-parts dirs present"
+if [ "$PACKAGE_MANAGER" = apt ]; then
+    mkdir -p /var/spool/cron/crontabs
+    chmod 1730 /var/spool/cron/crontabs 2>/dev/null || true
+fi
+
+# One dependency-free maintenance job, registered where this distribution's cron
+# actually looks for it: Alpine's dcron + busybox crond use /etc/periodic/, the
+# others the Debian/RedHat /etc/cron.daily. The file name deliberately has no
+# dot -- Debian's run-parts skips names containing one.
+MAINT_SCRIPT=/usr/local/sbin/systui-maintenance
+cat > "$MAINT_SCRIPT" <<'MAINTEOF'
+#!/bin/sh
+# Managed by systui provision. Daily housekeeping; safe to run by hand.
+set -u
+log=/var/log/systui-maintenance.log
+
+pm_cache_trim() {
+    if command -v apt-get >/dev/null 2>&1; then apt-get clean >/dev/null 2>&1 || true
+    elif command -v apk >/dev/null 2>&1; then rm -f /var/cache/apk/* >/dev/null 2>&1 || true
+    elif command -v pacman >/dev/null 2>&1; then rm -f /var/cache/pacman/pkg/*.part >/dev/null 2>&1 || true
+    elif command -v dnf >/dev/null 2>&1; then dnf -q clean --metadata-older-than 7d >/dev/null 2>&1 || true
+    fi
+}
+
+# Temporary files untouched for a week (files only, never directories), plus
+# the package cache.
+find /tmp -type f -atime +7 -delete >/dev/null 2>&1 || true
+pm_cache_trim
+
+if command -v df >/dev/null 2>&1; then
+    printf '%s disk / %s\n' "$(date '+%Y-%m-%d %H:%M')" \
+        "$(df -h / 2>/dev/null | awk 'NR==2{print $5}')" >> "$log" 2>/dev/null || true
+fi
+# Keep the log bounded.
+if [ "$(wc -l < "$log" 2>/dev/null || echo 0)" -gt 500 ]; then
+    tail -n 200 "$log" > "$log.tmp" 2>/dev/null && mv "$log.tmp" "$log"
+fi
+exit 0
+MAINTEOF
+chmod 0755 "$MAINT_SCRIPT"
+
+maint_dir=/etc/cron.daily
+[ "$PACKAGE_MANAGER" = apk ] && maint_dir=/etc/periodic/daily
+mkdir -p "$maint_dir"
+ln -sf "$MAINT_SCRIPT" "$maint_dir/systui-maintenance"
+note "daily maintenance job registered: $maint_dir/systui-maintenance -> $MAINT_SCRIPT"
 
 # ===========================================================================
 log "Neovim starter config"
@@ -758,7 +1054,7 @@ write_nvim() {  # <homedir> <owner>
     _hd="$1"; _own="$2"
     [ -n "$_hd" ] || return 0
     _cfg="$_hd/.config/nvim/init.lua"
-    if [ -f "$_cfg" ] && ! grep -qF -e "$NVIM_MARKER" "$_cfg" 2>/dev/null; then
+    if [ -f "$_cfg" ] && ! file_has_text "$_cfg" "$NVIM_MARKER"; then
         note "nvim: keeping your existing $_cfg"
         return 0
     fi
@@ -871,7 +1167,7 @@ write_tmux() {  # <homedir> <owner>
     _hd="$1"; _own="$2"
     [ -n "$_hd" ] || return 0
     _cfg="$_hd/.tmux.conf"
-    if [ -f "$_cfg" ] && ! grep -qF -e "$TMUX_MARKER" "$_cfg" 2>/dev/null; then
+    if [ -f "$_cfg" ] && ! file_has_text "$_cfg" "$TMUX_MARKER"; then
         note "tmux: keeping your existing $_cfg"
         return 0
     fi
@@ -974,8 +1270,14 @@ fi
 case "$INIT_SYSTEM" in
     systemd) _rto 30 systemctl list-unit-files --state=enabled --type=service 2>/dev/null | grep -E '^(rsyslog|syslog-ng|ssh|sshd|cron|crond|chrony|chronyd)' | awk '{print "      " $1}' || true ;;
     openrc) _rto 30 rc-status default 2>/dev/null | sed 's/^/      /' || true ;;
-    runit) ls /var/service 2>/dev/null | sed 's/^/      /' || true ;;
-    *) ls /etc/rc2.d/ 2>/dev/null | sed -n 's/^S[0-9]*//p' | sort -u | sed 's/^/      /' || true ;;
+    runit) for _rf in /var/service/*; do [ -e "$_rf" ] || continue; printf '      %s\n' "${_rf##*/}"; done ;;
+    *) for _rf in /etc/rc2.d/S*; do
+           [ -e "$_rf" ] || continue
+           _rfn="${_rf##*/}"; _rfn="${_rfn#S}"
+           case "$_rfn" in [0-9]*) _rfn="${_rfn#[0-9]}" ;; esac
+           case "$_rfn" in [0-9]*) _rfn="${_rfn#[0-9]}" ;; esac
+           printf '%s\n' "$_rfn"
+       done | sort -u | sed 's/^/      /' || true ;;
 esac
 
 # ===========================================================================
@@ -987,8 +1289,11 @@ note "Running services:"
 case "$INIT_SYSTEM" in
     systemd) _rto 30 systemctl list-units --type=service --state=running 2>/dev/null | awk '/\.service/{sub(/\.service/,"",$1); printf "%s ",$1} END{print ""}' | sed 's/^/      /' ;;
     openrc) _rto 30 rc-status 2>/dev/null | sed -n '/started/s/^/      /p' || true ;;
-    runit) _rto 30 sv status /var/service/* 2>/dev/null | sed 's/^/      /' || true ;;
-    *) command -v service >/dev/null 2>&1 && _rto 30 service --status-all 2>&1 | grep -E '\[ \+ \]' | awk '{print $4}' | sort | tr '\n' ' ' | sed 's/^/      /' || true; echo ;;
+    runit) for _rf in /var/service/*; do [ -e "$_rf" ] || continue; printf '      %s\n' "${_rf##*/}"; done ;;
+    *) if command -v service >/dev/null 2>&1; then
+           _rto 30 service --status-all 2>&1 | grep -E '\[ \+ \]' | awk '{print $4}' | sort | tr '\n' ' ' | sed 's/^/      /' || true
+       fi
+       echo ;;
 esac
 
 cat <<EOF

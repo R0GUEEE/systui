@@ -99,7 +99,35 @@ script_provision_run() {
         SKIP_PKGS="${SCRIPT_PROV_SKIP_PKGS:-}"
         SKIP_SERVICES="${SCRIPT_PROV_SKIP_SERVICES:-0}"
     )
-    if env "${env_args[@]}" sh "$script"; then
+    # Outer guard. The tool bounds each of its own steps, but on a host that can
+    # deadlock a fork any single call may never return -- including the tool's
+    # watchdog. Capping the whole run and reporting progress from the parent
+    # keeps a stall visible (and recoverable) instead of an apparently dead
+    # screen. PROVISION_TOTAL_TIMEOUT=0 disables the cap.
+    local prov_pid total elapsed next_report
+    total="${PROVISION_TOTAL_TIMEOUT:-21600}"
+    case "$total" in ''|*[!0-9]*) total=21600 ;; esac
+    env "${env_args[@]}" sh "$script" &
+    prov_pid=$!
+    elapsed=0
+    next_report=300
+    while kill -0 "$prov_pid" 2>/dev/null; do
+        sleep 5
+        elapsed=$((elapsed + 5))
+        if [ "$total" -gt 0 ] && [ "$elapsed" -ge "$total" ]; then
+            echo
+            echo "Provisioning exceeded PROVISION_TOTAL_TIMEOUT (${total}s); terminating it." >&2
+            kill -TERM "$prov_pid" 2>/dev/null
+            sleep 3
+            kill -KILL "$prov_pid" 2>/dev/null
+            break
+        fi
+        if [ "$elapsed" -ge "$next_report" ]; then
+            echo "  ... provisioning still running (${elapsed}s elapsed)" >&2
+            next_report=$((next_report + 300))
+        fi
+    done
+    if wait "$prov_pid"; then
         rc=0
     else
         rc=$?
