@@ -362,6 +362,51 @@ check "the init table is filtered per shell (POSIX has no starship)" bash -c '
     [ -z "$(plugin_init_line starship posix)" ] && [ -n "$(plugin_init_line zoxide posix)" ]' _ \
     "$PROJECT_DIR/src/core/alias.sh" "$MODULE"
 
+check "shell menus pass tag/description pairs to tui_menu" bash -c '
+    . "$1"; . "$2"
+    home="$3"
+    tui_input() { printf "root\n"; }
+    user_home() { printf "%s\n" "$home"; }
+    arity_log="$home/arity.log"
+    : > "$arity_log"
+    # dialog --menu (tui_menu) takes tag/description PAIRS; a third field is the
+    # tui_radio/tui_check shape and corrupts the entry list. This guard fails if
+    # any menu hands it an odd number of arguments.
+    tui_menu() {
+        shift 2
+        if [ $(( $# % 2 )) -ne 0 ]; then
+            printf "odd tui_menu args (%d): %s\n" "$#" "$*" >> "$arity_log"
+        fi
+        printf "back\n"
+    }
+    # tui_check/tui_radio (dialog --checklist/--radiolist) take TRIPLETS instead.
+    tui_check() {
+        shift 2
+        if [ $(( $# % 3 )) -ne 0 ]; then
+            printf "odd tui_check args (%d): %s\n" "$#" "$*" >> "$arity_log"
+        fi
+        printf "\n"
+    }
+    tui_radio() {
+        shift 2
+        if [ $(( $# % 3 )) -ne 0 ]; then
+            printf "odd tui_radio args (%d): %s\n" "$#" "$*" >> "$arity_log"
+        fi
+        printf "\n"
+    }
+    systui_shell_managers_menu >/dev/null 2>&1 || true
+    shellcfg_choose_shell "$home" >/dev/null 2>&1 || true
+    shellcfg_choose_shell_file bash "$home" >/dev/null 2>&1 || true
+    systui_shell_manager_menu posix "$(id -un)" "$home" >/dev/null 2>&1 || true
+    systui_shell_manager_menu bash "$(id -un)" "$home" >/dev/null 2>&1 || true
+    systui_shell_plugins_menu bash "$(id -un)" "$home" >/dev/null 2>&1 || true
+    systui_shell_framework_menu zsh "$(id -un)" "$home" >/dev/null 2>&1 || true
+    systui_shell_install_action posix "$(id -un)" "$home" >/dev/null 2>&1 || true
+    menu_shell_config_for bash "$(id -un)" "$home" >/dev/null 2>&1 || true
+    plugin_choose_shells >/dev/null 2>&1 || true
+    if [ -s "$arity_log" ]; then cat "$arity_log"; exit 1; fi' _ \
+    "$PROJECT_DIR/src/core/alias.sh" "$MODULE" "$TMP_HOME"
+
 # --- plugin entry-file detection -------------------------------------------
 for pair in "bash plug.sh" "elvish plug.elv" "xonsh plug.xsh" "pwsh plug.ps1" "nu plug.nu"; do
     sh="${pair%% *}"; fn="${pair#* }"

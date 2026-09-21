@@ -299,7 +299,7 @@ shellcfg_choose_shell() { # <home> -> shell id
     for id in $(systui_shell_ids); do
         label=$(systui_shell_label "$id")
         if systui_shell_installed "$id"; then state="installed"; else state="not installed"; fi
-        args+=("$id" "$label — $(systui_shell_rc_kind "$id"), $state" off)
+        args+=("$id" "$label — $(systui_shell_rc_kind "$id") config, $state")
     done
     args+=(back "Back")
     tui_menu "Shell configuration" "Which shell do you want to configure?" "${args[@]}"
@@ -1091,7 +1091,7 @@ systui_shell_install_action() { # <shell> <user> <home>
     n=0
     for b in $bins; do n=$((n + 1)); done
     if [ "$n" -gt 1 ]; then
-        for b in $bins; do args+=("$b" "$(systui_shell_bin_label "$b")" off); done
+        for b in $bins; do args+=("$b" "$(systui_shell_bin_label "$b")"); done
         args+=(back "Back")
         choice=$(tui_menu "Install $(systui_shell_label "$id")" "Which shell from this family?" "${args[@]}") || return 0
         if [ -z "$choice" ] || [ "$choice" = back ]; then return 0; fi
@@ -1281,7 +1281,7 @@ systui_shell_manager_menu() { # <shell> <user> <home>
             uninstall)
                 if [ "$id" = posix ] || [ "$id" = ksh ] || [ "$id" = tcsh ]; then
                     local b choice args=()
-                    for b in $bins; do args+=("$b" "$(systui_shell_bin_label "$b")" off); done
+                    for b in $bins; do args+=("$b" "$(systui_shell_bin_label "$b")"); done
                     args+=(back "Back")
                     choice=$(tui_menu "Uninstall $(systui_shell_label "$id")" "Which one?" "${args[@]}") || continue
                     if [ -z "$choice" ] || [ "$choice" = back ]; then continue; fi
@@ -1323,19 +1323,19 @@ systui_shell_managers_menu() {
         args=()
         for id in $(systui_shell_ids); do
             label=$(systui_shell_label "$id")
-            args+=("$id" "$label — $(systui_shell_state_note "$id" "$u")" off)
+            args+=("$id" "$label — $(systui_shell_state_note "$id" "$u")")
         done
-        args+=(tmux "tmux — install/update, plugins, config and sessions" off)
+        args+=(tmux "tmux — install/update, plugins, config and sessions")
         if declare -F menu_shell_runtime_commands >/dev/null 2>&1; then
-            args+=(runtime "Shell runtime configuration (launch command / boot command)" off)
+            args+=(runtime "Shell runtime configuration (launch command / boot command)")
         fi
         if declare -F menu_shell_init_login >/dev/null 2>&1; then
-            args+=(login "Login shells, /etc/shells and the /bin/sh provider" off)
+            args+=(login "Login shells, /etc/shells and the /bin/sh provider")
         fi
         if declare -F systui_shell_init_services_menu >/dev/null 2>&1; then
-            args+=(initmgr "Init & services manager" off)
+            args+=(initmgr "Init & services manager")
         fi
-        args+=(advanced "Advanced shell settings (umask, TMOUT, PATH, PS1)" off)
+        args+=(advanced "Advanced shell settings (umask, TMOUT, PATH, PS1)")
         args+=(back "Back")
         c=$(tui_menu "Shells — $u" "Install, remove or configure any shell. Current init: ${INIT:-unknown}" "${args[@]}") || return 0
         case "$c" in
