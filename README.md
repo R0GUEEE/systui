@@ -155,21 +155,20 @@ override them.
 ### What `install.sh` Does
 
 1. **Detects package manager** (APT, APK, pacman, DNF, Zypper, XBPS, or Portage)
-2. **Pre-installs every dependency declared in `share/systui-deps.tsv`**, without
-   recommended/weak packages, in three tiers:
+2. **Pre-installs the core dependencies declared in `share/systui-deps.tsv`**,
+   without recommended/weak packages:
 
-   | Tier | Contents | On failure |
-   |------|----------|------------|
-   | `core` | bash, dialog, coreutils, grep, sed, gawk, findutils, diffutils, tar, gzip, bzip2, xz, unzip, ca-certificates, curl, procps, util-linux, less, ncurses | skipped and reported |
-   | `extra` | git, wget, rsync, jq, openssh-client, iproute2, iputils, dnsutils, netcat, socat, lsof, pv, tree, ncdu, tmux, nano, vim, neovim, micro, htop, ripgrep, fd, fzf, bat, eza, w3m, lynx, most, zip, p7zip, zstd, strace, mtr, nmap, tcpdump, fastfetch, figlet, python3, gnupg, file, which | skipped and reported |
-   | `build` | make, gcc, cmake, ninja, pip, python3-venv | skipped and reported |
+   | Tier | Contents |
+   |------|----------|
+   | `core` | bash, dialog, coreutils, grep, sed, gawk, findutils, diffutils, tar, gzip, bzip2, xz, unzip, ca-certificates, curl, procps, util-linux, less, ncurses |
 
-   Because the toolkit is installed up front, no menu has to install a tool
-   mid-flow. Packages a distribution cannot provide are located first and then
-   **skipped with a report** — a missing package never aborts the install, and
-   neither does a failed package-index refresh. Each run ends with a summary of
-   what was skipped. Set `SYSTUI_DEPS_STRICT=1` to make unavailable packages a
-   hard error instead.
+   The extra and build tiers were removed: optional tooling, compilers and
+   language managers are installed on demand from the menus (Packages →
+   Managers) instead of up front. Packages a distribution cannot provide are
+   located first and then **skipped with a report** — a missing package never
+   aborts the install, and neither does a failed package-index refresh. Each run
+   ends with a summary of what was skipped; set `SYSTUI_DEPS_STRICT=1` to make
+   unavailable packages a hard error instead.
 
 3. **Replaces managed project files** in `/usr/local/lib/systui/` with the latest copy
 4. **Creates or replaces the executable** at `/usr/local/bin/systui`
@@ -179,17 +178,15 @@ override them.
 #### Dependency options
 
 ```bash
-sudo ./install.sh                 # all tiers (default)
-sudo ./install.sh --minimal       # core tier only
+sudo ./install.sh                 # core dependencies + install
 sudo ./install.sh --deps-only     # install dependencies, then exit
 sudo ./install.sh --dry-run       # print the dependency plan, change nothing
 sudo ./install.sh --no-deps       # skip dependency installation
 ```
 
-Environment overrides: `SYSTUI_DEPS_TIERS=core,extra,build`,
-`SYSTUI_MINIMAL_DEPS=1`, `SYSTUI_DEPS_DRY_RUN=1`, `SYSTUI_PM_OVERRIDE=<pm>` to
-force a package-manager backend, and `SYSTUI_DEPS_STRICT=1` to fail instead of
-skipping unavailable packages.
+Environment overrides: `SYSTUI_DEPS_TIERS=core`, `SYSTUI_DEPS_DRY_RUN=1`,
+`SYSTUI_PM_OVERRIDE=<pm>` to force a package-manager backend, and
+`SYSTUI_DEPS_STRICT=1` to fail instead of skipping unavailable packages.
 
 ### Dependencies
 
@@ -202,7 +199,7 @@ Everything installed automatically from `share/systui-deps.tsv`:
 - procps, util-linux, less, ncurses
 - curl, ca-certificates
 
-**Toolkit and build tiers (installed by default):**
+**Installed on demand (menus install these when an action needs them):**
 - git, wget, rsync, jq, openssh-client, iproute2, iputils, dnsutils, netcat, socat
 - lsof, pv, tree, ncdu, tmux, nano, vim, neovim, micro, htop, ripgrep, fd, fzf, bat, eza
 - w3m, lynx, most, zip, p7zip, zstd, strace, mtr, nmap, tcpdump, fastfetch, figlet

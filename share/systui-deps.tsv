@@ -2,20 +2,22 @@
 #
 # Columns: canonical <TAB> apt <TAB> apk <TAB> pacman <TAB> dnf <TAB> xbps <TAB> emerge <TAB> tier <TAB> commands
 #
-# canonical  stable systui name, also used for PKG_MAP-style lookups
+# canonical  stable systui name
 # apt        Debian/Ubuntu/Devuan/Kali package
 # apk        Alpine package
 # pacman     Arch package
 # dnf        Fedora/RHEL/openSUSE package (zypper uses this column)
 # xbps       Void package
 # emerge     Gentoo atom
-# tier       core  = required to start and operate the TUI (install failure is fatal)
-#            extra = CLI tooling systui menus and features invoke (failure warns)
-#            build = compilers/toolchains for build and rootfs features (failure warns)
-# commands   comma-separated executables the package is expected to provide
+# tier       core = the only installed tier: what systui needs to start and run
+# commands   comma-separated executables the package is expected to provide;
+#            entries after a "|" are advisory (reported, never fatal)
+#
+# Everything else systui can use (tooling, compilers, language managers) is
+# installed on demand from the menus, not up front by install.sh.
 #
 # Placeholder "-" means the package is unavailable on that distribution; it is
-# skipped with a warning instead of failing the install.
+# skipped with a report and never fails the install.
 bash	bash	bash	bash	bash	bash	app-shells/bash	core	bash
 dialog	dialog	dialog	dialog	dialog	dialog	dev-util/dialog	core	dialog
 coreutils	coreutils	coreutils	coreutils	coreutils	coreutils	sys-apps/coreutils	core	id,mktemp,head,tr,cut,sort,tee,chmod,rm,date,env,stat,readlink,dirname,basename
@@ -35,50 +37,3 @@ procps	procps	procps-ng	procps-ng	procps-ng	procps-ng	sys-process/procps	core	ps
 util-linux	util-linux	util-linux	util-linux	util-linux	util-linux	sys-apps/util-linux	core	mount,umount,lsblk,blkid,findmnt,flock,nsenter,unshare,getopt,script
 less	less	less	less	less	less	sys-apps/less	core	less
 ncurses	ncurses-bin	ncurses	ncurses	ncurses	ncurses	sys-libs/ncurses	core	clear|tput,infocmp
-file	file	file	file	file	file	sys-apps/file	extra	file
-which	debianutils	which	which	which	which	sys-apps/which	extra	which
-git	git	git	git	git	git	dev-vcs/git	extra	git
-wget	wget	wget	wget	wget	wget	net-misc/wget	extra	wget
-rsync	rsync	rsync	rsync	rsync	rsync	net-misc/rsync	extra	rsync
-jq	jq	jq	jq	jq	jq	app-misc/jq	extra	jq
-openssh-client	openssh-client	openssh-client	openssh	openssh-clients	openssh	net-misc/openssh	extra	ssh,scp,sftp,ssh-keygen
-iproute2	iproute2	iproute2	iproute2	iproute	iproute2	sys-apps/iproute2	extra	ip,ss
-iputils	iputils-ping	iputils	iputils	iputils	iputils	net-misc/iputils	extra	ping
-dnsutils	bind9-dnsutils	bind-tools	bind	bind-utils	bind-utils	net-dns/bind-tools	extra	dig,nslookup,host
-netcat	netcat-openbsd	netcat-openbsd	openbsd-netcat	nmap-ncat	openbsd-netcat	net-analyzer/openbsd-netcat	extra	nc,ncat
-socat	socat	socat	socat	socat	socat	net-misc/socat	extra	socat
-lsof	lsof	lsof	lsof	lsof	lsof	sys-process/lsof	extra	lsof
-pv	pv	pv	pv	pv	pv	sys-apps/pv	extra	pv
-tree	tree	tree	tree	tree	tree	app-text/tree	extra	tree
-ncdu	ncdu	ncdu	ncdu	ncdu	ncdu	sys-fs/ncdu	extra	ncdu
-tmux	tmux	tmux	tmux	tmux	tmux	app-misc/tmux	extra	tmux
-nano	nano	nano	nano	nano	nano	app-editors/nano	extra	nano
-vim	vim	vim	vim	vim-enhanced	vim	app-editors/vim	extra	vim
-neovim	neovim	neovim	neovim	neovim	neovim	app-editors/neovim	extra	nvim
-micro	micro	micro	micro	micro	micro	app-editors/micro	extra	micro
-htop	htop	htop	htop	htop	htop	sys-process/htop	extra	htop
-ripgrep	ripgrep	ripgrep	ripgrep	ripgrep	ripgrep	sys-apps/ripgrep	extra	rg
-fd	fd-find	fd	fd	fd-find	fd	sys-apps/fd	extra	fdfind,fd
-fzf	fzf	fzf	fzf	fzf	fzf	app-shells/fzf	extra	fzf
-bat	bat	bat	bat	bat	bat	app-text/bat	extra	bat,batcat
-eza	eza	eza	eza	eza	eza	sys-apps/eza	extra	eza,exa
-w3m	w3m	w3m	w3m	w3m	w3m	www-client/w3m	extra	w3m
-lynx	lynx	lynx	lynx	lynx	lynx	www-client/lynx	extra	lynx
-most	most	most	most	most	most	app-text/most	extra	most
-zip	zip	zip	zip	zip	zip	app-arch/zip	extra	zip
-p7zip	p7zip-full	p7zip	p7zip	p7zip	p7zip	app-arch/p7zip	extra	7z,7za
-zstd	zstd	zstd	zstd	zstd	zstd	app-arch/zstd	extra	zstd,unzstd
-strace	strace	strace	strace	strace	strace	dev-debug/strace	extra	strace
-mtr	mtr-tiny	mtr	mtr	mtr	mtr	net-analyzer/mtr	extra	mtr
-nmap	nmap	nmap	nmap	nmap	nmap	net-analyzer/nmap	extra	nmap
-tcpdump	tcpdump	tcpdump	tcpdump	tcpdump	tcpdump	net-analyzer/tcpdump	extra	tcpdump
-fastfetch	fastfetch	fastfetch	fastfetch	fastfetch	fastfetch	app-misc/fastfetch	extra	fastfetch
-figlet	figlet	figlet	figlet	figlet	figlet	app-misc/figlet	extra	figlet
-python3	python3	python3	python3	python3	python3	dev-lang/python	extra	python3
-gnupg	gnupg	gnupg	gnupg	gnupg	gnupg	app-crypt/gnupg	extra	gpg
-make	make	make	make	make	make	sys-devel/make	build	make
-gcc	gcc	gcc	gcc	gcc	gcc	sys-devel/gcc	build	gcc,cc
-cmake	cmake	cmake	cmake	cmake	cmake	dev-build/cmake	build	cmake
-ninja-build	ninja-build	ninja	ninja	ninja	ninja	dev-build/ninja	build	ninja
-pip	python3-pip	py3-pip	python-pip	python3-pip	python3-pip	dev-python/pip	build	pip,pip3
-python3-venv	python3-venv	py3-virtualenv	python-virtualenv	python3-virtualenv	python3-virtualenv	dev-python/virtualenv	build	-

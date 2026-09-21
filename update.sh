@@ -24,7 +24,7 @@ Usage: $0 [options]
 
 Options:
   --force       Accepted for compatibility; updates are always full replacements.
-  --minimal     Install only the core dependency tier in the replaced tree.
+  --minimal     Accepted for compatibility; the core tier is installed anyway.
   --dry-run     Show the dependency plan without changing the system.
   --no-deps     Skip dependency installation during reinstall.
   -h, --help    Show this help.
@@ -33,7 +33,8 @@ Every update is a clean replacement from:
   $REPO_URL
   branch: $BRANCH
 
-Dependencies are pre-installed from share/systui-deps.tsv before installing.
+Core dependencies are pre-installed from share/systui-deps.tsv; optional
+tooling is installed on demand from the menus.
 Update checkout:
   $CACHE_DIR (fixed, root-owned)
 USAGE

@@ -18,7 +18,9 @@ contains() { grep -Fq -- "$2" "$1"; }
 
 # --- manifest integrity ------------------------------------------------------
 check "dependency manifest exists" test -r "$MANIFEST"
-check "manifest declares the core, extra and build tiers" bash -c 'grep -q "	core	" "$1" && grep -q "	extra	" "$1" && grep -q "	build	" "$1"' _ "$MANIFEST"
+check "manifest declares only the core tier" bash -c '
+    grep -q "	core	" "$1" || exit 1
+    ! grep -qE "	(extra|build)	" "$1"' _ "$MANIFEST"
 check "every manifest row has 9 fields or is a comment" bash -c '
     awk -F"\t" "/^[[:space:]]*#/ {next} NF==0 {next} NF!=9 {print NR\": \"NF; bad=1} END{exit bad}" "$1"' _ "$MANIFEST"
 check "manifest has no duplicate canonical names" bash -c '
@@ -34,7 +36,7 @@ check "manifest records package names for every supported family" bash -c '
 # --- install.sh wiring -------------------------------------------------------
 check "install.sh ships the manifest-driven dependency engine" contains "$INSTALL" 'deps_manifest_path'
 check "install.sh resolves a package column per manager family" contains "$INSTALL" 'deps_family_column'
-check "install.sh defaults to every tier" contains "$INSTALL" "printf 'core,extra,build\\n'"
+check "install.sh defaults to the core tier" contains "$INSTALL" "printf 'core\\n'"
 check "install.sh supports a minimal core-only install" contains "$INSTALL" 'SYSTUI_MINIMAL_DEPS'
 check "install.sh keeps the core tier fatal and other tiers tolerant" bash -c '
     grep -q "core) install_native_packages \"\$pm\" \"\$@\"" "$1" &&
@@ -68,17 +70,17 @@ check "sourced engine lists core packages for apk" bash -c '
     source "$1"
     PROJECT_DIR="$2"
     deps_rows 3 core | grep -qx "core	dialog"' _ "$tmp/install_lib.sh" "$ROOT"
-check "toolkit packages are listed for the build tier" bash -c '
+check "no extra or build packages are selected" bash -c '
     source "$1"
     PROJECT_DIR="$2"
-    deps_rows 2 build | grep -qx "build	make"' _ "$tmp/install_lib.sh" "$ROOT"
+    [ -z "$(deps_rows 2 extra)" ] && [ -z "$(deps_rows 2 build)" ] && [ -z "$(deps_rows 2 toolkit)" ]' _ "$tmp/install_lib.sh" "$ROOT"
 check "minimal mode selects the core tier only" bash -c '
     source "$1"
     SYSTUI_MINIMAL_DEPS=1
     [ "$(deps_tiers)" = core ]' _ "$tmp/install_lib.sh"
-check "default mode selects all tiers" bash -c '
+check "default mode selects the core tier" bash -c '
     source "$1"
-    [ "$(deps_tiers)" = "core,extra,build" ]' _ "$tmp/install_lib.sh"
+    [ "$(deps_tiers)" = core ]' _ "$tmp/install_lib.sh"
 check "unknown package managers are rejected" bash -c '
     source "$1"
     ! deps_family_column nosuchmanager 2>/dev/null' _ "$tmp/install_lib.sh"
@@ -88,10 +90,10 @@ if [ "$(id -u)" -eq 0 ]; then
         SYSTUI_PM_OVERRIDE=apt bash "$1" --deps-only --dry-run 2>/dev/null | grep -q "\[dry-run\] core (apt):"' _ "$INSTALL"
     check "install.sh --deps-only --dry-run exits successfully" bash -c '
         SYSTUI_PM_OVERRIDE=apt bash "$1" --deps-only --dry-run >/dev/null 2>&1' _ "$INSTALL"
-    check "minimal dry-run plans core packages only" bash -c '
-        out=$(SYSTUI_PM_OVERRIDE=apk bash "$1" --deps-only --dry-run --minimal 2>/dev/null)
+    check "the dependency plan contains only core packages" bash -c '
+        out=$(SYSTUI_PM_OVERRIDE=apk bash "$1" --deps-only --dry-run 2>/dev/null)
         printf "%s\n" "$out" | grep -q "\[dry-run\] core (apk):"
-        ! printf "%s\n" "$out" | grep -q "toolkit"' _ "$INSTALL"
+        ! printf "%s\n" "$out" | grep -qE "toolkit|extra|build"' _ "$INSTALL"
     check "update.sh --dry-run reports the install it would run" bash -c '
         bash "$1" --dry-run 2>/dev/null | grep -q "would run: INSTALL_PREFIX="' _ "$UPDATE"
     check "update.sh --dry-run is non-destructive" bash -c '

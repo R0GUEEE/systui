@@ -26,17 +26,18 @@ Usage: $0 [options]
 Options:
   --deps-only   Install and verify dependencies, then exit
   --dry-run     Print the dependency plan without changing the system
-  --minimal     Install only the core dependency tier
+  --minimal     Accepted for compatibility; the core tier is installed anyway
   --no-deps     Skip dependency installation
   -h, --help    Show this help.
 
-All packages systui needs are declared in share/systui-deps.tsv and installed
-up front, so no menu fails because a tool is missing later.
+All packages systui needs to run are declared in share/systui-deps.tsv and
+installed up front. Optional tooling and toolchains are installed on demand
+from the menus. Anything a distribution cannot provide is skipped, not fatal.
 
 Environment:
   SYSTUI_SKIP_DEPS=1       skip dependency installation entirely
-  SYSTUI_MINIMAL_DEPS=1    install only the core tier
-  SYSTUI_DEPS_TIERS=...    explicit tiers: core,extra,build
+  SYSTUI_MINIMAL_DEPS=1    accepted for compatibility (core is the default)
+  SYSTUI_DEPS_TIERS=core   explicit tier selection
   SYSTUI_DEPS_DRY_RUN=1    print what would be installed, change nothing
   SYSTUI_DEPS_STRICT=1     fail instead of skipping unavailable packages
   SYSTUI_PM_OVERRIDE=<pm>  force apt|apk|pacman|dnf|zypper|xbps|emerge
@@ -215,15 +216,15 @@ install_native_packages() {
 ###############################################################################
 # Dependency installation (manifest driven)
 #
-# share/systui-deps.tsv is the single source of truth for systui's runtime,
-# toolkit and build dependencies. "core" packages are required for the TUI to
-# start; "extra" and "build" cover the CLI tooling and toolchains systui menus
-# invoke. Every tier is installed up front so features do not fail mid-flow.
+# share/systui-deps.tsv is the single source of truth for systui's runtime
+# dependencies: the core packages needed to start and operate the TUI. The
+# former extra and build tiers were removed; anything else systui can use is
+# installed on demand from the menus.
 #
 # Environment:
 #   SYSTUI_SKIP_DEPS=1       skip dependency installation entirely
-#   SYSTUI_MINIMAL_DEPS=1    install only the core tier
-#   SYSTUI_DEPS_TIERS=...    explicit tier selection (core,extra,build)
+#   SYSTUI_MINIMAL_DEPS=1    accepted for compatibility (core is the default)
+#   SYSTUI_DEPS_TIERS=core   explicit tier selection
 #   SYSTUI_DEPS_DRY_RUN=1    print what would be installed, change nothing
 #   SYSTUI_DEPS_STRICT=1     fail (instead of skipping) when a package or
 #                            command is unavailable; the default skips
@@ -245,10 +246,13 @@ deps_family_column() {
     esac
 }
 
+# Only the core tier is installed. The extra and build tiers were removed, so
+# tooling, compilers and language managers are installed on demand from the
+# menus instead of up front. SYSTUI_DEPS_TIERS can still narrow or extend the
+# selection for a custom manifest.
 deps_tiers() {
     if [ -n "${SYSTUI_DEPS_TIERS:-}" ]; then printf '%s\n' "$SYSTUI_DEPS_TIERS"; return 0; fi
-    if [ "${SYSTUI_MINIMAL_DEPS:-0}" = "1" ]; then printf 'core\n'; return 0; fi
-    printf 'core,extra,build\n'
+    printf 'core\n'
 }
 
 # Emit "tier<TAB>package" rows for the requested tiers on this package manager.
