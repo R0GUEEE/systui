@@ -3,6 +3,14 @@
 # ROOTFS WORKBENCH — repair existing iSH systemd roots before entering
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_ish_target_release() { # <target> -> ID|VERSION_CODENAME|VERSION_ID
     local t="$1" key value id="" codename="" version=""
     [ -r "$t/etc/os-release" ] || return 1
@@ -63,7 +71,7 @@ rootfs_ish_activate_gnu_coreutils() { # <target>
 # Preserve the workbench enter implementation, then add an iSH-only safety pass.
 if declare -F rootfs_wb_enter >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_enter >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_enter | sed '1s/^rootfs_wb_enter[[:space:]]*()/_systui_base_rootfs_wb_enter ()/')"
+    systui_alias_function rootfs_wb_enter _systui_base_rootfs_wb_enter
 fi
 
 rootfs_wb_enter() { # <target>

@@ -208,6 +208,11 @@ bedrock_aok_system_manager_menu() {
 # Extend the Bedrock top-level menu with cohesive system management.
 menu_bedrock_aok() {
     local c status
+    # Opening the Bedrock menu is a definitive "Bedrock is in use" signal, so
+    # create the install-target wrappers here if they were skipped at startup.
+    if declare -F systui_bedrock_ensure_install_wrappers >/dev/null 2>&1; then
+        systui_bedrock_ensure_install_wrappers
+    fi
     while true; do
         if bedrock_aok_installed; then status="installed ($(bedrock_aok_brl))"; else status="not installed"; fi
         c=$(tui_menu "Bedrock-AOK" \

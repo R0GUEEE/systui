@@ -3,8 +3,16 @@
 # SYSTEM CONFIGURATION — preserve audited feature parity
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 if declare -F menu_network >/dev/null 2>&1 && ! declare -F _systui_audited_menu_network_core >/dev/null 2>&1; then
-    eval "$(declare -f menu_network | sed '1s/^menu_network[[:space:]]*()/_systui_audited_menu_network_core ()/')"
+    systui_alias_function menu_network _systui_audited_menu_network_core
 fi
 
 sysconfig_fail2ban_menu() {
@@ -73,7 +81,7 @@ menu_network() {
 }
 
 if declare -F menu_services >/dev/null 2>&1 && ! declare -F _systui_audited_menu_services_core >/dev/null 2>&1; then
-    eval "$(declare -f menu_services | sed '1s/^menu_services[[:space:]]*()/_systui_audited_menu_services_core ()/')"
+    systui_alias_function menu_services _systui_audited_menu_services_core
 fi
 
 sysconfig_create_systemd_service() {

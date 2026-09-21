@@ -21,11 +21,11 @@ check "run_cmd preserves errexit=on" \
 
 # --- M2: Arch refresh never performs a partial upgrade -----------------------
 check "no pacman partial-upgrade refresh remains" \
-    bash -c '! grep -R -nE "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1"/{install.sh,src,share} --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
+    bash -c '! grep -R -nE "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1"/{install.sh,src,share} 2>/dev/null' _ "$PROJECT_DIR"
 
 # --- M3: Homebrew root support drops privileges rather than faking uid -------
 check "Homebrew no longer uses LD_PRELOAD fake UID shim" \
-    bash -c '! grep -R -n "LD_PRELOAD.*fake\|geteuid.*shim\|fake.*uid" "$1/share/homebrew" "$1/src" --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
+    bash -c '! grep -R -n "LD_PRELOAD.*fake\|geteuid.*shim\|fake.*uid" "$1/share/homebrew" "$1/src" 2>/dev/null' _ "$PROJECT_DIR"
 check "Homebrew wrapper drops root privileges" \
     bash -c 'grep -Eq "runuser|su[[:space:]]" "$1/share/homebrew/install-homebrew-root.sh"' _ "$PROJECT_DIR"
 
@@ -38,7 +38,7 @@ check "CI workflow exists" test -s "$PROJECT_DIR/.github/workflows/ci.yml"
 
 # --- M5: reports stay in private workspace -----------------------------------
 check "rootfs reports are not written to host /tmp" \
-    bash -c '! grep -R -nE "(^|[^A-Za-z0-9_])/tmp/systui-(report|output|rootfs)" "$1/src/features" --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
+    bash -c '! grep -R -nE "(^|[^A-Za-z0-9_])/tmp/systui-(report|output|rootfs)" "$1/src/features" 2>/dev/null' _ "$PROJECT_DIR"
 check "rootfs reports live in the private workspace" \
     bash -c 'grep -R -q "SYSTUI_TMP" "$1/src/features/rootfs.sh"' _ "$PROJECT_DIR"
 
@@ -70,13 +70,13 @@ check "log survives after the shell exits" \
 
 # --- M9: pm_install integration chain -----------------------------------------
 check "native pm_install is preserved for the integration chain" \
-    bash -c 'grep -R -q "_systui_native_pm_install" "$1/src/features" --include="*.sh"' _ "$PROJECT_DIR"
+    bash -c 'grep -R -q "_systui_native_pm_install" "$1/src/features"' _ "$PROJECT_DIR"
 check "pm_install redefinitions chain to the preserved native" \
-    bash -c 'grep -R -q "_systui_native_pm_install" "$1/src/features" --include="*.sh"' _ "$PROJECT_DIR"
+    bash -c 'grep -R -q "_systui_native_pm_install" "$1/src/features"' _ "$PROJECT_DIR"
 check "common.sh no longer exports pm_install" \
     bash -c '! grep -Eq "export -f.*pm_install" "$1/src/core/common.sh"' _ "$PROJECT_DIR"
 check "no bare 'pacman -Sy' anywhere (partial-upgrade pattern)" \
-    bash -c '! grep -R -nE "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1"/{src,share,install.sh} --include="*.sh" 2>/dev/null' _ "$PROJECT_DIR"
+    bash -c '! grep -R -nE "pacman[[:space:]]+-Sy([[:space:]]|$)" "$1"/{src,share,install.sh} 2>/dev/null' _ "$PROJECT_DIR"
 check "ask_yesno returns the default on EOF instead of recursing" \
     bash -c '. "$1/src/core/common.sh"; ask_yesno "x" y </dev/null' _ "$PROJECT_DIR"
 

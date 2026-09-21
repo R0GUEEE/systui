@@ -3,6 +3,14 @@
 # ROOTFS BUILDER — iSH-AOK systemd shell/procfs compatibility
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_ish_disable_systemd_osc_profile() { # <target>
     local t="$1" active="$1/etc/profile.d/80-systemd-osc-context.sh"
 
@@ -104,7 +112,7 @@ EOF
 # refreshed, including fresh builds, Workbench repair and final pre-pack checks.
 if declare -F rootfs_install_ish_systemd_compat >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_install_ish_systemd_compat_osc >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_install_ish_systemd_compat | sed '1s/^rootfs_install_ish_systemd_compat[[:space:]]*()/_systui_base_rootfs_install_ish_systemd_compat_osc ()/')"
+    systui_alias_function rootfs_install_ish_systemd_compat _systui_base_rootfs_install_ish_systemd_compat_osc
 fi
 
 rootfs_install_ish_systemd_compat() {

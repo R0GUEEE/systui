@@ -9,6 +9,14 @@
 # mount count does not prove that /proc itself is mounted. Verify each required
 # tree here and fall back to bind-mounting the host virtual filesystem, which is
 # more reliable on iSH-AOK than creating a fresh proc/sysfs instance.
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_wb_init_mount_required() { # <target>
     local t="$1" mp src
     ROOTFS_INIT_TEMP_MOUNTS=""
@@ -123,7 +131,7 @@ rootfs_wb_ish_reinstall_openrc_init() { # <target>
 
 if declare -F rootfs_wb_ish_repair_choices >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_ish_repair_choices_init >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_ish_repair_choices | sed '1s/^rootfs_wb_ish_repair_choices[[:space:]]*()/_systui_base_rootfs_wb_ish_repair_choices_init ()/')"
+    systui_alias_function rootfs_wb_ish_repair_choices _systui_base_rootfs_wb_ish_repair_choices_init
 fi
 
 # Build the repair selector from the same conditions represented by the
@@ -168,7 +176,7 @@ rootfs_wb_ish_repair_choices() { # <target>
 
 if declare -F rootfs_wb_ish_apply_repair >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_ish_apply_repair_init >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_ish_apply_repair | sed '1s/^rootfs_wb_ish_apply_repair[[:space:]]*()/_systui_base_rootfs_wb_ish_apply_repair_init ()/')"
+    systui_alias_function rootfs_wb_ish_apply_repair _systui_base_rootfs_wb_ish_apply_repair_init
 fi
 
 rootfs_wb_ish_apply_repair() { # <target> <tag>

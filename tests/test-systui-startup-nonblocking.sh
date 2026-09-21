@@ -49,12 +49,13 @@ systui_is_ish
 EOF
 bash "$tmp/cache-check.sh"
 
-# Loader decides constrained-runtime scrubbing once per manifest, while still
-# performing the scrub after every loaded feature when enabled.
+# Loader decides constrained-runtime scrubbing once per manifest and batches the
+# scrub (re-enumerating the whole function table after every feature costs
+# seconds on constrained hosts). SYSTUI_SCRUB_INTERVAL=1 restores the historical
+# after-every-feature behaviour.
 mkdir -p "$tmp/lib/src/features"
-printf ':\n' > "$tmp/lib/src/features/a.sh"
-printf ':\n' > "$tmp/lib/src/features/b.sh"
-printf 'a.sh\nb.sh\n' > "$tmp/manifest"
+for name in a b c d e f; do printf ':\n' > "$tmp/lib/src/features/$name.sh"; done
+printf 'a.sh\nb.sh\nc.sh\nd.sh\ne.sh\nf.sh\n' > "$tmp/manifest"
 cat > "$tmp/loader-check.sh" <<EOF
 set -e
 SYSTUI_LIBDIR="$tmp/lib"
@@ -62,9 +63,25 @@ SYSTUI_TMP="$tmp"
 . "$LOADER"
 systui_should_scrub_function_exports() { printf x >> "$tmp/scrub-decisions"; return 0; }
 systui_unexport_all_functions() { printf x >> "$tmp/scrub-runs"; }
-systui_load_features "$tmp/manifest"
+
+# Historical behaviour: one scrub per feature.
+SYSTUI_SCRUB_INTERVAL=1 systui_load_features "$tmp/manifest"
 [ "\$(wc -c < "$tmp/scrub-decisions")" -eq 1 ]
+[ "\$(wc -c < "$tmp/scrub-runs")" -eq 6 ]
+
+# Batched default: scrubs at each interval boundary plus a final one.
+rm -f "$tmp/scrub-runs"
+SYSTUI_SCRUB_INTERVAL=4 systui_load_features "$tmp/manifest"
 [ "\$(wc -c < "$tmp/scrub-runs")" -eq 2 ]
+
+# A shorter manifest still gets exactly one final scrub.
+rm -f "$tmp/scrub-runs"
+printf 'a.sh\nb.sh\n' > "$tmp/short-manifest"
+SYSTUI_SCRUB_INTERVAL=4 systui_load_features "$tmp/short-manifest"
+[ "\$(wc -c < "$tmp/scrub-runs")" -eq 1 ]
+
+# An unusable interval falls back to the default instead of failing.
+SYSTUI_SCRUB_INTERVAL=bogus systui_load_features "$tmp/short-manifest"
 EOF
 bash "$tmp/loader-check.sh"
 

@@ -3,11 +3,19 @@
 # Keeps host package management as the primary system while making Bedrock
 # strata visible and manageable as part of the same package workflow.
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 if declare -F pm_update >/dev/null 2>&1 && ! declare -F _systui_native_pm_update >/dev/null 2>&1; then
-    eval "$(declare -f pm_update | sed '1s/^pm_update[[:space:]]*()/_systui_native_pm_update ()/')"
+    systui_alias_function pm_update _systui_native_pm_update
 fi
 if declare -F tui_menu_no_tags >/dev/null 2>&1 && ! declare -F _systui_bedrock_sysconfig_orig_no_tags >/dev/null 2>&1; then
-    eval "$(declare -f tui_menu_no_tags | sed '1s/^tui_menu_no_tags[[:space:]]*()/_systui_bedrock_sysconfig_orig_no_tags ()/')"
+    systui_alias_function tui_menu_no_tags _systui_bedrock_sysconfig_orig_no_tags
 fi
 
 # Package-installed detection for every host PM supported by sysconfig.  This
@@ -29,7 +37,7 @@ bedrock_sysconfig_host_has_package() { # <package>
 # Re-replace pm_install only to improve the partial-install check while keeping
 # the Bedrock-first fallback logic from the preceding integration module.
 if declare -F pm_install >/dev/null 2>&1 && ! declare -F _systui_bedrock_pm_install_integrated >/dev/null 2>&1; then
-    eval "$(declare -f pm_install | sed '1s/^pm_install[[:space:]]*()/_systui_bedrock_pm_install_integrated ()/')"
+    systui_alias_function pm_install _systui_bedrock_pm_install_integrated
 fi
 
 pm_install() {

@@ -3,9 +3,17 @@
 # SYSTEM CONFIGURATION — PACKAGE MANAGER MULTI-INSTALL / UNINSTALL
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 if declare -F menu_package_managers >/dev/null 2>&1 \
     && ! declare -F _systui_single_menu_package_managers >/dev/null 2>&1; then
-    eval "$(declare -f menu_package_managers | sed '1s/^menu_package_managers[[:space:]]*()/_systui_single_menu_package_managers ()/')"
+    systui_alias_function menu_package_managers _systui_single_menu_package_managers
 fi
 
 sysconfig_pm_multi_catalogue() {

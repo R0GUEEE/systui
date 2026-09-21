@@ -6,10 +6,17 @@
 # available to the overall system.  This final feature layer preserves native
 # detection and then scans every installed stratum directly.
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 if declare -F rootfs_bs_installed >/dev/null 2>&1 \
     && ! declare -F _systui_native_rootfs_bs_installed >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_bs_installed | sed \
-        '1s/^rootfs_bs_installed[[:space:]]*()/_systui_native_rootfs_bs_installed ()/')"
+    systui_alias_function rootfs_bs_installed _systui_native_rootfs_bs_installed
 fi
 
 bedrock_bootstrap_strata_root() {

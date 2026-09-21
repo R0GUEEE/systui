@@ -3,6 +3,14 @@
 # SYSTEM CONFIGURATION — Shell login + init management
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 sysconfig_shell_path_valid() {
     case "${1:-}" in
         /*) [[ "$1" != *$'\n'* && "$1" != *$'\r'* ]] ;;
@@ -137,7 +145,7 @@ menu_shell_init_login() {
 }
 
 if declare -F menu_shells >/dev/null 2>&1 && ! declare -F _systui_base_menu_shells_initlogin >/dev/null 2>&1; then
-    eval "$(declare -f menu_shells | sed '1s/^menu_shells[[:space:]]*()/_systui_base_menu_shells_initlogin ()/')"
+    systui_alias_function menu_shells _systui_base_menu_shells_initlogin
 fi
 
 menu_shells() {

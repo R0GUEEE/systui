@@ -1,4 +1,10 @@
 #!/bin/bash
+
+# The fork-free function alias helper lives in its own module so features that
+# are sourced on their own (tests, reduced builds) can pull in just that helper.
+_systui_alias_module="${SYSTUI_LIBDIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}/src/core/alias.sh"
+[ -r "$_systui_alias_module" ] && . "$_systui_alias_module"
+unset _systui_alias_module
 ###############################################################################
 # systui — Common Utilities & Package Management
 ###############################################################################
@@ -371,6 +377,7 @@ map_packages() {
     done
     echo "${out[*]}"
 }
+
 
 ###############################################################################
 # PACKAGE MANAGER OPERATIONS

@@ -3,6 +3,14 @@
 # ROOTFS BUILD AUTO-CONFIGURATION
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 ROOTFS_BASE=/opt/rootfs
 
 rootfs_backend_auto_select() { # <distro> <arch> <release>
@@ -52,12 +60,12 @@ rootfs_default_init_packages() { # <distro>
 }
 
 if declare -F rootfs_builder_impl >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_builder_impl >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_builder_impl | sed '1s/^rootfs_builder_impl[[:space:]]*()/_systui_base_rootfs_builder_impl ()/')"
+    systui_alias_function rootfs_builder_impl _systui_base_rootfs_builder_impl
 fi
 
 for _systui_ui_fn in tui_input tui_password tui_yesno tui_check tui_radio; do
     if declare -F "$_systui_ui_fn" >/dev/null 2>&1 && ! declare -F "_systui_base_${_systui_ui_fn}" >/dev/null 2>&1; then
-        eval "$(declare -f "$_systui_ui_fn" | sed "1s/^${_systui_ui_fn}[[:space:]]*()/_systui_base_${_systui_ui_fn} ()/")"
+        systui_alias_function "$_systui_ui_fn" "_systui_base_${_systui_ui_fn}"
     fi
 done
 unset _systui_ui_fn
@@ -99,7 +107,7 @@ tui_radio() {
 
 for _systui_rootfs_fn in rootfs_backend_menu rootfs_backend_config_menu rootfs_package_catalog; do
     if declare -F "$_systui_rootfs_fn" >/dev/null 2>&1 && ! declare -F "_systui_base_${_systui_rootfs_fn}" >/dev/null 2>&1; then
-        eval "$(declare -f "$_systui_rootfs_fn" | sed "1s/^${_systui_rootfs_fn}[[:space:]]*()/_systui_base_${_systui_rootfs_fn} ()/")"
+        systui_alias_function "$_systui_rootfs_fn" "_systui_base_${_systui_rootfs_fn}"
     fi
 done
 unset _systui_rootfs_fn

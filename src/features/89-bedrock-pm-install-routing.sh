@@ -95,6 +95,18 @@ pm_install() {
 # host-only vendor/source installer code and use the native stratum package
 # manager directly.
 systui_bedrock_rebind_install_wrappers() {
+    # Phase 88 already emits the final target-aware wrapper and sets this marker,
+    # so re-evaluating all ~25 menu wrappers here is pure duplicate work
+    # (~420 ms of startup on a constrained host). Keep the loop as a fallback for
+    # reduced builds where the merged wrapper is unavailable.
+    if [ "${SYSTUI_BEDROCK_TARGET_WRAPPERS:-0}" = 1 ]; then
+        return 0
+    fi
+    # Nothing to rebind when Bedrock is not installed: every wrapper would
+    # short-circuit on the same check.
+    if [ ! -d /bedrock ] && [ "${SYSTUI_BEDROCK_WRAP_INSTALL_MENUS:-0}" != 1 ]; then
+        return 0
+    fi
     local fn saved canonical _decl _flag _tmp
     _tmp="${SYSTUI_TMP:-/tmp}/systui-bedrock-rebind-fns.$$"
     declare -F > "$_tmp" 2>/dev/null || : > "$_tmp"

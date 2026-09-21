@@ -16,6 +16,22 @@ systui_unexport_all_functions() {
     : > "$export_dump"
 }
 
+# How many features to load between export scrubs. Scrubbing after every one
+# re-enumerates the whole function table (tens of milliseconds once thousands of
+# functions exist) for no benefit, because features unexport themselves.
+# Measured on an iSH-AOK host (ARG_MAX 128 KiB, 1542 functions):
+#   interval 1 -> 8.7 s startup,  peak environment 1%
+#   interval 4 -> 5.8 s startup,  peak environment 32%
+#   interval 8 -> 5.2 s startup,  peak environment ~50%
+# 4 keeps a three-fold ARG_MAX margin; raise it for speed, set 1 for the
+# historical after-every-feature behaviour.
+systui_scrub_interval() {
+    local n="${SYSTUI_SCRUB_INTERVAL:-4}"
+    case "$n" in ''|*[!0-9]*) n=8 ;; esac
+    [ "$n" -ge 1 ] || n=1
+    printf '%s\n' "$n"
+}
+
 systui_should_scrub_function_exports() {
     case "${SYSTUI_SCRUB_FUNCTION_EXPORTS:-auto}" in
         1|yes|true|always) return 0 ;;
@@ -60,7 +76,7 @@ systui_resolve_feature_path() { # <manifest entry>
 
 systui_load_features() { # [manifest]
     local manifest="${1:-$SYSTUI_LIBDIR/src/features/.load-order}" rel feature resolved
-    local scrub_exports=-1
+    local scrub_exports=-1 scrub_interval='' loaded=0
     [ -r "$manifest" ] || {
         echo "systui: missing feature load manifest: $manifest" >&2
         return 1
@@ -92,13 +108,25 @@ systui_load_features() { # [manifest]
                 scrub_exports=0
             fi
         fi
+        # Batch the scrub: each call re-enumerates the whole function table, so
+        # doing it after every feature costs seconds on constrained hosts.
         # Do not let a deliberate "no scrub needed" result become the loader's
         # return status on native Linux. A completed feature load is success.
+        loaded=$((loaded + 1))
         if [ "$scrub_exports" = 1 ]; then
-            systui_unexport_all_functions
+            [ -n "$scrub_interval" ] || scrub_interval=$(systui_scrub_interval)
+            if [ $((loaded % scrub_interval)) -eq 0 ]; then
+                systui_unexport_all_functions
+            fi
         fi
     done < "$manifest"
+    # Final scrub so the environment is clean even when the count does not land
+    # on the interval boundary (skip it when the last feature already scrubbed).
+    if [ "$scrub_exports" = 1 ] && [ -n "$scrub_interval" ] \
+        && [ $((loaded % scrub_interval)) -ne 0 ]; then
+        systui_unexport_all_functions
+    fi
     return 0
 }
 
-export -n -f systui_unexport_all_functions systui_should_scrub_function_exports systui_resolve_feature_path systui_load_features 2>/dev/null || true
+export -n -f systui_unexport_all_functions systui_should_scrub_function_exports systui_scrub_interval systui_resolve_feature_path systui_load_features 2>/dev/null || true

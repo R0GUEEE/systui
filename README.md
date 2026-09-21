@@ -664,6 +664,36 @@ The RootFS Builder now opens a categorized package catalogue after preset select
 - Full OpenSSH server configuration for authentication, access controls, keys, forwarding, keepalives, SFTP, banners, host keys, logs, and validation.
 - Additional iSH-AOK compatibility, storage, cache, logging, shell, APT, and capability-report tuning.
 
+## Startup performance
+
+systui loads ~126 feature modules at start. Three things dominated that cost on
+constrained hosts, and all three are now addressed:
+
+1. **Export scrubbing is batched.** The loader used to re-enumerate the whole
+   function table after *every* feature (tens of milliseconds each once ~1500
+   functions exist). It now scrubs every `SYSTUI_SCRUB_INTERVAL` features
+   (default 4) plus a final pass. Measured on an iSH-AOK host with ARG_MAX
+   128 KiB: interval 1 → 8.7 s startup and a 1% peak environment; interval 4 →
+   4.5 s and 32%; interval 8 → 4.2 s and ~50%. Set the variable to 1 for the
+   historical behaviour.
+2. **Function aliasing is fork-free.** The 60 `eval "$(declare -f fn | sed ...)"`
+   sites that rename a function body now use `systui_alias_function`
+   (`src/core/alias.sh`), which redirects `declare -f` into a reusable file and
+   reads it back with `mapfile` — no subshell and no `sed` per alias.
+3. **Bedrock menu wrapping is deferred.** Wrapping ~25 `menu_*_install` entry
+   points for host/stratum targeting only happens when `/bedrock` exists (or
+   when `SYSTUI_BEDROCK_WRAP_INSTALL_MENUS=1` forces it); the wrappers are
+   created on first confirmed Bedrock detection otherwise.
+
+Measure a change with the bundled profiler:
+
+```bash
+tools/feature-profile.sh --top 20      # per-feature load times
+SYSTUI_SCRUB_INTERVAL=1 tools/feature-profile.sh   # compare configurations
+```
+
+`tests/test-startup-performance.sh` guards these optimizations.
+
 ## Expanded package-manager configuration
 
 System Configuration > Packages > Managers now provides configuration and maintenance hubs for APT, apt-fast, Nala, aptitude, pacman, yay, paru, DNF, YUM, zypper, apk, XBPS, Portage, Flatpak, Snap, Nix, Homebrew, pip, pipx, npm, pnpm, Yarn, Cargo, RubyGems, Composer, and Go tools.

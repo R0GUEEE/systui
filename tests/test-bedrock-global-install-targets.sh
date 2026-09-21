@@ -26,6 +26,9 @@ p90=$(grep -n '^90-install-guard-final\.sh$' "$order" | cut -d: -f1)
 # picker after sourcing so this unit test does not depend on a real /bedrock tree.
 bash -c '
 set -e
+# Menus are only wrapped when Bedrock is present (or when explicitly forced),
+# so force it here instead of depending on a real /bedrock tree.
+SYSTUI_BEDROCK_WRAP_INSTALL_MENUS=1
 menu_demo_install() { echo HOST; }
 menu_rootfs_demo_install() { echo ROOTFS; }
 tui_yesno() { return 0; }

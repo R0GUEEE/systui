@@ -9,6 +9,14 @@
 # of forwarding systemd's --system/--user modes to the real systemd binary.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 sysconfig_write_ish_safe_boot_helper() {
     local helper="${SYSCONFIG_BOOT_HELPER:-/usr/local/sbin/systui-boot}"
     mkdir -p "$(dirname "$helper")" /etc/systui || return 1
@@ -102,7 +110,7 @@ EOF
 # Preserve the existing helper installer but replace only systui-boot after it
 # has written the generic helpers.
 if declare -F sysconfig_runtime_install_helpers >/dev/null 2>&1 && ! declare -F _systui_base_runtime_install_helpers_ishboot >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_runtime_install_helpers | sed '1s/^sysconfig_runtime_install_helpers[[:space:]]*()/_systui_base_runtime_install_helpers_ishboot ()/')"
+    systui_alias_function sysconfig_runtime_install_helpers _systui_base_runtime_install_helpers_ishboot
 fi
 sysconfig_runtime_install_helpers() {
     local rc=0

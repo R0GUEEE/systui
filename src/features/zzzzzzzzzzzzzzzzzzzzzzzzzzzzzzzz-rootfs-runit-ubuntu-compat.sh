@@ -9,6 +9,14 @@
 # build upstream runit from source, or cancel the build.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_ubuntu_runit_package_compat_needed() { # <distro> <release> <packages>
     [ "$1" = ubuntu ] || return 1
     case "$2" in
@@ -106,7 +114,7 @@ rootfs_runit_choose_fallback() { # <distro> <release>
 # after a usable base rootfs exists.
 if declare -F build_debfamily >/dev/null 2>&1 && \
    ! declare -F _systui_base_build_debfamily_runit_ubuntu >/dev/null 2>&1; then
-    eval "$(declare -f build_debfamily | sed '1s/^build_debfamily[[:space:]]*()/_systui_base_build_debfamily_runit_ubuntu ()/')"
+    systui_alias_function build_debfamily _systui_base_build_debfamily_runit_ubuntu
 fi
 
 build_debfamily() { # distro release arch mirror target pkgs use_qemu backend

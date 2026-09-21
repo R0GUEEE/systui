@@ -13,9 +13,16 @@
 # layers below it.
 
 # Keep the native Package Configuration menu intact and just extend it.
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 if declare -F menu_packages >/dev/null 2>&1 && ! declare -F _systui_native_menu_packages >/dev/null 2>&1; then
-    eval "$(declare -f menu_packages | sed \
-        '1s/^menu_packages[[:space:]]*()/_systui_native_menu_packages ()/')"
+    systui_alias_function menu_packages _systui_native_menu_packages
 fi
 
 # Which Bedrock executable `brl` is available for stratum execution.

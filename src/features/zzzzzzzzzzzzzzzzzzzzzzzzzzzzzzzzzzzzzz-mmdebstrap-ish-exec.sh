@@ -8,6 +8,14 @@
 # ahead of the real binary instead.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 _systui_mmdebstrap_real=""
 if command -v mmdebstrap >/dev/null 2>&1; then
     _systui_mmdebstrap_real=$(command -v mmdebstrap)
@@ -76,7 +84,7 @@ rootfs_install_mmdebstrap_ish_shim || true
 # executable shim is still first on PATH immediately before bootstrap recovery.
 if declare -F rootfs_recover_deb_base >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_recover_deb_base_mmexec >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_recover_deb_base | sed '1s/^rootfs_recover_deb_base[[:space:]]*()/_systui_base_rootfs_recover_deb_base_mmexec ()/')"
+    systui_alias_function rootfs_recover_deb_base _systui_base_rootfs_recover_deb_base_mmexec
 fi
 rootfs_recover_deb_base() {
     rootfs_install_mmdebstrap_ish_shim || {

@@ -7,6 +7,14 @@
 # portability, or input-safety problems found in the full sysconfig audit.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 sysconfig_is_ish() {
     case "${SYSTUI_ISH_AOK:-}" in 1|yes|true) return 0 ;; esac
     case "${container:-}" in *ish*|*iSH*) return 0 ;; esac
@@ -191,7 +199,7 @@ sysconfig_set_timezone() {
 # boundary (iSH/chroot/container). Package-swapping init there only breaks the
 # userspace and cannot change the host kernel's PID 1 semantics.
 if declare -F initswap_current >/dev/null 2>&1 && ! declare -F _systui_base_initswap_current_audit >/dev/null 2>&1; then
-    eval "$(declare -f initswap_current | sed '1s/^initswap_current[[:space:]]*()/_systui_base_initswap_current_audit ()/')"
+    systui_alias_function initswap_current _systui_base_initswap_current_audit
 fi
 initswap_current() {
     if sysconfig_is_ish || [ -f /.dockerenv ] || grep -qaE '(docker|lxc|container|chroot)' /proc/1/cgroup 2>/dev/null; then
@@ -312,7 +320,7 @@ menu_repos() {
 
 # Validate service names before they are used as paths or unit names.
 if declare -F svc >/dev/null 2>&1 && ! declare -F _systui_base_svc_audit >/dev/null 2>&1; then
-    eval "$(declare -f svc | sed '1s/^svc[[:space:]]*()/_systui_base_svc_audit ()/')"
+    systui_alias_function svc _systui_base_svc_audit
 fi
 svc() {
     local action="${1:-}" s="${2:-}"
@@ -361,7 +369,7 @@ menu_users() {
 # Storage: reject malformed paths/sizes and remove the shell interpolation from
 # swapfile creation that allowed a crafted size string to execute commands.
 if declare -F menu_storage >/dev/null 2>&1 && ! declare -F _systui_base_menu_storage_audit >/dev/null 2>&1; then
-    eval "$(declare -f menu_storage | sed '1s/^menu_storage[[:space:]]*()/_systui_base_menu_storage_audit ()/')"
+    systui_alias_function menu_storage _systui_base_menu_storage_audit
 fi
 sysconfig_create_swapfile() {
     local size="$1" file="${2:-/swapfile}"
@@ -402,7 +410,7 @@ menu_storage() {
 # Network-sensitive overrides: avoid command-existence checks for systemd and
 # provide validated direct helpers used by the existing menu.
 if declare -F menu_network >/dev/null 2>&1 && ! declare -F _systui_base_menu_network_audit >/dev/null 2>&1; then
-    eval "$(declare -f menu_network | sed '1s/^menu_network[[:space:]]*()/_systui_base_menu_network_audit ()/')"
+    systui_alias_function menu_network _systui_base_menu_network_audit
 fi
 menu_network() {
     # Startup detection is authoritative for ordinary menu navigation. Reuse it

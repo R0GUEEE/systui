@@ -7,6 +7,14 @@
 # never hides non-repairable blockers such as an incompatible architecture.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_wb_ish_repair_choices() { # <target> -> tag|description|on/off
     local t="$1" engine mounts state_file="" has_systemd=0
 
@@ -226,7 +234,7 @@ Systui will now run the readiness scan again so you can verify the remaining req
 # after repairs gives the user a fresh PASS/WARN/FAIL report.
 if declare -F rootfs_wb_ish_boot_analyze >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_ish_boot_analyze_repair >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_ish_boot_analyze | sed '1s/^rootfs_wb_ish_boot_analyze[[:space:]]*()/_systui_base_rootfs_wb_ish_boot_analyze_repair ()/')"
+    systui_alias_function rootfs_wb_ish_boot_analyze _systui_base_rootfs_wb_ish_boot_analyze_repair
 fi
 
 rootfs_wb_ish_boot_analyze() { # <target>

@@ -9,6 +9,14 @@
 # the image less usable. The iSH-AOK compatibility launcher is then installed
 # by rootfs_install_ish_systemd_compat(), which remains transparent on normal
 # Linux and becomes the PID 1 supervisor on iSH-AOK.
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_ensure_systemd_manager() { # <target>
     local t="$1" id="" rc=0
     [ -d "$t" ] || return 1
@@ -74,7 +82,7 @@ EOF
 }
 
 if declare -F rootfs_postconfig >/dev/null 2>&1 && ! declare -F _systui_systemd_default_rootfs_postconfig >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_postconfig | sed '1s/^rootfs_postconfig[[:space:]]*()/_systui_systemd_default_rootfs_postconfig ()/')"
+    systui_alias_function rootfs_postconfig _systui_systemd_default_rootfs_postconfig
 fi
 rootfs_postconfig() {
     local target="$1" rc=0 ensure_rc=0

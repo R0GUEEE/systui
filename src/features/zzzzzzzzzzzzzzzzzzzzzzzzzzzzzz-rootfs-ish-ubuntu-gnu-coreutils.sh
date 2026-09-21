@@ -9,6 +9,14 @@
 # dpkg never has to run those scripts with the incompatible implementation.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_ish_host_builtin_detect() {
     local v=''
     [ -r /proc/version ] && IFS= read -r v < /proc/version 2>/dev/null || true
@@ -39,7 +47,7 @@ rootfs_ish_append_word() { # <current> <word>
 # resolver inputs for the affected Ubuntu/iSH combination.
 if declare -F build_debfamily >/dev/null 2>&1 && \
    ! declare -F _systui_base_build_debfamily >/dev/null 2>&1; then
-    eval "$(declare -f build_debfamily | sed '1s/^build_debfamily[[:space:]]*()/_systui_base_build_debfamily ()/')"
+    systui_alias_function build_debfamily _systui_base_build_debfamily
 fi
 
 build_debfamily() {
@@ -68,7 +76,7 @@ build_debfamily() {
 # This is host-side only and therefore remains safe even while dpkg is broken.
 if declare -F rootfs_install_deb_packages >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_install_deb_packages >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_install_deb_packages | sed '1s/^rootfs_install_deb_packages[[:space:]]*()/_systui_base_rootfs_install_deb_packages ()/')"
+    systui_alias_function rootfs_install_deb_packages _systui_base_rootfs_install_deb_packages
 fi
 
 rootfs_install_deb_packages() { # <target> <packages>

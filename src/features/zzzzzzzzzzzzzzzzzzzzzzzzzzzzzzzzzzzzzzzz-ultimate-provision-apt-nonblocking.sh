@@ -10,6 +10,14 @@
 # to start daemons in the chroot/userspace during the install pass.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 script_provision_patch_apt_nonblocking() { # <tool-path>
     local tool="$1" tmp
     [ -f "$tool" ] || return 1
@@ -82,7 +90,7 @@ script_provision_patch_apt_nonblocking() { # <tool-path>
 
 if declare -F script_provision_install_tool >/dev/null 2>&1 && \
    ! declare -F _systui_base_script_provision_install_tool_aptfix >/dev/null 2>&1; then
-    eval "$(declare -f script_provision_install_tool | sed '1s/^script_provision_install_tool[[:space:]]*()/_systui_base_script_provision_install_tool_aptfix ()/')"
+    systui_alias_function script_provision_install_tool _systui_base_script_provision_install_tool_aptfix
 fi
 script_provision_install_tool() {
     _systui_base_script_provision_install_tool_aptfix "$@" || return $?
@@ -94,7 +102,7 @@ script_provision_install_tool() {
 
 if declare -F script_provision_run >/dev/null 2>&1 && \
    ! declare -F _systui_base_script_provision_run_aptfix >/dev/null 2>&1; then
-    eval "$(declare -f script_provision_run | sed '1s/^script_provision_run[[:space:]]*()/_systui_base_script_provision_run_aptfix ()/')"
+    systui_alias_function script_provision_run _systui_base_script_provision_run_aptfix
 fi
 script_provision_run() {
     local tool

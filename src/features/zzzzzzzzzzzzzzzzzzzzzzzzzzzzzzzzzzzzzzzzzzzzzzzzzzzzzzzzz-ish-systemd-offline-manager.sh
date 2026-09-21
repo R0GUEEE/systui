@@ -7,6 +7,14 @@
 # systemctl/D-Bus request can block indefinitely before the first TUI frame.
 # Determine compatibility mode from platform/provider state only; live probing
 # is deferred to the dedicated Systemd Manager.
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 sysconfig_ish_systemd_offline() {
     declare -F sysconfig_is_ish >/dev/null 2>&1 && sysconfig_is_ish || return 1
     case "${SYSTUI_INIT_PROVIDER:-${INIT_PROVIDER:-${INIT:-}}}" in
@@ -19,7 +27,7 @@ sysconfig_ish_systemd_offline() {
 }
 
 if declare -F detect_init >/dev/null 2>&1 && ! declare -F _systui_detect_init_before_ish_offline >/dev/null 2>&1; then
-    eval "$(declare -f detect_init | sed '1s/^detect_init[[:space:]]*()/_systui_detect_init_before_ish_offline ()/')"
+    systui_alias_function detect_init _systui_detect_init_before_ish_offline
 fi
 
 detect_init() {
@@ -45,7 +53,7 @@ sysconfig_ish_unit_exists() { # <service>
 }
 
 if declare -F svc >/dev/null 2>&1 && ! declare -F _systui_svc_before_ish_offline >/dev/null 2>&1; then
-    eval "$(declare -f svc | sed '1s/^svc[[:space:]]*()/_systui_svc_before_ish_offline ()/')"
+    systui_alias_function svc _systui_svc_before_ish_offline
 fi
 
 svc() { # <enable|disable|start|stop|restart|status> <service>
@@ -115,7 +123,7 @@ sysconfig_ish_service_inventory() {
 }
 
 if declare -F sysconfig_init_service_list >/dev/null 2>&1 && ! declare -F _systui_init_service_list_before_ish_offline >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_init_service_list | sed '1s/^sysconfig_init_service_list[[:space:]]*()/_systui_init_service_list_before_ish_offline ()/')"
+    systui_alias_function sysconfig_init_service_list _systui_init_service_list_before_ish_offline
 fi
 sysconfig_init_service_list() {
     if [ "${INIT:-}" = ish-systemd-compat ]; then
@@ -126,7 +134,7 @@ sysconfig_init_service_list() {
 }
 
 if declare -F sysconfig_init_summary >/dev/null 2>&1 && ! declare -F _systui_init_summary_before_ish_offline >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_init_summary | sed '1s/^sysconfig_init_summary[[:space:]]*()/_systui_init_summary_before_ish_offline ()/')"
+    systui_alias_function sysconfig_init_summary _systui_init_summary_before_ish_offline
 fi
 sysconfig_init_summary() {
     detect_init 2>/dev/null || true
@@ -151,7 +159,7 @@ sysconfig_init_summary() {
 }
 
 if declare -F sysconfig_systemd_usable >/dev/null 2>&1 && ! declare -F _systui_systemd_usable_before_ish_offline >/dev/null 2>&1; then
-    eval "$(declare -f sysconfig_systemd_usable | sed '1s/^sysconfig_systemd_usable[[:space:]]*()/_systui_systemd_usable_before_ish_offline ()/')"
+    systui_alias_function sysconfig_systemd_usable _systui_systemd_usable_before_ish_offline
 fi
 sysconfig_systemd_usable() {
     [ "${INIT:-}" = ish-systemd-compat ] && return 1

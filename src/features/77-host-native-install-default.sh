@@ -5,6 +5,14 @@
 # host. Specialized GitHub/source/vendor installers remain fallbacks when the
 # native package is unavailable or the native install fails.
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 systui_host_pm() {
     if declare -F systui_detect_pm >/dev/null 2>&1; then
         systui_detect_pm >/dev/null 2>&1 || true
@@ -147,10 +155,14 @@ systui_wrap_native_installer() { # <function> <canonical-tool>
     saved="_systui_native_fallback_${fn}"
     declare -F "$saved" >/dev/null 2>&1 && return 0
 
-    def=$(declare -f "$fn") || return 1
-    def=${def/#$fn ()/$saved ()}
-    def=${def/#$fn()/$saved()}
-    eval "$def"
+    if declare -F systui_alias_function >/dev/null 2>&1; then
+        systui_alias_function "$fn" "$saved" || return 1
+    else
+        def=$(declare -f "$fn") || return 1
+        def=${def/#$fn ()/$saved ()}
+        def=${def/#$fn()/$saved()}
+        eval "$def"
+    fi
     eval "$fn() { systui_install_native_first '$canonical' '$saved' \"\$@\"; }"
 }
 

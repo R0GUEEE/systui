@@ -6,6 +6,14 @@
 # systui menu.  The implementation follows:
 #   https://github.com/vjnzbcsbgf-maker/Bedrock-AOK
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 BEDROCK_AOK_REPO="https://github.com/vjnzbcsbgf-maker/Bedrock-AOK"
 BEDROCK_AOK_RAW="https://raw.githubusercontent.com/vjnzbcsbgf-maker/Bedrock-AOK/main"
 
@@ -527,10 +535,10 @@ menu_bedrock_aok() {
 ###############################################################################
 
 if declare -F tui_menu >/dev/null 2>&1 && ! declare -F _systui_bedrock_orig_tui_menu >/dev/null 2>&1; then
-    eval "$(declare -f tui_menu | sed '1s/^tui_menu[[:space:]]*()/_systui_bedrock_orig_tui_menu ()/')"
+    systui_alias_function tui_menu _systui_bedrock_orig_tui_menu
 fi
 if declare -F tui_check >/dev/null 2>&1 && ! declare -F _systui_bedrock_orig_tui_check >/dev/null 2>&1; then
-    eval "$(declare -f tui_check | sed '1s/^tui_check[[:space:]]*()/_systui_bedrock_orig_tui_check ()/')"
+    systui_alias_function tui_check _systui_bedrock_orig_tui_check
 fi
 
 tui_menu() {

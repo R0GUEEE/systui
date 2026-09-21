@@ -3,6 +3,14 @@
 # ROOTFS EXTRA WEB IMAGES — additional live upstream image sources
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 ROOTFS_DEBIAN_DOCKER_INDEX="${ROOTFS_DEBIAN_DOCKER_INDEX:-https://docker.debian.net/}"
 ROOTFS_DEBIAN_ARTIFACT_RAW="${ROOTFS_DEBIAN_ARTIFACT_RAW:-https://raw.githubusercontent.com/debuerreotype/docker-debian-artifacts}"
 
@@ -98,7 +106,7 @@ rootfs_web_resolve_latest_usable_build() { # <variant-url> -> build|file
 
 if declare -F rootfs_download_live_catalogue >/dev/null 2>&1 \
     && ! declare -F _rootfs_download_live_catalogue_before_extra_sources >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_download_live_catalogue | sed '1s/^rootfs_download_live_catalogue[[:space:]]*()/_rootfs_download_live_catalogue_before_extra_sources ()/')"
+    systui_alias_function rootfs_download_live_catalogue _rootfs_download_live_catalogue_before_extra_sources
 fi
 
 rootfs_download_live_catalogue() {
@@ -140,7 +148,7 @@ rootfs_download_live_catalogue() {
 
 if declare -F rootfs_download >/dev/null 2>&1 \
     && ! declare -F _rootfs_download_before_extra_web_images >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_download | sed '1s/^rootfs_download[[:space:]]*()/_rootfs_download_before_extra_web_images ()/')"
+    systui_alias_function rootfs_download _rootfs_download_before_extra_web_images
 fi
 
 rootfs_download() {

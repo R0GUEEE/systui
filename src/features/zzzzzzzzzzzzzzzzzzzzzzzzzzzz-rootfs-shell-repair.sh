@@ -15,6 +15,14 @@
 ###############################################################################
 
 # Machine-readable state; always succeeds so callers can read the record.
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_wb_shell_state() { # <target> -> status|path|detail
     if declare -F rootfs_tree_shell_state >/dev/null 2>&1; then
         rootfs_tree_shell_state "${1:-}"
@@ -245,7 +253,7 @@ that were restored. See $LOGFILE for details."
 
 if declare -F rootfs_wb_ish_repair_choices >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_ish_repair_choices_shell >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_ish_repair_choices | sed '1s/^rootfs_wb_ish_repair_choices[[:space:]]*()/_systui_base_rootfs_wb_ish_repair_choices_shell ()/')"
+    systui_alias_function rootfs_wb_ish_repair_choices _systui_base_rootfs_wb_ish_repair_choices_shell
 fi
 
 rootfs_wb_ish_repair_choices() { # <target>
@@ -263,7 +271,7 @@ rootfs_wb_ish_repair_choices() { # <target>
 
 if declare -F rootfs_wb_ish_apply_repair >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_wb_ish_apply_repair_shell >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_ish_apply_repair | sed '1s/^rootfs_wb_ish_apply_repair[[:space:]]*()/_systui_base_rootfs_wb_ish_apply_repair_shell ()/')"
+    systui_alias_function rootfs_wb_ish_apply_repair _systui_base_rootfs_wb_ish_apply_repair_shell
 fi
 
 rootfs_wb_ish_apply_repair() { # <target> <tag>

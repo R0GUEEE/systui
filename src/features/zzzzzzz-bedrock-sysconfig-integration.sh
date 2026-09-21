@@ -6,14 +6,22 @@
 # Preserve the native implementations before replacing them.  pm_install is
 # the central install entrypoint used by System Configuration and the software
 # catalogue, so integrating here automatically covers those workflows too.
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 if declare -F pm_install >/dev/null 2>&1 && ! declare -F _systui_native_pm_install >/dev/null 2>&1; then
-    eval "$(declare -f pm_install | sed '1s/^pm_install[[:space:]]*()/_systui_native_pm_install ()/')"
+    systui_alias_function pm_install _systui_native_pm_install
 fi
 if declare -F pm_search >/dev/null 2>&1 && ! declare -F _systui_native_pm_search >/dev/null 2>&1; then
-    eval "$(declare -f pm_search | sed '1s/^pm_search[[:space:]]*()/_systui_native_pm_search ()/')"
+    systui_alias_function pm_search _systui_native_pm_search
 fi
 if declare -F pkg_show_info >/dev/null 2>&1 && ! declare -F _systui_native_pkg_show_info >/dev/null 2>&1; then
-    eval "$(declare -f pkg_show_info | sed '1s/^pkg_show_info[[:space:]]*()/_systui_native_pkg_show_info ()/')"
+    systui_alias_function pkg_show_info _systui_native_pkg_show_info
 fi
 
 bedrock_sysconfig_active() {

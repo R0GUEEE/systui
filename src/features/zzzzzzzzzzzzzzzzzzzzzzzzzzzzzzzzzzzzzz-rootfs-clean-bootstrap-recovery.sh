@@ -3,6 +3,14 @@
 # ROOTFS RECOVERY — clean rebuild for contaminated mmdebstrap roots
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_recover_deb_base_clean_stage() { # <target> <distro> <release> <arch> <mirror> <packages> <use_qemu> <backend>
     local t="$1" distro="$2" release="$3" arch="$4" mirror="$5" pkgs="$6" use_qemu="$7" backend="$8"
     local parent base stage backup f
@@ -83,7 +91,7 @@ rootfs_recover_deb_base_clean_stage() { # <target> <distro> <release> <arch> <mi
 
 if declare -F rootfs_recover_deb_base >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_recover_deb_base_clean >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_recover_deb_base | sed '1s/^rootfs_recover_deb_base[[:space:]]*()/_systui_base_rootfs_recover_deb_base_clean ()/')"
+    systui_alias_function rootfs_recover_deb_base _systui_base_rootfs_recover_deb_base_clean
 fi
 
 rootfs_recover_deb_base() { # <target> <distro> <release> <arch> <mirror> <packages> <use_qemu> <backend>

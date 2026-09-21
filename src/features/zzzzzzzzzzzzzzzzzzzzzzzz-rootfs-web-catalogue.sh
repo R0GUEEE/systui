@@ -3,6 +3,14 @@
 # ROOTFS WEB CATALOGUE — live discovery of downloadable rootfs images
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 ROOTFS_WEB_CATALOGUE_BASE="${ROOTFS_WEB_CATALOGUE_BASE:-https://images.linuxcontainers.org/images}"
 
 rootfs_web_dirs() { # <url>
@@ -136,7 +144,7 @@ rootfs_download_import_url() { # <url> <distro> <release> <arch> <source-tag>
 
 if declare -F rootfs_download >/dev/null 2>&1 \
     && ! declare -F _rootfs_download_before_web_catalogue >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_download | sed '1s/^rootfs_download[[:space:]]*()/_rootfs_download_before_web_catalogue ()/')"
+    systui_alias_function rootfs_download _rootfs_download_before_web_catalogue
 fi
 
 rootfs_download() {

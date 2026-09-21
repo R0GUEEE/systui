@@ -11,6 +11,14 @@
 # pending dpkg configuration before declaring the package stage failed.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 _rootfs_ish_host() {
     case "${SYSTUI_ISH_AOK:-}" in 1|yes|true) return 0 ;; esac
     case "${container:-}" in *ish*|*iSH*) return 0 ;; esac
@@ -108,7 +116,7 @@ _rootfs_ish_pkg_repair() { # <target>
 
 if declare -F rootfs_install_deb_packages >/dev/null 2>&1 && \
    ! declare -F _systui_base_rootfs_install_deb_packages_ishpkg >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_install_deb_packages | sed '1s/^rootfs_install_deb_packages[[:space:]]*()/_systui_base_rootfs_install_deb_packages_ishpkg ()/')"
+    systui_alias_function rootfs_install_deb_packages _systui_base_rootfs_install_deb_packages_ishpkg
 fi
 
 rootfs_install_deb_packages() { # <target> <space-separated packages>

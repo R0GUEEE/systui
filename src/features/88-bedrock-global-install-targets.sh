@@ -6,15 +6,30 @@
 # target picker.  Stratum installs use that stratum's native package manager;
 # host-only vendor/source fallbacks are never run against a selected stratum.
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 systui_bedrock_install_active() {
     [ -d /bedrock/strata ] || return 1
+    local rc=0
     if declare -F bedrock_systui_is_installed >/dev/null 2>&1; then
-        bedrock_systui_is_installed
+        bedrock_systui_is_installed || rc=1
     elif declare -F bedrock_aok_brl >/dev/null 2>&1; then
-        bedrock_aok_brl >/dev/null 2>&1
+        bedrock_aok_brl >/dev/null 2>&1 || rc=1
     else
-        command -v brl >/dev/null 2>&1 || [ -x /bedrock/bin/brl ]
+        command -v brl >/dev/null 2>&1 || [ -x /bedrock/bin/brl ] || rc=1
     fi
+    # Bedrock appeared after startup (or a reduced build skipped the eager pass):
+    # create the target-aware wrappers once, on first confirmed detection.
+    if [ "$rc" -eq 0 ] && declare -F systui_bedrock_ensure_install_wrappers >/dev/null 2>&1; then
+        systui_bedrock_ensure_install_wrappers
+    fi
+    return "$rc"
 }
 
 systui_bedrock_install_strata() {
@@ -195,20 +210,43 @@ systui_bedrock_wrap_install_menu() { # <function>
     declare -F "$saved" >/dev/null 2>&1 && return 0
     canonical=${fn#menu_}; canonical=${canonical%_install}
     [ -n "$canonical" ] || return 0
-    def=$(declare -f "$fn") || return 1
-    def=${def/#$fn ()/$saved ()}
-    def=${def/#$fn()/$saved()}
-    eval "$def"
-    eval "$fn() { local _target; if ! systui_bedrock_install_active; then $saved \"\$@\"; return; fi; _target=\$(systui_bedrock_install_target_menu '$canonical') || return 0; case \"\$_target\" in host|'') $saved \"\$@\" ;; stratum:*) systui_bedrock_install_canonical \"\${_target#stratum:}\" '$canonical' ;; esac; }"
+    # Builtin-only body copy (no subshell, no sed): see systui_alias_function.
+    if declare -F systui_alias_function >/dev/null 2>&1; then
+        systui_alias_function "$fn" "$saved" || return 1
+    else
+        def=$(declare -f "$fn") || return 1
+        def=${def/#$fn ()/$saved ()}
+        def=${def/#$fn()/$saved()}
+        eval "$def"
+    fi
+    # Emit the final, target-aware wrapper here so the routing layer (phase 89)
+    # does not have to walk and re-eval every menu wrapper a second time. The
+    # marker below lets that layer skip its pass while keeping it as a fallback.
+    eval "$fn() { local _target; if ! systui_bedrock_install_active; then SYSTUI_INSTALL_TARGET=host $saved \"\$@\"; return; fi; _target=\$(systui_bedrock_install_target_menu '$canonical') || return 0; case \"\$_target\" in host|'') SYSTUI_INSTALL_TARGET=host $saved \"\$@\" ;; stratum:*) systui_bedrock_install_canonical \"\${_target#stratum:}\" '$canonical' ;; esac; }"
+    SYSTUI_BEDROCK_TARGET_WRAPPERS=1
 }
 
-_systui_bedrock_fn_tmp="${SYSTUI_TMP:-/tmp}/systui-bedrock-install-fns.$$"
-declare -F > "$_systui_bedrock_fn_tmp" 2>/dev/null || : > "$_systui_bedrock_fn_tmp"
-while read -r _ _flag _systui_install_fn; do
-    case "$_systui_install_fn" in menu_*_install) systui_bedrock_wrap_install_menu "$_systui_install_fn" ;; esac
-done < "$_systui_bedrock_fn_tmp"
-rm -f -- "$_systui_bedrock_fn_tmp" 2>/dev/null || true
-unset _flag _systui_install_fn _systui_bedrock_fn_tmp
+# Wrapping every menu_*_install entry point costs ~25 function-body copies, so it
+# only happens when Bedrock is actually present: without /bedrock every wrapper
+# would return on its first check and the work would be wasted startup time.
+# Installing Bedrock in-session is covered by the hooks in
+# systui_bedrock_install_active and menu_bedrock_aok below.
+systui_bedrock_ensure_install_wrappers() {
+    [ "${SYSTUI_BEDROCK_TARGET_WRAPPERS:-0}" = 1 ] && return 0
+    SYSTUI_BEDROCK_TARGET_WRAPPERS=1
+    local _systui_bedrock_fn_tmp _flag _systui_install_fn
+    _systui_bedrock_fn_tmp="${SYSTUI_TMP:-/tmp}/systui-bedrock-install-fns.$$"
+    declare -F > "$_systui_bedrock_fn_tmp" 2>/dev/null || : > "$_systui_bedrock_fn_tmp"
+    while read -r _ _flag _systui_install_fn; do
+        case "$_systui_install_fn" in menu_*_install) systui_bedrock_wrap_install_menu "$_systui_install_fn" ;; esac
+    done < "$_systui_bedrock_fn_tmp"
+    rm -f -- "$_systui_bedrock_fn_tmp" 2>/dev/null || true
+    return 0
+}
+
+if [ -d /bedrock ] || [ "${SYSTUI_BEDROCK_WRAP_INSTALL_MENUS:-0}" = 1 ]; then
+    systui_bedrock_ensure_install_wrappers
+fi
 
 if declare -F sysconfig_pm_multi_install >/dev/null 2>&1 \
     && ! declare -F _systui_bedrock_target_original_sysconfig_pm_multi_install >/dev/null 2>&1; then

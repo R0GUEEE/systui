@@ -8,6 +8,14 @@
 # selections still missing afterward.
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 systui_multi_dedupe_packages() {
     local p seen=' '
     for p in "$@"; do
@@ -180,7 +188,7 @@ systui_bootstrap_multi_install() {
 # make the multi-installer a dedicated fast path so its behavior is predictable.
 if declare -F menu_rootfs_bootstrap_tools >/dev/null 2>&1 \
     && ! declare -F _systui_single_menu_rootfs_bootstrap_tools >/dev/null 2>&1; then
-    eval "$(declare -f menu_rootfs_bootstrap_tools | sed '1s/^menu_rootfs_bootstrap_tools[[:space:]]*()/_systui_single_menu_rootfs_bootstrap_tools ()/')"
+    systui_alias_function menu_rootfs_bootstrap_tools _systui_single_menu_rootfs_bootstrap_tools
 fi
 
 menu_rootfs_bootstrap_tools() {

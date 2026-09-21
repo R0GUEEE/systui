@@ -3,6 +3,14 @@
 # ROOTFS BUILDER — iSH-AOK compatibility for systemd rootfs images
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_install_ish_systemd_compat() { # <target>
     local t="$1" real_systemd init_path distro_id=""
 
@@ -160,7 +168,7 @@ EOF
 }
 
 if declare -F rootfs_postconfig >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_postconfig >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_postconfig | sed '1s/^rootfs_postconfig[[:space:]]*()/_systui_base_rootfs_postconfig ()/')"
+    systui_alias_function rootfs_postconfig _systui_base_rootfs_postconfig
 fi
 rootfs_postconfig() {
     local target="$1" init_choice="$5" rc=0
@@ -174,7 +182,7 @@ rootfs_postconfig() {
 }
 
 if declare -F rootfs_tar_create >/dev/null 2>&1 && ! declare -F _systui_base_rootfs_tar_create >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_tar_create | sed '1s/^rootfs_tar_create[[:space:]]*()/_systui_base_rootfs_tar_create ()/')"
+    systui_alias_function rootfs_tar_create _systui_base_rootfs_tar_create
 fi
 rootfs_tar_create() {
     local fmt="$1" src="$2" out="$3" pid rc=0 bytes=0

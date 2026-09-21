@@ -3,6 +3,14 @@
 # SYSTEM CONFIGURATION — final audit polish (parser-safe)
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 sysconfig_valid_ip_or_host() {
     [[ "${1:-}" =~ ^[A-Za-z0-9][A-Za-z0-9:.%-]{0,253}$ ]]
 }
@@ -22,7 +30,7 @@ sysconfig_user_defaults() {
 }
 
 if declare -F menu_user_advanced >/dev/null 2>&1 && ! declare -F _systui_base_menu_user_advanced_polish >/dev/null 2>&1; then
-    eval "$(declare -f menu_user_advanced | sed '1s/^menu_user_advanced[[:space:]]*()/_systui_base_menu_user_advanced_polish ()/')"
+    systui_alias_function menu_user_advanced _systui_base_menu_user_advanced_polish
 fi
 menu_user_advanced() {
     local c
@@ -74,7 +82,7 @@ sysconfig_apt_key_menu() {
 }
 
 if declare -F menu_repos >/dev/null 2>&1 && ! declare -F _systui_base_menu_repos_polish >/dev/null 2>&1; then
-    eval "$(declare -f menu_repos | sed '1s/^menu_repos[[:space:]]*()/_systui_base_menu_repos_polish ()/')"
+    systui_alias_function menu_repos _systui_base_menu_repos_polish
 fi
 menu_repos() {
     local c

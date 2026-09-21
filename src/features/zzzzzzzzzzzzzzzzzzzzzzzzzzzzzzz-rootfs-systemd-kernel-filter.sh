@@ -3,6 +3,14 @@
 # ROOTFS BUILDER — guarantee selected systemd + skip host-kernel packages
 ###############################################################################
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 rootfs_pkg_is_unsupported_kernel() { # <package>
     case "$1" in
         linux-image|linux-image-*|linux-headers|linux-headers-*|linux-modules|linux-modules-*|linux-generic|linux-generic-*|linux-virtual|linux-virtual-*|linux-lowlatency|linux-lowlatency-*|linux-oem-*|linux-raspi|linux-raspi-*|linux-kvm|linux-kvm-*|linux-aws|linux-aws-*|linux-azure|linux-azure-*|linux-gcp|linux-gcp-*|kernel|kernel-core|kernel-core-*|kernel-modules|kernel-modules-*|kernel-modules-core|kernel-modules-core-*|kernel-devel|kernel-devel-*|kernel-headers|kernel-headers-*|kernel-default|kernel-default-*|kernel-lts|kernel-lts-*|kernel-vanilla|kernel-vanilla-*|kernel-longterm|kernel-longterm-*)
@@ -35,7 +43,7 @@ rootfs_append_exclude_pkg() { # <current> <package>
 # select common kernel meta packages that cannot be booted from inside a chroot.
 if declare -F build_debfamily >/dev/null 2>&1 && \
    ! declare -F _systui_systemd_base_build_debfamily >/dev/null 2>&1; then
-    eval "$(declare -f build_debfamily | sed '1s/^build_debfamily[[:space:]]*()/_systui_systemd_base_build_debfamily ()/')"
+    systui_alias_function build_debfamily _systui_systemd_base_build_debfamily
 fi
 
 build_debfamily() {
@@ -91,7 +99,7 @@ rootfs_ensure_systemd_selected() { # <target> <distro>
 # packages, guarantee systemd is present and refresh the iSH compatibility init.
 if declare -F rootfs_postconfig >/dev/null 2>&1 && \
    ! declare -F _systui_systemd_base_rootfs_postconfig >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_postconfig | sed '1s/^rootfs_postconfig[[:space:]]*()/_systui_systemd_base_rootfs_postconfig ()/')"
+    systui_alias_function rootfs_postconfig _systui_systemd_base_rootfs_postconfig
 fi
 
 rootfs_postconfig() {

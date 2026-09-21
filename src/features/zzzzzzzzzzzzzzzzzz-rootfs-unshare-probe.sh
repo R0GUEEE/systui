@@ -4,6 +4,14 @@
 # not sufficient on iSH-AOK, restricted containers, or kernels built without
 # the required namespace support.
 
+
+# standalone safety: pull in the alias helper when this feature is sourced
+# without core/common.sh (tests, reduced builds).
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
 _systui_unshare_probe() {
     command -v unshare >/dev/null 2>&1 || return 1
     command -v chroot >/dev/null 2>&1 || return 1
@@ -24,7 +32,7 @@ fi
 readonly SYSTUI_UNSHARE_SUPPORTED
 
 if declare -F rootfs_wb_engine_available >/dev/null 2>&1; then
-    eval "$(declare -f rootfs_wb_engine_available | sed '1s/^rootfs_wb_engine_available[[:space:]]*()/_systui_base_rootfs_wb_engine_available ()/')"
+    systui_alias_function rootfs_wb_engine_available _systui_base_rootfs_wb_engine_available
 
     rootfs_wb_engine_available() { # <engine>
         if [ "$1" = unshare ]; then
