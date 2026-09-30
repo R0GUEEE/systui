@@ -606,16 +606,55 @@ APT repository management includes both `/etc/apt/sources.list` and `/etc/apt/so
 
 System Configuration > Shells separates Managers from Plugins. The manager list
 contains **every shell systui knows** — Bash, Zsh, Fish, Nushell, POSIX sh
-(dash/ash/yash), Korn shell (ksh/mksh), tcsh/csh, Elvish, Xonsh and PowerShell —
-and each entry opens the **same manager surface**: install/reinstall (with
-per-distro package names, pip for xonsh, and a GitHub-release installer for
-PowerShell), uninstall, set as the default login shell, that shell's
+(dash/ash/yash), Korn shell (ksh/mksh), tcsh/csh, Elvish, Xonsh, PowerShell and
+Niu (niubash) — and each entry opens the **same manager surface**:
+install/reinstall (with per-distro package names, pip for xonsh, a GitHub-release
+installer for PowerShell, and the niubash release/bundle installer for niu),
+uninstall, set as the default login shell, that shell's
 configuration files, its plugin integration, its alias dialect, plus its own
 plugin framework when it has one (oh-my-bash, Bash-it, ble.sh, oh-my-zsh, zinit,
-awesome-zsh-plugins, Fisher, nushell plugins). There is no separate "More shells"
-install-only list any more. Cross-shell plugins include Starship, fzf, completion
-packages, zoxide, Atuin, direnv, Carapace, syntax highlighting, and
-autosuggestions.
+awesome-zsh-plugins, Fisher, nushell plugins, oh-my-niu). There is no separate
+"More shells" install-only list any more. Cross-shell plugins include Starship,
+fzf, completion packages, zoxide, Atuin, direnv, Carapace, syntax highlighting,
+and autosuggestions.
+
+### niubash (niu)
+
+[niubash](https://github.com/unixwin/niubash) is a Bash-compatible shell that is
+native on Windows (rubash engine + winuxcmd, no WSL and no MSYS emulation). systui
+manages it exactly like the other Bash-family shells: `~/.niubashrc` (and the
+legacy `~/.winshrc`) in the config-file menu, validated with `niu -n` when niu is
+installed and `bash -n` otherwise, the POSIX alias dialect, and the Bash-form
+integration lines for Starship, zoxide, direnv and fzf.
+
+Install (Shells ▸ Niu (niubash) ▸ Install) offers the GitHub release payload for
+Windows x64 or ARM64 (unpacked into `~/.niubash/niubash`), a Cargo build from
+source, and the framework bundle. The payload is Windows-only — on a non-Windows
+host systui says so instead of pretending otherwise, and still configures the rc
+file and the plugins.
+
+**oh-my-niu / oh-my-winuxsh** ([unixwin/oh-my-winuxsh](https://github.com/unixwin/oh-my-winuxsh))
+is the plugin framework, and Shells ▸ Niu ▸ Plugins ▸ framework (or ▸ Plugins ▸
+GitHub catalogue) is where it is installed from: the released bundle is
+downloaded, its published `sha256` is verified, it is unpacked into
+`~/.niubash/oh-my-niu`, and the loader line is written into `~/.niubashrc` inside
+a removable systui block. The plugin choices are **parsed from GitHub**: the
+bundle repository's git tree lists every `plugins/<name>/plugin.toml` (plugins,
+prompt packs and themes) and its `index.toml` supplies the kind, category and
+summary. The selection is written back as one managed block
+
+```bash
+# >>> systui niu plugins >>>
+NIU_PLUGINS=(prompt-core git docker zoxide)
+NIU_THEME=minimal
+NIU_THEME_PLUGIN=theme-minimal
+# <<< systui niu plugins <<<
+```
+
+so the framework keeps loading the same plugins the menu shows. With no network
+and no bundle the built-in pack list from `index.toml` is used, so the menu never
+depends on GitHub being reachable.
+
 
 ### Shell plugin configuration managers
 System Configuration > Shells > Plugins now opens a per-user manager for each plugin. Starship, fzf, completions, zoxide, Atuin, direnv, Carapace, Zsh syntax highlighting, and Zsh autosuggestions include install/remove actions, shell integration, editable configuration, status inspection, and cleanup controls.
@@ -669,12 +708,14 @@ The RootFS Builder now opens a categorized package catalogue after preset select
   Fish (`config.fish`, `conf.d/systui.fish`), Nushell (`config.nu`, `env.nu`,
   `login.nu`), POSIX sh (`.profile`), Korn shell (`.kshrc`, `.mkshrc`),
   tcsh/csh (`.tcshrc`, `.cshrc`, `.login`, `.logout`), Elvish (`rc.elv`), Xonsh
-  (`rc.xsh`), PowerShell (`profile.ps1`, `Microsoft.PowerShell_profile.ps1`) and
+  (`rc.xsh`), PowerShell (`profile.ps1`, `Microsoft.PowerShell_profile.ps1`),
+  niubash (`.niubashrc`, `.winshrc`) and
   Readline (`.inputrc`). Common settings are selected with SPACE and written into
   a removable systui-managed block **in that shell's own syntax** (tcsh `setenv`,
   Elvish `set E:…`, Xonsh `$VAR`, PowerShell `$env:VAR`, ksh `HISTSIZE`, POSIX
   exports), and syntax validation uses the shell's own parser — `bash -n`,
-  `sh -n`, `ksh -n`, `zsh -n`, `fish -n`, `tcsh -n`, `nu -n`, or the PowerShell
+  `sh -n`, `ksh -n`, `zsh -n`, `fish -n`, `tcsh -n`, `nu -n`, `niu -n` (niubash
+  rc files, falling back to `bash -n`), or the PowerShell
   AST parser. Custom entries, backups, direct editing and viewing are available
   for every file.
 - **Alias dialects** — the alias manager keeps one POSIX master file and
@@ -696,7 +737,7 @@ The RootFS Builder now opens a categorized package catalogue after preset select
 
 ## Expanded system configuration
 
-- Shell plugin catalogue for Bash, Zsh, and Fish GitHub projects with installation, updates, and shell integration, plus per-shell integration lines for the cross-shell tools on every shell the tool manages (the catalogue also accepts any other shell id, cloning into a per-shell directory and using that shell's own source syntax).
+- Shell plugin catalogue for Bash, Zsh, and Fish GitHub projects with installation, updates, and shell integration, plus per-shell integration lines for the cross-shell tools on every shell the tool manages (the catalogue also accepts any other shell id, cloning into a per-shell directory and using that shell's own source syntax; for niu it also installs the oh-my-niu bundle and enables its plugins from the bundle repository's `index.toml` and `plugins/` tree).
 - Expanded GitHub add-on catalogues and update/status management for terminal file managers.
 - Full OpenSSH server configuration for authentication, access controls, keys, forwarding, keepalives, SFTP, banners, host keys, logs, and validation.
 - Additional iSH-AOK compatibility, storage, cache, logging, shell, APT, and capability-report tuning.

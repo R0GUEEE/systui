@@ -56,7 +56,8 @@ systui_shell_registry() {
         'tcsh|tcsh / csh|tcsh|tcshrc|tcshrc cshrc csh_login csh_logout|tcsh' \
         'elvish|Elvish|elvish|elvishrc|elvishrc|elvish' \
         'xonsh|Xonsh|xonsh|xonshrc|xonshrc|python' \
-        'pwsh|PowerShell|pwsh|psprofile|psprofile psprofile_host|pwsh'
+        'pwsh|PowerShell|pwsh|psprofile|psprofile psprofile_host|pwsh' \
+        'niu|Niu (niubash)|niu|niubashrc|niubashrc winshrc|niu'
 }
 
 # -g is required, not decorative: the loader sources every feature from inside
@@ -168,7 +169,7 @@ shell_rc_for() {
 # integration used to stop at bash/zsh/fish.
 plugin_source_line() { # <shell> <path>
     case "$1" in
-        bash|zsh|posix|ksh) printf '. "%s"\n' "$2" ;;
+        bash|zsh|posix|ksh|niu) printf '. "%s"\n' "$2" ;;
         fish|tcsh|nu|elvish|xonsh) printf 'source "%s"\n' "$2" ;;
         pwsh) printf '. "%s"\n' "$2" ;;
         *) printf '. "%s"\n' "$2" ;;
@@ -206,6 +207,8 @@ shellcfg_file_for() {
         nuconfig)       printf '%s/.config/nushell/config.nu\n' "$2" ;;
         nuenv)          printf '%s/.config/nushell/env.nu\n' "$2" ;;
         nulogin)        printf '%s/.config/nushell/login.nu\n' "$2" ;;
+        niubashrc)      printf '%s/.niubashrc\n' "$2" ;;
+        winshrc)        printf '%s/.winshrc\n' "$2" ;;
         profile)        printf '%s/.profile\n' "$2" ;;
         kshrc)          printf '%s/.kshrc\n' "$2" ;;
         mkshrc)         printf '%s/.mkshrc\n' "$2" ;;
@@ -258,6 +261,14 @@ shellcfg_validate() {
             tcsh)  _shellcfg_validate_via tcsh "$f" "$out" tcsh -n || rc=$? ;;
             nu)    _shellcfg_validate_via nu "$f" "$out" nu -n -c "source $(nu_quote "$f")" || rc=$? ;;
             pwsh)  _shellcfg_validate_pwsh "$f" "$out" || rc=$? ;;
+            niu)
+                # .niubashrc (and the legacy .winshrc) is plain Bash syntax.
+                # Prefer niu's own parser, fall back to Bash's.
+                if command -v niu >/dev/null 2>&1; then
+                    _shellcfg_validate_via niu "$f" "$out" niu -n || rc=$?
+                else
+                    _shellcfg_validate_via bash "$f" "$out" bash -n || rc=$?
+                fi ;;
             elvish)
                 printf 'Elvish has no standalone syntax checker; review %s with elvish -i or by hand.\n' "$f" > "$out" ;;
             python)
@@ -421,6 +432,19 @@ shellcfg_emit_settings() {
             case "$sel" in *" glob "*) printf 'setopt EXTENDED_GLOB GLOB_DOTS\n' ;; esac
             case "$sel" in *" correction "*) printf 'setopt CORRECT\n' ;; esac
             case "$sel" in *" vi "*) printf 'bindkey -v\n' ;; esac
+            ;;
+        niu)
+            # .niubashrc is read by a Bash-compatible engine, so the POSIX
+            # exports are right; only the knobs niubash owns are spelled out
+            # (history mode, bundled completions, no autocd).
+            case "$sel" in *" history "*) printf 'NIU_HISTORY_MODE=shared\nexport NIU_HISTORY_MODE\nexport HISTSIZE=%s\nexport HISTFILESIZE=%s\n' "${hsize:-10000}" "$((${hsize:-10000} * 2))" ;; esac
+            case "$sel" in *" editor "*) printf 'export EDITOR=%q\nexport VISUAL=%q\n' "$editor" "$editor" ;; esac
+            case "$sel" in *" pager "*) printf 'export PAGER=%q\n' "$pager" ;; esac
+            case "$sel" in *" color "*) printf 'export CLICOLOR=1\n' ;; esac
+            case "$sel" in *" completion "*) printf '# niubash owns its completions (winuxcmd command links + Bash completion import).\n' ;; esac
+            case "$sel" in *" autocd "*) printf '# niubash has no autocd; use cd or the dirmarks plugin.\n' ;; esac
+            case "$sel" in *" glob "*) printf 'shopt -s globstar dotglob 2>/dev/null || true\n' ;; esac
+            case "$sel" in *" vi "*) printf 'set -o vi\n' ;; esac
             ;;
         *)
             case "$sel" in *" history "*) printf 'export HISTSIZE=%s\nexport HISTFILESIZE=%s\nexport HISTCONTROL=ignoreboth:erasedups\nshopt -s histappend 2>/dev/null || true\n' "${hsize:-10000}" "$((${hsize:-10000} * 2))" ;; esac
@@ -609,10 +633,13 @@ plugin_show_status() { # <name> <command> <home> <pattern>
 
 # Integration (init) lines for the cross-shell tools, one row per shell:
 # tool|shell|line. Only documented combinations appear here, so the menu can say
-# honestly that a shell has no integration line for a tool.
+# honestly that a shell has no integration line for a tool. niu rows are the Bash
+# lines on purpose: niubash runs a Bash-compatible engine and the tools ship
+# native Windows binaries, so `eval "$(tool init bash)"` is the working form.
 systui_plugin_init_table() {
     cat <<'EOF'
 starship|bash|eval "$(starship init bash)"
+starship|niu|eval "$(starship init bash)"
 starship|zsh|eval "$(starship init zsh)"
 starship|fish|starship init fish | source
 starship|tcsh|eval "`starship init tcsh`"
@@ -621,6 +648,7 @@ starship|elvish|eval (starship init elvish | slurp)
 starship|xonsh|execx($(starship init xonsh))
 starship|pwsh|Invoke-Expression (&starship init powershell)
 zoxide|bash|eval "$(zoxide init bash)"
+zoxide|niu|eval "$(zoxide init bash)"
 zoxide|zsh|eval "$(zoxide init zsh)"
 zoxide|posix|eval "$(zoxide init posix --hook prompt)"
 zoxide|fish|zoxide init fish | source
@@ -636,6 +664,7 @@ atuin|nu|mkdir ($nu.data-dir | path join "vendor/autoload"); atuin init nu | sav
 atuin|xonsh|execx($(atuin init xonsh), 'exec', __xonsh__.ctx, filename='atuin')
 atuin|pwsh|Invoke-Expression (&atuin init powershell)
 direnv|bash|eval "$(direnv hook bash)"
+direnv|niu|eval "$(direnv hook bash)"
 direnv|zsh|eval "$(direnv hook zsh)"
 direnv|fish|direnv hook fish | source
 direnv|tcsh|eval "`direnv hook tcsh`"
@@ -648,6 +677,7 @@ carapace|elvish|eval (carapace _carapace elvish | slurp)
 carapace|xonsh|execx($(carapace _carapace xonsh))
 carapace|pwsh|Invoke-Expression (&carapace _carapace powershell | Out-String)
 fzf|bash|eval "$(fzf --bash)"
+fzf|niu|eval "$(fzf --bash)"
 fzf|zsh|eval "$(fzf --zsh)"
 fzf|fish|fzf --fish | source
 fzf|nu|fzf --nushell | save -f ~/.fzf.nu; source ~/.fzf.nu
@@ -951,7 +981,7 @@ aliases_enable() { # <user> <home>
     aliases_write_dialects "$af" "$u"
     for id in $(systui_shell_ids); do
         case "$id" in
-            bash|zsh|posix|ksh) file="$af" ;;                     # POSIX master
+            bash|zsh|posix|ksh|niu) file="$af" ;;                 # POSIX master
             fish) file="$h/$ALIAS_DIR_NAME/aliases.fish" ;;
             tcsh) file="$h/$ALIAS_DIR_NAME/aliases.tcsh" ;;
             nu)   file="$h/$ALIAS_DIR_NAME/aliases.nu" ;;
@@ -1002,6 +1032,16 @@ systui_plugin_entry_file() { # <shell> <dir>
             for f in "$d/$base.nu" "$d"/*.nu; do
                 [ -f "$f" ] && { basename "$f"; return 0; }
             done ;;
+        niu)
+            # oh-my-niu plugins declare their entry point in plugin.toml;
+            # fall back to the conventional <name>.plugin.niu / <name>.niu.
+            if [ -f "$d/plugin.toml" ]; then
+                f=$(sed -n 's/^[[:space:]]*entry[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$d/plugin.toml" | head -n1)
+                if [ -n "$f" ] && [ -f "$d/$f" ]; then printf '%s\n' "$f"; return 0; fi
+            fi
+            for f in "$d/$base.plugin.niu" "$d/$base.niu" "$d"/*.plugin.niu "$d"/*.niu; do
+                [ -f "$f" ] && { printf '%s\n' "${f##*/}"; return 0; }
+            done ;;
     esac
     return 1
 }
@@ -1021,6 +1061,592 @@ systui_plugin_entry_line() { # <shell> <dir>
     esac
 }
 
+# --- niubash (niu) ----------------------------------------------------------
+# niu is a Windows-native shell (github.com/unixwin/niubash) whose engine is
+# Bash-compatible: ~/.niubashrc is plain Bash syntax, its aliases are the POSIX
+# dialect, and its plugin framework, oh-my-niu / oh-my-winuxsh
+# (github.com/unixwin/oh-my-winuxsh), is a bundle root that a single rc line
+# sources. systui installs that bundle, enumerates the plugins the repository
+# publishes, and writes the NIU_PLUGINS / NIU_THEME selection into a managed
+# block, so a niu configuration is managed from the same menus as every other
+# shell. The shell payload itself is Windows-only; see menu_niubash_install.
+
+niu_shell_repo() { printf '%s\n' "${SYSTUI_NIU_REPO:-unixwin/niubash}"; }
+niu_bundle_repo() { printf '%s\n' "${SYSTUI_NIU_BUNDLE_REPO:-unixwin/oh-my-winuxsh}"; }
+
+# The host the systui process runs on. MINGW/MSYS/Cygwin mean niu runs natively;
+# WSL is Linux to uname but Windows to the binary loader (see niu_wsl).
+niu_host_platform() {
+    case "$(uname -s 2>/dev/null || printf 'unknown')" in
+        MINGW*|MSYS*|CYGWIN*|Windows*|windows*) printf 'windows\n' ;;
+        Darwin) printf 'macos\n' ;;
+        *)      printf 'linux\n' ;;
+    esac
+}
+
+niu_host_arch() {
+    case "$(uname -m 2>/dev/null || printf 'unknown')" in
+        x86_64|amd64|AMD64)  printf 'x64\n' ;;
+        aarch64|arm64|ARM64) printf 'arm64\n' ;;
+        *) printf '%s\n' "$(uname -m 2>/dev/null || printf 'unknown')" ;;
+    esac
+}
+
+niu_wsl() {
+    [ -e /proc/sys/fs/binfmt_misc/WSLInterop ] && return 0
+    [ -e /proc/sys/fs/binfmt_misc/WSLInterop-late ] && return 0
+    case "$(cat /proc/sys/kernel/osrelease 2>/dev/null)" in
+        *[Mm]icrosoft*) return 0 ;;
+    esac
+    return 1
+}
+
+# niu_prefix <home>: where the niubash payload is unpacked.
+niu_prefix() { printf '%s/.niubash/niubash\n' "$1"; }
+
+# niu_bundle_root <home>: the oh-my-niu bundle root. $NIUBASH wins when it
+# already points at a bundle — that is the layout niubash ships with.
+niu_bundle_root() {
+    if [ -n "${NIUBASH:-}" ] && [ -f "$NIUBASH/oh-my-niu.niu" ]; then
+        printf '%s\n' "$NIUBASH"
+        return 0
+    fi
+    printf '%s/.niubash/oh-my-niu\n' "$1"
+}
+
+# declare -g for the same reason as the registry cache: the loader sources every
+# feature from inside a function, so a plain assignment would be function-local
+# and the markers would be empty at menu time.
+declare -g NIU_BUNDLE_START='# >>> systui niu bundle >>>'
+declare -g NIU_BUNDLE_END='# <<< systui niu bundle <<<'
+declare -g NIU_PLUGINS_START='# >>> systui niu plugins >>>'
+declare -g NIU_PLUGINS_END='# <<< systui niu plugins <<<'
+
+# niu_write_stanza <file> <start> <end> <body-file> <user>: replace the managed
+# block (or append it) without touching anything written around it. Same
+# contract as shellcfg_write_managed, with the markers passed in.
+niu_write_stanza() {
+    local f="$1" start="$2" end="$3" body="$4" u="$5" tmp
+    mkdir -p "$(dirname "$f")" 2>/dev/null || true
+    : >> "$f"
+    tmp=$(mktemp)
+    awk -v s="$start" -v e="$end" '$0==s{skip=1;next} $0==e{skip=0;next} !skip{print}' "$f" > "$tmp"
+    {
+        cat "$tmp"
+        printf '\n%s\n' "$start"
+        cat "$body"
+        printf '%s\n' "$end"
+    } > "$f"
+    rm -f "$tmp"
+    chown "$u" "$f" 2>/dev/null || true
+}
+
+# niu_write_loader <home> <user> <bundle-dir> -> the rc file it wrote.
+# The framework resolves its plugins under $NIUBASH, so the line points niu at
+# the bundle before sourcing it. This is the documented oh-my-niu invocation.
+niu_write_loader() {
+    local h="$1" u="$2" d="$3" rc body
+    rc=$(plugin_rc_file niu "$h")
+    body=$(mktemp)
+    {
+        printf '# oh-my-niu / oh-my-winuxsh — the niubash plugin framework, installed by systui.\n'
+        printf '# The framework resolves its plugins under $NIUBASH, so point it at the bundle.\n'
+        printf 'NIUBASH="%s"\n' "$d"
+        printf '[ -f "$NIUBASH/oh-my-niu.niu" ] && . "$NIUBASH/oh-my-niu.niu"\n'
+    } > "$body"
+    niu_write_stanza "$rc" "$NIU_BUNDLE_START" "$NIU_BUNDLE_END" "$body" "$u"
+    rm -f "$body"
+    printf '%s\n' "$rc"
+}
+
+# niu_write_plugins <home> <user> <plugins> <theme>: the NIU_PLUGINS array and
+# the theme pair the framework expects (NIU_THEME + NIU_THEME_PLUGIN).
+niu_write_plugins() {
+    local h="$1" u="$2" list="$3" theme="$4" rc body
+    rc=$(plugin_rc_file niu "$h")
+    body=$(mktemp)
+    {
+        printf 'NIU_PLUGINS=(%s)\n' "$list"
+        if [ -n "$theme" ]; then
+            printf 'NIU_THEME=%s\nNIU_THEME_PLUGIN=theme-%s\n' "$theme" "$theme"
+        fi
+    } > "$body"
+    niu_write_stanza "$rc" "$NIU_PLUGINS_START" "$NIU_PLUGINS_END" "$body" "$u"
+    rm -f "$body"
+}
+
+niu_current_plugins() { # <home>
+    local rc
+    rc=$(plugin_rc_file niu "$1")
+    [ -f "$rc" ] || return 0
+    sed -n 's/^NIU_PLUGINS=(\(.*\))[[:space:]]*$/\1/p' "$rc" | tail -n1
+}
+
+niu_current_theme() { # <home>
+    local rc
+    rc=$(plugin_rc_file niu "$1")
+    [ -f "$rc" ] || return 0
+    sed -n 's/^NIU_THEME=\([^[:space:]]*\).*$/\1/p' "$rc" | tail -n1
+}
+
+niu_loader_state() { # <home>
+    local rc
+    rc=$(plugin_rc_file niu "$1")
+    if [ ! -f "$rc" ]; then
+        printf 'no %s yet\n' "${rc##*/}"
+    elif grep -qF "$NIU_BUNDLE_START" "$rc" 2>/dev/null; then
+        printf 'managed block in %s\n' "$rc"
+    else
+        printf 'not written (%s)\n' "$rc"
+    fi
+}
+
+niu_plugin_category() { # <name>
+    case "$1" in
+        theme-*)  printf 'themes\n' ;;
+        prompt-*) printf 'prompts\n' ;;
+        *)        printf 'plugins\n' ;;
+    esac
+}
+
+niu_plugin_cache_dir() { printf '%s\n' "${SYSTUI_NIU_PLUGIN_CACHE:-${SYSTUI_STATE_DIR:-/var/lib/systui}/niubash-plugins}"; }
+niu_plugin_tsv_file() { printf '%s/plugins.tsv\n' "$(niu_plugin_cache_dir)"; }
+
+# The official bundle's own pack list (index.toml, v2.0.0) for the offline case:
+# name|kind|category|summary. Themes are not in it, so an offline host offers the
+# packs and picks themes up as soon as the index is refreshed or a bundle exists.
+niu_plugin_builtin() {
+    cat <<'EOF'
+auto-env|source|environment|Activate the local .venv on directory change and deactivate on leave.
+command-not-found|builtin|hints|Interactive missing-command hints for native Windows.
+command-timer|source|workflow|Report duration and exit code after every interactive command.
+direnv|source|environment|direnv environment export on Niubash lifecycle hooks.
+dirmarks|source|workflow|Bookmark directories (mark/unmark/jump) and jump back anywhere.
+docker|source|devtools|Docker aliases and completion hints.
+dotenv|source|environment|Safe .env loader on Niubash lifecycle hooks.
+env-sync|source|workflow|Push/pull the WPM package manifest and shell config via any rclone remote.
+fzf|source|workflow|Interactive directory selector commands.
+git|source|devtools|Git aliases, completions, and prompt segments.
+git-fetch-reminder|source|workflow|Periodic reminder when the git branch diverged from its upstream.
+jj|source|devtools|Jujutsu (jj) completions and a cached prompt segment.
+keybindings|builtin|ux|Niubash keybinding presets mapped to native reedline actions.
+kubectl|source|devtools|Kubectl aliases and completion hints.
+last-working-dir|source|workflow|Last working directory cache and restore command.
+npm|source|devtools|npm aliases and runtime completion shape detection.
+prompt-core|builtin|prompts|Core prompt segments and the default prompt.
+prompts|builtin|ux|Prompt presets and reusable prompt segments.
+starship|source|ux|Full Starship prompt integration for Niubash.
+thefuck|source|workflow|Correction shim for the previous interactive command.
+themes|builtin|ux|Official Niubash color themes for prompt and Git status styling.
+winuxcmd-core|builtin|devtools|Static completions for WinuxCmd core command links.
+zoxide|source|workflow|z command shim plus directory tracking.
+EOF
+}
+
+# niu_plugin_scan_bundle <home>: rows for an installed bundle, read from each
+# plugin's own plugin.toml — the offline catalogue once a bundle exists.
+niu_plugin_scan_bundle() {
+    local dir d name kind summary
+    dir=$(niu_bundle_root "${1:-$HOME}")
+    [ -d "$dir/plugins" ] || return 0
+    for d in "$dir"/plugins/*/; do
+        [ -f "$d/plugin.toml" ] || continue
+        name=${d%/}; name=${name##*/}
+        kind=$(sed -n 's/^[[:space:]]*kind[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$d/plugin.toml" | head -n1)
+        summary=$(sed -n 's/^[[:space:]]*summary[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$d/plugin.toml" | head -n1)
+        [ -n "$kind" ] || kind=source
+        printf '%s|%s|%s|%s\n' "$name" "$kind" "$(niu_plugin_category "$name")" "$summary"
+    done
+}
+
+# niu_plugin_packs_tsv <index.toml>: the bundle's own pack list as
+# name|kind|category|summary, one row per [[packs]] block.
+niu_plugin_packs_tsv() {
+    awk '
+      function val(s,  v) { v=s; sub(/^[^"]*"/,"",v); sub(/".*$/,"",v); return v }
+      /^\[\[packs\]\]/ {
+          if (n != "") print n "|" k "|" c "|" s
+          n=""; k=""; c=""; s=""; next
+      }
+      /^name *=/     { n=val($0) }
+      /^kind *=/     { k=val($0) }
+      /^category *=/ { c=val($0) }
+      /^summary *=/  { s=val($0) }
+      END { if (n != "") print n "|" k "|" c "|" s }
+    ' "$1"
+}
+
+# niu_plugin_tree_names <tree.json>: the plugins a git tree listing publishes,
+# one name per line — every plugins/<name>/plugin.toml path in it.
+niu_plugin_tree_names() {
+    grep -oE '"path":[[:space:]]*"plugins/[^/"]*/plugin\.toml"' "$1" \
+        | sed -e 's/.*plugins\///' -e 's|/plugin.toml"||' | sort -u
+}
+
+# niu_plugin_join <names-file> <packs-file>: the catalogue rows,
+# name|kind|category|summary. Names the index knows nothing about (every theme,
+# for instance) keep a derived category and an honest empty summary.
+niu_plugin_join() {
+    local name row kind grp sum
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        row=$(awk -F'|' -v n="$name" '$1==n {print; exit}' "$2")
+        kind=""; grp=""; sum=""
+        if [ -n "$row" ]; then
+            kind=${row#*|};   kind=${kind%%|*}
+            grp=${row#*|*|};  grp=${grp%%|*}
+            sum=${row#*|*|*|}
+        fi
+        [ -n "$kind" ] || kind=source
+        [ -n "$grp" ]  || grp=$(niu_plugin_category "$name")
+        printf '%s|%s|%s|%s\n' "$name" "$kind" "$grp" "$sum"
+    done < "$1"
+}
+
+# niu_plugin_sync: read the plugins the bundle repository publishes from the git
+# tree (one request) and their summaries from index.toml (a second), then cache
+# the joined rows. The previous cache stays usable when the network is down.
+niu_plugin_sync() {
+    local repo branch tsv tmp
+    command -v curl >/dev/null 2>&1 || { warn "curl is required to refresh the niubash plugin index."; return 1; }
+    repo=$(niu_bundle_repo)
+    mkdir -p "$(niu_plugin_cache_dir)" 2>/dev/null || true
+    tsv=$(niu_plugin_tsv_file)
+    tmp=$(mktemp -d) || return 1
+
+    branch=$(curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 \
+        "https://api.github.com/repos/$repo" 2>/dev/null \
+        | sed -n 's/.*"default_branch": *"\([^"]*\)".*/\1/p' | head -n1)
+    [ -n "$branch" ] || branch=master
+
+    if ! curl -fL --proto '=https' --tlsv1.2 --max-time 60 -o "$tmp/tree.json" \
+        "https://api.github.com/repos/$repo/git/trees/$branch?recursive=1" 2>/dev/null; then
+        rm -rf "$tmp"
+        warn "could not reach api.github.com for $repo (offline?)"
+        return 1
+    fi
+    curl -fL --proto '=https' --tlsv1.2 --max-time 60 -o "$tmp/index.toml" \
+        "https://raw.githubusercontent.com/$repo/$branch/index.toml" 2>/dev/null || : > "$tmp/index.toml"
+
+    niu_plugin_tree_names "$tmp/tree.json" > "$tmp/names"
+    if [ ! -s "$tmp/names" ]; then
+        rm -rf "$tmp"
+        warn "no plugins found in $repo (unreadable tree or the repository moved)"
+        return 1
+    fi
+    niu_plugin_packs_tsv "$tmp/index.toml" > "$tmp/packs"
+    niu_plugin_join "$tmp/names" "$tmp/packs" > "$tmp/out"
+    cp "$tmp/out" "$tsv"
+    rm -rf "$tmp"
+    note "$(wc -l < "$tsv" | tr -d ' ') niubash plugins cached from $repo"
+    return 0
+}
+
+# niu_plugin_catalog [home]: name|kind|category|summary. The GitHub cache wins,
+# then an installed bundle, then the offline pack list.
+niu_plugin_catalog() {
+    local tsv out
+    tsv=$(niu_plugin_tsv_file)
+    if [ -s "$tsv" ]; then
+        cat "$tsv"
+        return 0
+    fi
+    out=$(niu_plugin_scan_bundle "${1:-$HOME}")
+    if [ -n "$out" ]; then
+        printf '%s\n' "$out"
+        return 0
+    fi
+    niu_plugin_builtin
+}
+
+niu_plugin_count() { niu_plugin_catalog "${1:-$HOME}" | wc -l | tr -d ' '; }
+
+# menu_niu_plugins_select <user> <home>: category by category, because the bundle
+# publishes around fifty plugins and themes and one flat checklist would be
+# unusable. Everything that was already enabled stays enabled unless the user
+# deselects it, and the result is written as one NIU_PLUGINS array.
+menu_niu_plugins_select() {
+    local u="$1" h="$2" rc index name kind grp sum c sel state cur catg sel_args=() cat_args=()
+    declare -A chosen=()
+    rc=$(plugin_rc_file niu "$h")
+    cur=$(niu_current_plugins "$h")
+    index=$(mktemp)
+    while IFS='|' read -r name kind grp sum; do
+        [ -n "$name" ] || continue
+        printf '%s\t%s\t%s\t%s\n' "$name" "$kind" "$grp" "$sum" >> "$index"
+    done < <(niu_plugin_catalog "$h")
+    if [ ! -s "$index" ]; then
+        rm -f "$index"
+        tui_msg "niubash plugins" "No plugin index is available yet.\n\nUse \"Refresh the plugin index\" in the oh-my-niu menu."
+        return 0
+    fi
+    # shellcheck disable=SC2086
+    for name in $cur; do chosen[$name]=1; done
+
+    while true; do
+        cat_args=()
+        while IFS= read -r catg; do
+            [ -n "$catg" ] && cat_args+=("$catg" "$catg ($(niu_plugin_count_for "$index" "$catg"))")
+        done < <(cut -f3 "$index" | awk '!seen[$0]++ && $0 != ""')
+        cat_args+=("done" "Save the selection" back "Back")
+        c=$(tui_menu "niubash plugins — $u" "NIU_PLUGINS is written to $rc\nEnabled: ${cur:-<none>}" "${cat_args[@]}") || break
+        case "$c" in
+            done) break ;;
+            back|"") rm -f "$index"; return 0 ;;
+        esac
+        sel_args=()
+        while IFS=$'\t' read -r name kind grp sum; do
+            [ "$grp" = "$c" ] || continue
+            state=off
+            [ -n "${chosen[$name]:-}" ] && state=on
+            sel_args+=("$name" "${name} — ${sum:-no description}" "$state")
+        done < "$index"
+        [ "${#sel_args[@]}" -gt 0 ] || continue
+        sel=$(tui_check "niubash $c" "SPACE selects the plugins to load:" "${sel_args[@]}") || continue
+        sel=${sel//\"/}
+        while IFS=$'\t' read -r name kind grp sum; do
+            [ "$grp" = "$c" ] && unset 'chosen[$name]'
+        done < "$index"
+        # shellcheck disable=SC2086
+        for name in $sel; do chosen[$name]=1; done
+    done
+
+    local list=""
+    while IFS=$'\t' read -r name kind grp sum; do
+        [ -n "${chosen[$name]:-}" ] || continue
+        list="$list $name"
+    done < "$index"
+    rm -f "$index"
+    niu_write_plugins "$h" "$u" "${list# }" "$(niu_current_theme "$h")"
+    tui_msg "niubash plugins" "NIU_PLUGINS written to $rc:\n${list# }"
+}
+
+# niu_plugin_count_for <index> <category>: entries per category, for the menu.
+niu_plugin_count_for() {
+    awk -F'\t' -v c="$2" '$3==c {n++} END {printf "%d\n", n + 0}' "$1"
+}
+
+# menu_niu_theme_select <user> <home>: NIU_THEME is the bare name, the framework
+# derives NIU_THEME_PLUGIN=theme-<name> from it.
+menu_niu_theme_select() {
+    local u="$1" h="$2" c name kind grp sum args=() cur
+    cur=$(niu_current_theme "$h")
+    while IFS='|' read -r name kind grp sum; do
+        [ -n "$name" ] || continue
+        case "$name" in
+            theme-*) args+=("${name#theme-}" "${name#theme-} — ${sum:-theme}") ;;
+        esac
+    done < <(niu_plugin_catalog "$h")
+    if [ "${#args[@]}" -eq 0 ]; then
+        tui_msg "niubash themes" "The plugin index lists no themes yet.\n\nRefresh the index, or install the bundle — its plugins/ tree is read then."
+        return 0
+    fi
+    args+=(back "Back")
+    c=$(tui_menu "niubash themes — $u" "Current theme: ${cur:-<framework default>}" "${args[@]}") || return 0
+    if [ -z "$c" ] || [ "$c" = back ]; then return 0; fi
+    niu_write_plugins "$h" "$u" "$(niu_current_plugins "$h")" "$c"
+    tui_msg "niubash theme" "NIU_THEME=$c and NIU_THEME_PLUGIN=theme-$c written to $(plugin_rc_file niu "$h")"
+}
+
+niu_show_status() { # <user> <home>
+    local u="$1" h="$2" f
+    f="${SYSTUI_TMP}/niu-status.$$"
+    {
+        printf 'shell      : %s (niu, niubash)\n' "$(systui_shell_label niu)"
+        printf 'binary     : %s\n' "$(command -v niu 2>/dev/null || printf 'not on PATH')"
+        printf 'host       : %s (%s)\n' "$(niu_host_platform)" "$(niu_host_arch)"
+        if niu_wsl; then printf 'wsl        : yes (Windows interop available)\n'; fi
+        printf 'payload    : %s\n' "$(niu_prefix "$h")"
+        printf 'rc file    : %s\n' "$(plugin_rc_file niu "$h")"
+        printf 'framework  : %s\n' "$(niu_bundle_repo)"
+        printf 'bundle     : %s\n' "$(niu_bundle_root "$h")"
+        printf 'loader     : %s\n' "$(niu_loader_state "$h")"
+        printf 'theme      : %s\n' "$(niu_current_theme "$h")"
+        printf 'plugins    :%s\n' "$(niu_current_plugins "$h")"
+        printf 'index      : %s (%s entries)\n' "$(niu_plugin_tsv_file)" "$(niu_plugin_count "$h")"
+    } > "$f"
+    tui_text "niubash status" "$f"
+    rm -f "$f"
+}
+
+# niu_bundle_install <user> <home>: download the released oh-my-niu bundle,
+# verify its published sha256 when there is one, unpack it, and write the loader.
+niu_bundle_install() {
+    local u="$1" h="$2" repo api ver url sum_url want got tmp dest
+    repo=$(niu_bundle_repo)
+    command -v curl  >/dev/null 2>&1 || pm_install curl
+    command -v unzip >/dev/null 2>&1 || pm_install unzip
+    api=$(curl -fsSL --proto '=https' --tlsv1.2 --max-time 45 \
+        "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null) || {
+        tui_msg "Download failed" "Could not query the latest $repo release.\nCheck the network connection and try again."
+        return 1
+    }
+    ver=$(printf '%s\n' "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+    url=$(printf '%s\n' "$api" | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' \
+        | grep -E '/oh-my-niu-[^/]*\.zip$' | head -n1)
+    if [ -z "$url" ]; then
+        tui_msg "No bundle asset" "The latest $repo release publishes no oh-my-niu-*.zip."
+        return 1
+    fi
+    dest=$(niu_bundle_root "$h")
+    tmp=$(mktemp -d) || return 1
+    if ! run_cmd "Download oh-my-niu ${ver:-latest}" curl -fL --proto '=https' --tlsv1.2 --max-time 300 "$url" -o "$tmp/bundle.zip"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    sum_url="$url.sha256"
+    if curl -fsSL --proto '=https' --tlsv1.2 --max-time 30 -o "$tmp/bundle.zip.sha256" "$sum_url" 2>/dev/null \
+        && command -v sha256sum >/dev/null 2>&1; then
+        want=$(head -c 64 < "$tmp/bundle.zip.sha256" | tr -d ' \t\r')
+        got=$(sha256sum "$tmp/bundle.zip" | cut -d' ' -f1)
+        if [ -n "$want" ] && [ "$want" != "$got" ]; then
+            rm -rf "$tmp"
+            tui_msg "Checksum mismatch" "The downloaded bundle does not match $sum_url.\nNothing was installed."
+            return 1
+        fi
+    fi
+    mkdir -p "$dest" || { rm -rf "$tmp"; return 1; }
+    if ! run_cmd "Unpack oh-my-niu ${ver:-latest}" unzip -q -o "$tmp/bundle.zip" -d "$dest"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    rm -rf "$tmp"
+    chown -R "$u" "$dest" 2>/dev/null || true
+    niu_write_loader "$h" "$u" "$dest" >/dev/null
+    tui_msg "oh-my-niu installed" "Bundle ${ver:-latest} unpacked into:\n$dest\n\nLoader written to $(plugin_rc_file niu "$h"). Use \"Select the plugins\" to choose what it loads."
+}
+
+# niu_release_note: what the payload is good for on this host.
+niu_release_note() {
+    case "$(niu_host_platform)" in
+        windows)
+            printf 'niu.exe is in that directory — add it to PATH and start niu.\n' ;;
+        *)
+            if niu_wsl; then
+                printf 'This is WSL: run the Windows niu.exe through interop and manage\n~/.niubashrc and its plugins from here.\n'
+            else
+                printf 'niubash is a native Windows shell, so this payload runs on Windows\n(or through WSL interop) only. systui still manages its rc file, its\naliases and its oh-my-niu plugins from this host.\n'
+            fi ;;
+    esac
+}
+
+# niu_install_release <user> <home> [x64|arm64]: the Windows release payload.
+niu_install_release() {
+    local u="$1" h="$2" arch="$3" repo api ver url tmp dest
+    repo=$(niu_shell_repo)
+    [ -n "$arch" ] || arch=$(niu_host_arch)
+    command -v curl  >/dev/null 2>&1 || pm_install curl
+    command -v unzip >/dev/null 2>&1 || pm_install unzip
+    api=$(curl -fsSL --proto '=https' --tlsv1.2 --max-time 45 \
+        "https://api.github.com/repos/$repo/releases/latest" 2>/dev/null) || {
+        tui_msg "Download failed" "Could not query the latest niubash release.\nCheck the network connection and try again."
+        return 1
+    }
+    ver=$(printf '%s\n' "$api" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n1)
+    url=$(printf '%s\n' "$api" | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' \
+        | grep -E "/niubash-v?[0-9.]+-win-${arch}\.zip$" | head -n1)
+    [ -n "$url" ] || url=$(printf '%s\n' "$api" | sed -n 's/.*"browser_download_url": *"\([^"]*\)".*/\1/p' \
+        | grep -E "/niubash-win-${arch}\.zip$" | head -n1)
+    if [ -z "$url" ]; then
+        tui_msg "No Windows asset" "The latest niubash release (${ver:-unknown}) has no win-${arch} zip."
+        return 1
+    fi
+    dest=$(niu_prefix "$h")
+    tmp=$(mktemp -d) || return 1
+    if ! run_cmd "Download niubash ${ver:-latest} ($arch)" curl -fL --proto '=https' --tlsv1.2 --max-time 300 "$url" -o "$tmp/niubash.zip"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    mkdir -p "$dest" || { rm -rf "$tmp"; return 1; }
+    if ! run_cmd "Unpack niubash ${ver:-latest}" unzip -q -o "$tmp/niubash.zip" -d "$dest"; then
+        rm -rf "$tmp"
+        return 1
+    fi
+    rm -rf "$tmp"
+    chown -R "$u" "$dest" 2>/dev/null || true
+    tui_msg "niubash ${ver:-latest} installed" "Payload: $dest\n\n$(niu_release_note)"
+}
+
+# menu_niubash_install <user> <home>: the install/reinstall surface behind the
+# registry entry, so niu sits in the same shell list as bash, zsh and fish.
+menu_niubash_install() {
+    local u="$1" h="$2" c arch
+    while true; do
+        c=$(tui_menu "Install niu — $u" \
+            "niubash (niu): a Bash-compatible shell, native on Windows.\nHost: $(niu_host_platform) ($(niu_host_arch))\nPayload: $(niu_prefix "$h")" \
+            release "GitHub release — Windows payload (choose x64 or ARM64)" \
+            bundle "oh-my-niu framework (oh-my-winuxsh) — plugins, themes, prompts" \
+            source "Build from source with Cargo (Rust; niubash targets Windows)" \
+            info "What niu is, and what works from this host" \
+            back "Back") || return 0
+        case "$c" in
+            release)
+                arch=$(tui_menu "niubash payload" "Which Windows payload?" \
+                    x64 "Windows x64" arm64 "Windows ARM64" back "Back") || continue
+                if [ -z "$arch" ] || [ "$arch" = back ]; then continue; fi
+                niu_install_release "$u" "$h" "$arch" ;;
+            bundle) menu_oh_my_niu "$u" "$h" ;;
+            source)
+                if command -v cargo >/dev/null 2>&1; then
+                    run_cmd "Build niu from source ($(niu_shell_repo))" \
+                        cargo install --git "https://github.com/$(niu_shell_repo)" niubash --locked
+                else
+                    tui_msg "Cargo" "Cargo is not installed.\n\nInstall Rust (rustup) first, or use the GitHub release payload — niubash is a Windows-targeted crate either way."
+                fi ;;
+            info)
+                tui_msg "About niu (niubash)" "niubash is a native Windows shell: a Bash-compatible engine (rubash),\nUnix commands as real Windows binaries (winuxcmd), no WSL and no MSYS\nemulation layer.\n\nIts configuration is Bash syntax in ~/.niubashrc, which is why systui\nmanages it exactly like the other Bash-family shells: config files,\nvalidation, aliases, integration lines and the oh-my-niu plugin bundle.\n\nUpstream: https://github.com/$(niu_shell_repo)\nFramework: https://github.com/$(niu_bundle_repo)" ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+# menu_oh_my_niu <user> <home>: the framework menu — the "plugin manager for niu"
+# entry point. Everything it needs comes from the repository's own metadata.
+menu_oh_my_niu() {
+    local u="$1" h="$2" c dir rc state
+    rc=$(plugin_rc_file niu "$h")
+    while true; do
+        dir=$(niu_bundle_root "$h")
+        if [ -f "$dir/oh-my-niu.niu" ]; then state="installed"; else state="not installed"; fi
+        c=$(tui_menu "oh-my-niu — $u" \
+            "Framework: $(niu_bundle_repo) (oh-my-winuxsh)\nBundle: $state — $dir\nEnabled:$(niu_current_plugins "$h")\nTheme: $(niu_current_theme "$h")" \
+            install "Install/update the oh-my-niu bundle from GitHub" \
+            plugins "Select the plugins NIU_PLUGINS loads" \
+            theme "Select a theme (NIU_THEME)" \
+            source "Write the framework loader into ${rc##*/}" \
+            status "Show the bundle, loader and plugin status" \
+            refresh "Refresh the plugin index from GitHub" \
+            view "View the cached plugin index" \
+            back "Back") || return 0
+        case "$c" in
+            install) niu_bundle_install "$u" "$h" ;;
+            plugins) menu_niu_plugins_select "$u" "$h" ;;
+            theme) menu_niu_theme_select "$u" "$h" ;;
+            source)
+                if [ ! -f "$dir/oh-my-niu.niu" ]; then
+                    tui_msg "oh-my-niu" "There is no bundle at $dir yet.\n\nInstall it first, or point NIUBASH at an existing bundle root."
+                else
+                    rc=$(niu_write_loader "$h" "$u" "$dir")
+                    tui_msg "oh-my-niu" "Loader written to $rc"
+                fi ;;
+            status) niu_show_status "$u" "$h" ;;
+            refresh)
+                if niu_plugin_sync; then
+                    tui_msg "Plugin index" "$(niu_plugin_count "$h") entries cached in $(niu_plugin_tsv_file)"
+                else
+                    tui_msg "Plugin index" "The index could not be refreshed; the cached one (if any) is still used."
+                fi ;;
+            view)
+                if [ -s "$(niu_plugin_tsv_file)" ]; then
+                    tui_text "niubash plugins" "$(niu_plugin_tsv_file)"
+                else
+                    tui_msg "Plugin index" "Nothing is cached yet — use Refresh, or install the bundle and its plugins/ tree is read instead."
+                fi ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
 export -f systui_shell_registry systui_shell_ids systui_shell_field \
     systui_shell_label systui_shell_bin systui_shell_rc_kind systui_shell_kinds \
     systui_shell_validator systui_shell_of_kind systui_shell_installed \
@@ -1033,7 +1659,16 @@ export -f systui_shell_registry systui_shell_ids systui_shell_field \
     menu_plugin_custom_source menu_shell_github_plugins menu_shell_plugins \
     aliases_dialect_file \
     alias_pairs aliases_write_dialects aliases_write_fish aliases_enable \
-    systui_plugin_entry_file systui_plugin_entry_line
+    systui_plugin_entry_file systui_plugin_entry_line \
+    niu_shell_repo niu_bundle_repo niu_host_platform niu_host_arch niu_wsl \
+    niu_prefix niu_bundle_root niu_write_stanza niu_write_loader niu_write_plugins \
+    niu_current_plugins niu_current_theme niu_loader_state niu_plugin_category \
+    niu_plugin_cache_dir niu_plugin_tsv_file niu_plugin_builtin \
+    niu_plugin_scan_bundle niu_plugin_sync niu_plugin_catalog niu_plugin_count \
+    niu_plugin_packs_tsv niu_plugin_tree_names niu_plugin_join \
+    niu_plugin_count_for menu_niu_plugins_select menu_niu_theme_select \
+    niu_show_status niu_bundle_install niu_release_note niu_install_release \
+    menu_niubash_install menu_oh_my_niu
 
 # --- per-shell managers -----------------------------------------------------
 # Every shell systui knows gets the same manager surface — install/reinstall,
@@ -1075,6 +1710,7 @@ systui_shell_bin_label() { # <binary>
         tcsh)  printf 'tcsh — TENEX C shell (completion, history)\n' ;;
         nu)    printf 'Nushell — structured-data shell\n' ;;
         pwsh)  printf 'PowerShell — cross-platform automation shell (.NET)\n' ;;
+        niu)   printf 'niu — niubash, a Bash-compatible shell native on Windows (no WSL, no MSYS)\n' ;;
         *)     printf '%s\n' "$(systui_shell_label "$(systui_shell_for_bin "$1")")" ;;
     esac
 }
@@ -1111,6 +1747,7 @@ systui_shell_install_action() { # <shell> <user> <home>
         zsh)  menu_zsh_install ;;
         fish) menu_fish_install ;;
         nu)   menu_nushell_install ;;
+        niu)  menu_niubash_install "$2" "$3" ;;
         *)    menu_shell_install_any "$b" "$(systui_shell_bin_label "$b")" ;;
     esac
 }
@@ -1141,6 +1778,11 @@ systui_shell_framework_menu() { # <shell> <user> <home>
                   install "Install/reinstall Nushell" \
                   back "Back") || return 0
               case "$c" in plugins) menu_nushell_plugins ;; install) menu_nushell_install ;; esac ;;
+        niu)  c=$(tui_menu "Niu (niubash) frameworks — $u" "Plugin frameworks for niubash:\noh-my-niu is the official bundle from $(niu_bundle_repo)." \
+                  omn "oh-my-niu / oh-my-winuxsh — plugins, themes, prompts, keybindings" \
+                  install "Install/reinstall the niubash shell" \
+                  back "Back") || return 0
+              case "$c" in omn) menu_oh_my_niu "$u" "$h" ;; install) menu_niubash_install "$u" "$h" ;; esac ;;
         *)
             tui_msg "$(systui_shell_label "$id") plugins" \
                 "$(systui_shell_label "$id") has no plugin framework of its own.\n\nUse the integration lines in the plugins menu (Starship, zoxide, fzf and\nfriends all support it) or a custom plugin source." ;;
@@ -1246,7 +1888,7 @@ systui_shell_alias_action() { # <shell> <user> <home>
     [ -f "$af" ] || { : > "$af"; chown "$u" "$af" 2>/dev/null || true; }
     aliases_write_dialects "$af" "$u"
     case "$id" in
-        bash|zsh|posix|ksh) f="$af" ;;
+        bash|zsh|posix|ksh|niu) f="$af" ;;
         fish)   f=$(aliases_dialect_file "$h" fish) ;;
         tcsh)   f=$(aliases_dialect_file "$h" tcsh) ;;
         nu)     f=$(aliases_dialect_file "$h" nu) ;;

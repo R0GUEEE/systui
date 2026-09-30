@@ -6583,6 +6583,7 @@ fish-autopair|Automatic bracket and quote pairing|jorgebucaran/autopair.fish|fis
 fish-done|Desktop notifications for long commands|franciscolourenco/done|fish|fisher install franciscolourenco/done
 fish-puffer|Text-expansion plugin for Fish|nickeb96/puffer-fish|fish|fisher install nickeb96/puffer-fish
 fish-colored-man|Colored man pages for Fish|decors/fish-colored-man|fish|fisher install decors/fish-colored-man
+oh-my-niu|Official niubash plugin framework and bundle (plugins, themes, prompts)|unixwin/oh-my-winuxsh|niu|source ~/.local/share/shell-plugins/oh-my-niu/oh-my-niu.niu
 EOF
 }
 
