@@ -153,14 +153,38 @@ systui_ioskit_have() { # <command>
     command -v "$1" >/dev/null 2>&1
 }
 
+# Resolved once: the machine architecture cannot change while the app runs, and
+# the recommendation line asks for it on every redraw.
+_SYSTUI_IOSKIT_ARCH=''
+
 systui_ioskit_host_arch() {
     local m
+    # Populated by systui_ioskit_cache_warm, which runs before every menu draw.
+    # A value resolved through command substitution could not be cached -- a
+    # command substitution runs in its own process -- so if the global is unset
+    # the probe happens here and simply is not remembered.
+    if [ -n "${_SYSTUI_IOSKIT_ARCH:-}" ]; then
+        printf '%s\n' "$_SYSTUI_IOSKIT_ARCH"
+        return
+    fi
     m=$(uname -m 2>/dev/null || printf 'unknown')
     case "$m" in
-        aarch64|arm64) printf '%s\n' 'aarch64' ;;
-        x86_64|amd64)  printf '%s\n' 'x86_64' ;;
-        *)             printf '%s\n' "$m" ;;
+        aarch64|arm64) m='aarch64' ;;
+        x86_64|amd64)  m='x86_64' ;;
     esac
+    printf '%s\n' "$m"
+}
+
+_systui_ioskit_resolve_arch() {
+    local m
+    [ -n "${_SYSTUI_IOSKIT_ARCH:-}" ] && return 0
+    m=$(uname -m 2>/dev/null || printf 'unknown')
+    case "$m" in
+        aarch64|arm64) m='aarch64' ;;
+        x86_64|amd64)  m='x86_64' ;;
+    esac
+    _SYSTUI_IOSKIT_ARCH="$m"
+    return 0
 }
 
 systui_ioskit_repo_present() {
@@ -172,18 +196,59 @@ systui_ioskit_dirty() { # 1 when the checkout has local changes (best effort)
     local out
     systui_ioskit_repo_present || return 1
     systui_ioskit_have git || return 1
+    if [ -n "${_SYSTUI_IOSKIT_CACHE_READY:-}" ]; then
+        [ "${_SYSTUI_IOSKIT_DIRTY:-0}" = 1 ]
+        return
+    fi
     out=$(git -C "$IOSKIT_SRC_DIR" status --porcelain 2>/dev/null) || return 1
     [ -n "$out" ]
 }
 
 systui_ioskit_version() { # printed short version/commit of the checkout
     local out
+    if [ -n "${_SYSTUI_IOSKIT_CACHE_READY:-}" ]; then
+        printf '%s\n' "${_SYSTUI_IOSKIT_VERSION:-unknown}"
+        return
+    fi
     systui_ioskit_repo_present || { printf '%s\n' 'not checked out'; return; }
     if systui_ioskit_have git; then
         out=$(git -C "$IOSKIT_SRC_DIR" describe --tags --always 2>/dev/null) \
             && [ -n "$out" ] && { printf '%s\n' "$out"; return; }
     fi
     printf '%s\n' 'unknown'
+}
+
+# A menu redraw runs the status probes every keystroke, and each miss here is a
+# `git` process. iSH and other emulated hosts fork slowly, so the answer is
+# cached for the lifetime of the menu session and invalidated by the handful of
+# actions that can actually change it (clone, update, build, import).
+systui_ioskit_cache_invalidate() {
+    unset _SYSTUI_IOSKIT_CACHE_READY _SYSTUI_IOSKIT_DIRTY _SYSTUI_IOSKIT_VERSION \
+        _SYSTUI_IOSKIT_BIN _SYSTUI_IOSKIT_IMAGE_COUNT _SYSTUI_IOSKIT_ARCH
+}
+
+systui_ioskit_cache_warm() {
+    local out d
+    _SYSTUI_IOSKIT_CACHE_READY=1
+    _SYSTUI_IOSKIT_DIRTY=0
+    _SYSTUI_IOSKIT_VERSION='not checked out'
+    _SYSTUI_IOSKIT_BIN=''
+    if systui_ioskit_repo_present; then
+        if systui_ioskit_have git; then
+            out=$(git -C "$IOSKIT_SRC_DIR" describe --tags --always 2>/dev/null) || out=''
+            [ -n "$out" ] && _SYSTUI_IOSKIT_VERSION="$out"
+            out=$(git -C "$IOSKIT_SRC_DIR" status --porcelain 2>/dev/null) || out=''
+            [ -n "$out" ] && _SYSTUI_IOSKIT_DIRTY=1
+        fi
+    fi
+    for d in $(systui_ioskit_build_dirs); do
+        if [ -x "$IOSKIT_SRC_DIR/$d/ish" ]; then
+            _SYSTUI_IOSKIT_BIN="$IOSKIT_SRC_DIR/$d/ish"
+            break
+        fi
+    done
+    _SYSTUI_IOSKIT_IMAGE_COUNT=$(systui_ioskit_count_images_now)
+    _systui_ioskit_resolve_arch
 }
 
 # The build outputs to look for, most-preferred first. Kept in one place so the
@@ -197,6 +262,11 @@ systui_ioskit_build_dirs() {
 
 systui_ioskit_ish_bin() {
     local d
+    if [ -n "${_SYSTUI_IOSKIT_CACHE_READY:-}" ]; then
+        [ -n "${_SYSTUI_IOSKIT_BIN:-}" ] || return 1
+        printf '%s\n' "$_SYSTUI_IOSKIT_BIN"
+        return 0
+    fi
     for d in $(systui_ioskit_build_dirs); do
         if [ -x "$IOSKIT_SRC_DIR/$d/ish" ]; then
             printf '%s\n' "$IOSKIT_SRC_DIR/$d/ish"
@@ -484,7 +554,9 @@ systui_ioskit_source_clone() { # <url> <branch> <dir>
         return 0
     fi
     run_cmd "Check out ios-linuxkit ($url, branch $branch)" \
-        git clone --recurse-submodules --branch "$branch" -- "$url" "$dir"
+        git clone --recurse-submodules --branch "$branch" -- "$url" "$dir" || return 1
+    systui_ioskit_cache_invalidate
+    return 0
 }
 
 systui_ioskit_source_update() { # fast-forward only, keeps local edits
@@ -497,6 +569,7 @@ systui_ioskit_source_update() { # fast-forward only, keeps local edits
     fi
     run_cmd "Update submodules" git -C "$IOSKIT_SRC_DIR" submodule update --init --recursive || return 1
     run_cmd "Fast-forward pull" git -C "$IOSKIT_SRC_DIR" pull --ff-only || return 1
+    systui_ioskit_cache_invalidate
     return 0
 }
 
@@ -651,6 +724,7 @@ systui_ioskit_run_build() { # <make-target>
     run_cmd "Build ios-linuxkit ($target)" \
         make -C "$IOSKIT_SRC_DIR" "$target" CC=clang || return 1
 
+    systui_ioskit_cache_invalidate
     if binary=$(systui_ioskit_ish_bin); then
         tui_msg "Build" "Build finished.\n\nRuntime: $binary"
     else
@@ -677,6 +751,14 @@ systui_ioskit_image_list() {
 }
 
 systui_ioskit_image_count() {
+    if [ -n "${_SYSTUI_IOSKIT_CACHE_READY:-}" ]; then
+        printf '%s\n' "${_SYSTUI_IOSKIT_IMAGE_COUNT:-0}"
+        return
+    fi
+    systui_ioskit_count_images_now
+}
+
+systui_ioskit_count_images_now() {
     local n=0 d
     [ -d "$IOSKIT_IMAGES_DIR" ] || { printf '%s\n' 0; return; }
     for d in "$IOSKIT_IMAGES_DIR"/*; do
@@ -856,30 +938,48 @@ systui_ioskit_show_text() { # <title> <function> [args...]
     rm -f -- "$f"
 }
 
+# Import and export are the two directions of the same operation and shared the
+# same menu shape; grouping them keeps the everyday actions (list, default,
+# remove, verify) above the fold of the dialog's visible list.
 systui_ioskit_images_menu() {
     local c
     while true; do
         tui_capture_menu c tui_menu_no_tags "Guest root filesystems" \
-            "Directory: $IOSKIT_IMAGES_DIR\nImages: $(systui_ioskit_image_count)" \
-            list     "List images" \
-            download "Download and import the pinned Alpine rootfs" \
-            import   "Import a local rootfs tarball" \
-            fetchurl "Import from a URL (with optional SHA-256 check)" \
-            export   "Export an image to a portable tarball" \
-            default  "Set the default image" \
-            remove   "Remove an image" \
-            verify   "Verify an image" \
-            back     "Back" || return $?
+            "Directory: $IOSKIT_IMAGES_DIR\nImages: $(systui_ioskit_image_count)   default: ${IOSKIT_DEFAULT_IMAGE:-none}" \
+            list    "List images" \
+            add     "Add an image — pinned download, local tarball or URL" \
+            export  "Export an image to a portable tarball" \
+            default "Set the default image" \
+            verify  "Verify an image" \
+            remove  "Remove an image" \
+            back    "Back" || return $?
         case "$c" in
-            list)     systui_ioskit_show_text "Guest root filesystems" systui_ioskit_images_text ;;
-            download) systui_ioskit_download_pinned ;;
-            import)   systui_ioskit_import_local ;;
-            fetchurl) systui_ioskit_import_url ;;
-            export)   systui_ioskit_export_image ;;
-            default)  systui_ioskit_set_default_image ;;
-            remove)   systui_ioskit_remove_image ;;
-            verify)   systui_ioskit_verify_image ;;
-            back|'')  return 0 ;;
+            list)    systui_ioskit_show_text "Guest root filesystems" systui_ioskit_images_text ;;
+            add)     systui_ioskit_image_add_menu ;;
+            export)  systui_ioskit_export_image ;;
+            default) systui_ioskit_set_default_image ;;
+            verify)  systui_ioskit_verify_image ;;
+            remove)  systui_ioskit_remove_image ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+systui_ioskit_image_add_menu() {
+    local c pin
+    pin=$(systui_ioskit_rootfs_pin)
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Add an image" \
+            "Pinned Alpine rootfs (from $(systui_ioskit_rootfs_pin_source)):\n${pin%% *}" \
+            pinned "Download and import the pinned Alpine rootfs" \
+            local  "Import a local rootfs tarball" \
+            url    "Import from a URL (with optional SHA-256 check)" \
+            back   "Back" || return $?
+        case "$c" in
+            pinned) systui_ioskit_download_pinned ;;
+            local)  systui_ioskit_import_local ;;
+            url)    systui_ioskit_import_url ;;
+            back|'') return 0 ;;
         esac
     done
 }
@@ -1004,6 +1104,7 @@ systui_ioskit_import_tarball() { # <tarball> <image-name>
     fi
     mkdir -p "$IOSKIT_IMAGES_DIR" 2>/dev/null || true
     run_cmd "Import rootfs into $name" "$fakefsify" "$tarball" "$dest" || return 1
+    systui_ioskit_cache_invalidate
     if systui_ioskit_image_valid "$dest"; then
         if [ -z "$IOSKIT_DEFAULT_IMAGE" ]; then
             systui_ioskit_conf_set IOSKIT_DEFAULT_IMAGE "$name" >/dev/null 2>&1 || true
@@ -1136,6 +1237,7 @@ systui_ioskit_remove_image() {
     fi
     tui_yesno "Remove image" "Delete the image and everything in it?\n\n$IOSKIT_IMAGES_DIR/$name\n\nThis cannot be undone." || return 0
     rm -rf -- "${IOSKIT_IMAGES_DIR:?}/$name"
+    systui_ioskit_cache_invalidate
     if [ "$IOSKIT_DEFAULT_IMAGE" = "$name" ]; then
         systui_ioskit_conf_unset IOSKIT_DEFAULT_IMAGE >/dev/null 2>&1 || true
     fi
@@ -1457,25 +1559,6 @@ systui_ioskit_limits_text() {
     printf '  integration, and physical-device validation.\n'
 }
 
-systui_ioskit_diag_menu() {
-    local c
-    while true; do
-        tui_capture_menu c tui_menu_no_tags "Diagnostics" \
-            "Runtime variables, known limits and a full host report." \
-            vars    "Runtime diagnostics and guest environment variables" \
-            limits  "Known limits (security, facilities, memory, host differences)" \
-            compat  "Runtime compatibility settings (Go, Node, JavaScriptCore)" \
-            report  "Write the full host report" \
-            back    "Back" || return $?
-        case "$c" in
-            vars)   systui_ioskit_show_text "Runtime diagnostics" systui_ioskit_diag_vars_text ;;
-            limits) systui_ioskit_show_text "Known limits" systui_ioskit_limits_text ;;
-            compat) systui_ioskit_show_text "Runtime compatibility" systui_ioskit_compat_text ;;
-            report) systui_ioskit_diagnostics ;;
-            back|'') return 0 ;;
-        esac
-    done
-}
 
 systui_ioskit_compat_text() {
     printf 'Runtime compatibility settings\n'
@@ -1520,19 +1603,36 @@ systui_ioskit_run_menu() {
             shell   "Open a guest shell (/bin/sh)" \
             command "Run one guest command" \
             host    "Run against the host filesystem (-r /)" \
-            debug   "Choose release or debug runtime" \
-            binds   "Bind mounts for this session (ISH_BIND_MOUNTS)" \
-            netlink "Toggle ISH_NETLINK_STUB for this session" \
+            session "Session options — runtime, bind mounts, netlink" \
             engines "Show the exact commands (no execution)" \
             back    "Back" || return $?
         case "$c" in
             shell)   systui_ioskit_run_shell ;;
             command) systui_ioskit_run_command ;;
             host)    systui_ioskit_run_host ;;
-            debug)   systui_ioskit_pick_runtime ;;
+            session) systui_ioskit_session_menu ;;
+            engines) systui_ioskit_show_commands ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+# The two session toggles were peer entries beside "open a shell", which made
+# the run menu read as a settings screen. They only matter when a guest is
+# started, so they live together, one level down.
+systui_ioskit_session_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Session options" \
+            "Runtime: ${IOSKIT_RUNTIME:-release}   Bind mounts: $([ -n "${IOSKIT_BIND_MOUNTS:-}" ] && printf on || printf off)   Netlink: $([ "${IOSKIT_NETLINK:-0}" = 1 ] && printf on || printf off)" \
+            runtime "Runtime build: ${IOSKIT_RUNTIME:-release}" \
+            binds   "Bind mounts (${IOSKIT_BIND_MOUNTS:-none})" \
+            netlink "Netlink stub: $([ "${IOSKIT_NETLINK:-0}" = 1 ] && printf on || printf off)" \
+            back    "Back" || return $?
+        case "$c" in
+            runtime) systui_ioskit_pick_runtime ;;
             binds)   systui_ioskit_session_binds ;;
             netlink) systui_ioskit_toggle_netlink ;;
-            engines) systui_ioskit_show_commands ;;
             back|'') return 0 ;;
         esac
     done
@@ -1994,28 +2094,61 @@ systui_ioskit_app_text() {
     printf 'have been changed and reviewed.\n'
 }
 
+# Version/bundle facts are read from the checkout; the static guide pages live
+# under one entry instead of occupying four slots beside the two things a host
+# can actually run here.
 systui_ioskit_app_menu() {
     local c
     while true; do
-        tui_capture_menu c tui_menu_no_tags "Application bundle and releases" \
-            "Versions, identifiers, the packaging rootfs pin and the Xcode steps." \
+        tui_capture_menu c tui_menu_no_tags "Versions and Apple paths" \
+            "Version: $(systui_ioskit_app_version)   Tags: $(systui_ioskit_tag_count)" \
             versions "Versions and release provenance" \
-            bundle   "Bundle configuration and root filesystem pin" \
-            app      "Build the iOS application (Xcode) — requirements" \
-            pinhelp  "How to change the packaged rootfs pin" \
-            tags     "Show tags and the current checkout" \
+            bundle   "Bundle configuration and the packaging rootfs pin" \
+            guides   "Guides — Xcode build, changing the pin" \
             gadget   "Run the Xcode gadget guard gate" \
             back     "Back" || return $?
         case "$c" in
             versions) systui_ioskit_show_text "Versions" systui_ioskit_version_text ;;
             bundle)   systui_ioskit_show_text "Bundle configuration" systui_ioskit_appcfg_text ;;
-            app)      systui_ioskit_show_text "iOS application" systui_ioskit_app_text ;;
-            pinhelp)  systui_ioskit_pin_help ;;
-            tags)     systui_ioskit_show_text "Tags" systui_ioskit_tags_text ;;
+            guides)   systui_ioskit_app_guides_menu ;;
             gadget)   systui_ioskit_run_single_gate test-xcode-gadget-guard ;;
             back|'')  return 0 ;;
         esac
     done
+}
+
+systui_ioskit_app_guides_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Apple guides" \
+            "Static procedures this host cannot run." \
+            app     "Build the iOS application — requirements and steps" \
+            pinhelp "How to change the packaged rootfs pin" \
+            back    "Back" || return $?
+        case "$c" in
+            app)     systui_ioskit_show_text "iOS application" systui_ioskit_app_text ;;
+            pinhelp) systui_ioskit_pin_help ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+# Cheap probes so the menu header can show a fact instead of a slogan.
+systui_ioskit_app_version() {
+    local v
+    if v=$(systui_ioskit_xcconfig_get MARKETING_VERSION 2>/dev/null); then
+        printf '%s\n' "$v"
+        return 0
+    fi
+    printf 'unknown\n'
+}
+
+systui_ioskit_tag_count() {
+    local n
+    systui_ioskit_repo_present || { printf 'none\n'; return 0; }
+    systui_ioskit_have git || { printf 'unknown\n'; return 0; }
+    n=$(git -C "$IOSKIT_SRC_DIR" tag 2>/dev/null | wc -l)
+    printf '%s\n' "${n// /}"
 }
 
 systui_ioskit_run_single_gate() { # <make-target>
@@ -2095,7 +2228,7 @@ systui_ioskit_aot_menu() {
             "AOT is available on master and disabled by default in every app scheme." \
             about   "Overview, pipeline stages and honest limits" \
             kit     "Run the AOT tool gates (test-aot-generator, test-aot-kit)" \
-            freeze  "Freeze a guest for recording — checklist" \
+            freeze  "Freeze a guest for recording (portable export)" \
             back    "Back" || return $?
         case "$c" in
             about)  systui_ioskit_show_text "Native / AOT" systui_ioskit_aot_text ;;
@@ -2103,10 +2236,19 @@ systui_ioskit_aot_menu() {
                 systui_ioskit_run_single_gate test-aot-generator || continue
                 systui_ioskit_run_single_gate test-aot-kit || continue
                 ;;
-            freeze) systui_ioskit_show_text "Freeze a guest" systui_ioskit_freeze_text ;;
+            freeze) systui_ioskit_freeze_guest ;;
             back|'') return 0 ;;
         esac
     done
+}
+
+# Freezing for a recording is the same operation as the export the guest
+# filesystem menu performs, so the checklist leads into that action instead of
+# describing a procedure the user then has to find again.
+systui_ioskit_freeze_guest() {
+    systui_ioskit_show_text "Freeze a guest" systui_ioskit_freeze_text
+    tui_yesno "Freeze a guest" "Export the selected image now?\n\nThe checklist above is your confirmation; the export asks again before writing." || return 0
+    systui_ioskit_export_image
 }
 
 systui_ioskit_freeze_text() {
@@ -2139,7 +2281,9 @@ systui_ioskit_diagnostics_text() {
     systui_ioskit_status_text
     printf '\nRuntime probe\n'
     printf '  ish binary    : %s\n' "$(systui_ioskit_ish_bin || printf 'absent')"
+    printf '  debug runtime : %s\n' "$(systui_ioskit_debug_bin || printf 'absent')"
     printf '  fakefsify     : %s\n' "$(systui_ioskit_fakefsify_bin || printf 'absent')"
+    printf '  unfakefsify   : %s\n' "$(systui_ioskit_unfakefsify_bin || printf 'absent')"
     printf '  pinned rootfs : %s\n' "$(systui_ioskit_rootfs_pin)"
     printf '  pin source    : %s\n' "$(systui_ioskit_rootfs_pin_source)"
     printf '  settings file : %s (%s)\n' "$(systui_ioskit_conf_file)" \
@@ -2173,13 +2317,11 @@ systui_ioskit_diagnostics_text() {
     printf '  %-22s %s\n' IOSKIT_RUNTIME "${IOSKIT_RUNTIME:-release}"
 }
 
+# The report is a document, not a menu action that then starts running
+# binaries: the old flow offered to execute the runtime right after a page that
+# exists to be read.
 systui_ioskit_diagnostics() {
-    local bin
     systui_ioskit_show_text "iOS LinuxKit diagnostics" systui_ioskit_diagnostics_text
-    if bin=$(systui_ioskit_ish_bin); then
-        tui_yesno "Diagnostics" "Also read the runtime's own help text?\n\n$bin\n\nThis executes the binary with no guest arguments." || return 0
-        run_cmd "Runtime help" "$bin" -h
-    fi
 }
 
 systui_ioskit_about_text() {
@@ -2235,13 +2377,14 @@ systui_ioskit_maintenance_menu() {
         tui_capture_menu c tui_menu_no_tags "Maintenance" \
             "Update the checkout, prune downloads or report diagnostics." \
             update     "Update the source (fast-forward) and rebuild" \
-            diag       "Write a full diagnostics report" \
             prune      "Remove downloaded archives (keeps images)" \
             uninstall  "Remove the images, downloads and source" \
             back       "Back" || return $?
         case "$c" in
-            update)   systui_ioskit_source_update && systui_ioskit_run_build "$(systui_ioskit_build_target_for release)" ;;
-            diag)     systui_ioskit_diagnostics ;;
+            update)
+                systui_ioskit_source_update && systui_ioskit_run_build "$(systui_ioskit_build_target_for release)"
+                systui_ioskit_cache_invalidate
+                ;;
             prune)    systui_ioskit_prune_downloads ;;
             uninstall) systui_ioskit_uninstall ;;
             back|'')  return 0 ;;
@@ -2268,6 +2411,7 @@ systui_ioskit_uninstall() {
     tui_yesno "Remove iOS LinuxKit data" "This deletes:\n\n  $IOSKIT_IMAGES_DIR\n  $IOSKIT_DOWNLOAD_DIR\n  $IOSKIT_SRC_DIR\n\nThe source checkout can be re-cloned at any time; images and local edits cannot be recovered." || return 0
     tui_yesno "Confirm removal" "Really delete those three directories?" || return 0
     rm -rf -- "$IOSKIT_IMAGES_DIR" "$IOSKIT_DOWNLOAD_DIR" "$IOSKIT_SRC_DIR"
+    systui_ioskit_cache_invalidate
     systui_ioskit_conf_unset IOSKIT_DEFAULT_IMAGE >/dev/null 2>&1 || true
     tui_msg "Remove iOS LinuxKit data" "Removed. Settings were kept in\n$(systui_ioskit_conf_file)\n\nso a future install can reuse them."
 }
@@ -2276,56 +2420,99 @@ systui_ioskit_uninstall() {
 # SETTINGS
 ###############################################################################
 
+# Settings is split by what a change affects: where files live, how the guest
+# behaves, and the packaging pin. One twelve-entry list mixed a repository URL
+# with a save-time pin override, and pushed the destructive reset off the list.
 systui_ioskit_settings_menu() {
-    local c v
+    local c
     while true; do
         tui_capture_menu c tui_menu_no_tags "Settings" \
-            "Settings file: $(systui_ioskit_conf_file)" \
+            "File: $(systui_ioskit_conf_file)" \
+            config    "Source and directories — repository, branch, paths" \
+            guest     "Guest and session — dependencies, bind mounts, netlink, runtime" \
+            pin       "Root filesystem pin ($(systui_ioskit_rootfs_pin_source))" \
+            reset     "Reset all settings to defaults" \
+            back      "Back" || return $?
+        case "$c" in
+            config)  systui_ioskit_settings_config_menu ;;
+            guest)   systui_ioskit_settings_guest_menu ;;
+            pin)     systui_ioskit_settings_pin_menu ;;
+            reset)   systui_ioskit_settings_reset ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+systui_ioskit_settings_config_menu() {
+    local c v
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Source and directories" \
+            "Where the checkout, images and downloads live." \
             url       "Repository URL ($IOSKIT_REPO_URL)" \
             branch    "Branch ($IOSKIT_BRANCH)" \
             srcdir    "Source directory ($IOSKIT_SRC_DIR)" \
             imagesdir "Images directory ($IOSKIT_IMAGES_DIR)" \
-            autodeps  "Automatic dependency install: $([ "$IOSKIT_AUTO_DEPS" = 1 ] && printf on || printf off)" \
-            binds     "Bind mounts (${IOSKIT_BIND_MOUNTS:-none})" \
-            netlink   "Route netlink stub: $([ "${IOSKIT_NETLINK:-0}" = 1 ] && printf on || printf off)" \
-            runtime   "Preferred runtime: ${IOSKIT_RUNTIME:-release}" \
-            pin       "Root filesystem pin ($(systui_ioskit_rootfs_pin_source))" \
-            clearpin  "Clear the pin override (use the checkout's own pin)" \
-            reset     "Reset all settings to defaults" \
             back      "Back" || return $?
         case "$c" in
             url)
                 v=$(tui_input "Repository URL" "Git URL for the ios-linuxkit checkout:" "$IOSKIT_REPO_URL") || continue
                 [ -n "$v" ] || continue
-                systui_ioskit_conf_set IOSKIT_REPO_URL "$v" || tui_msg "Settings" "Could not write the settings file."
-                ;;
+                systui_ioskit_conf_set IOSKIT_REPO_URL "$v" || tui_msg "Settings" "Could not write the settings file."                ;;
             branch)
                 v=$(tui_input "Branch" "Branch, tag or commit to check out:" "$IOSKIT_BRANCH") || continue
                 [ -n "$v" ] || continue
-                systui_ioskit_conf_set IOSKIT_BRANCH "$v" || tui_msg "Settings" "Could not write the settings file."
-                ;;
+                systui_ioskit_conf_set IOSKIT_BRANCH "$v" || tui_msg "Settings" "Could not write the settings file."                ;;
             srcdir)
                 v=$(tui_input "Source directory" "Where the checkout lives:" "$IOSKIT_SRC_DIR") || continue
                 [ -n "$v" ] || continue
                 systui_ioskit_conf_set IOSKIT_SRC_DIR "$v" || tui_msg "Settings" "Could not write the settings file."
-                ;;
+                systui_ioskit_cache_invalidate                ;;
             imagesdir)
                 v=$(tui_input "Images directory" "Where guest root filesystems live:" "$IOSKIT_IMAGES_DIR") || continue
                 [ -n "$v" ] || continue
                 systui_ioskit_conf_set IOSKIT_IMAGES_DIR "$v" || tui_msg "Settings" "Could not write the settings file."
-                ;;
+                systui_ioskit_cache_invalidate                ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+systui_ioskit_settings_guest_menu() {
+    local c v
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Guest and session" \
+            "Defaults applied to every guest this manager starts." \
+            autodeps  "Automatic dependency install: $([ "$IOSKIT_AUTO_DEPS" = 1 ] && printf on || printf off)" \
+            binds     "Bind mounts (${IOSKIT_BIND_MOUNTS:-none})" \
+            netlink   "Route netlink stub: $([ "${IOSKIT_NETLINK:-0}" = 1 ] && printf on || printf off)" \
+            runtime   "Preferred runtime: ${IOSKIT_RUNTIME:-release}" \
+            back      "Back" || return $?
+        case "$c" in
             autodeps)
                 if [ "$IOSKIT_AUTO_DEPS" = 1 ]; then v=0; else v=1; fi
-                systui_ioskit_conf_set IOSKIT_AUTO_DEPS "$v" || tui_msg "Settings" "Could not write the settings file."
-                ;;
+                systui_ioskit_conf_set IOSKIT_AUTO_DEPS "$v" || tui_msg "Settings" "Could not write the settings file."                ;;
             binds)   systui_ioskit_bind_mount_prompt ;;
             netlink)
                 if [ "${IOSKIT_NETLINK:-0}" = 1 ]; then v=0; else v=1; fi
                 IOSKIT_NETLINK="$v"
-                systui_ioskit_conf_set IOSKIT_NETLINK "$v" || tui_msg "Settings" "Could not write the settings file."
-                ;;
+                systui_ioskit_conf_set IOSKIT_NETLINK "$v" || tui_msg "Settings" "Could not write the settings file."                ;;
             runtime) systui_ioskit_pick_runtime ;;
-            pin)
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+systui_ioskit_settings_pin_menu() {
+    local c v
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Root filesystem pin" \
+            "Source: $(systui_ioskit_rootfs_pin_source)\n$(systui_ioskit_rootfs_pin)" \
+            set   "Set a pin override (URL and SHA-256)" \
+            clear "Clear the override (use the checkout's own pin)" \
+            show  "Show the effective pin and where it comes from" \
+            back  "Back" || return $?
+        case "$c" in
+            set)
                 v=$(tui_input "Root filesystem pin" "URL of the root filesystem tarball (empty restores the checkout/built-in pin):" "$IOSKIT_ROOTFS_URL") || continue
                 if [ -z "$v" ]; then
                     systui_ioskit_conf_unset IOSKIT_ROOTFS_URL; systui_ioskit_conf_unset IOSKIT_ROOTFS_SHA256
@@ -2335,66 +2522,186 @@ systui_ioskit_settings_menu() {
                 sha=$(tui_input "Root filesystem pin" "Expected SHA-256 (empty = no verification):" "$IOSKIT_ROOTFS_SHA256") || continue
                 sha=${sha%% *}
                 systui_ioskit_conf_set IOSKIT_ROOTFS_URL "$v"
-                systui_ioskit_conf_set IOSKIT_ROOTFS_SHA256 "$sha"
-                ;;
-            clearpin)
+                systui_ioskit_conf_set IOSKIT_ROOTFS_SHA256 "$sha"                ;;
+            clear)
                 systui_ioskit_conf_unset IOSKIT_ROOTFS_URL
                 systui_ioskit_conf_unset IOSKIT_ROOTFS_SHA256
-                tui_msg "Settings" "Pin override cleared; the checkout's own pin is used."
-                ;;
-            reset)
-                tui_yesno "Settings" "Delete $(systui_ioskit_conf_file) and return every setting to its default?" || continue
-                rm -f -- "$(systui_ioskit_conf_file)"
-                unset IOSKIT_REPO_URL IOSKIT_BRANCH IOSKIT_SRC_DIR IOSKIT_IMAGES_DIR \
-                    IOSKIT_DOWNLOAD_DIR IOSKIT_DEFAULT_IMAGE IOSKIT_AUTO_DEPS \
-                    IOSKIT_ROOTFS_URL IOSKIT_ROOTFS_SHA256 IOSKIT_BIND_MOUNTS \
-                    IOSKIT_NETLINK IOSKIT_RUNTIME
-                systui_ioskit_load
-                ;;
+                tui_msg "Settings" "Pin override cleared; the checkout's own pin is used."                ;;
+            show) systui_ioskit_show_text "Root filesystem pin" systui_ioskit_pin_text ;;
             back|'') return 0 ;;
         esac
     done
+}
+
+systui_ioskit_settings_reset() {
+    tui_yesno "Settings" "Delete $(systui_ioskit_conf_file) and return every setting to its default?" || return 0
+    rm -f -- "$(systui_ioskit_conf_file)"
+    unset IOSKIT_REPO_URL IOSKIT_BRANCH IOSKIT_SRC_DIR IOSKIT_IMAGES_DIR \
+        IOSKIT_DOWNLOAD_DIR IOSKIT_DEFAULT_IMAGE IOSKIT_AUTO_DEPS \
+        IOSKIT_ROOTFS_URL IOSKIT_ROOTFS_SHA256 IOSKIT_BIND_MOUNTS \
+        IOSKIT_NETLINK IOSKIT_RUNTIME
+    systui_ioskit_load
+    systui_ioskit_cache_invalidate
+    tui_msg "Settings" "All settings are back at their defaults."
+}
+
+systui_ioskit_pin_text() {
+    printf 'Effective root filesystem pin\n'
+    printf '==============================\n\n'
+    printf '  source : %s\n' "$(systui_ioskit_rootfs_pin_source)"
+    printf '  pin    : %s\n\n' "$(systui_ioskit_rootfs_pin)"
+    printf 'Precedence\n'
+    printf '  1. a settings override in %s\n' "$(systui_ioskit_conf_file)"
+    printf '  2. the checkout'"'"'s own app/GuestARM64.xcconfig\n'
+    printf '  3. the built-in release pin shipped with systui\n\n'
+    printf 'The app downloader validates whatever this pin names: a temporary file,\n'
+    printf 'a SHA-256 check, a bin/busybox extraction and an AArch64 file(1) check\n'
+    printf 'before it atomically installs root.tar.gz. A failed check leaves the\n'
+    printf 'previous bundle archive untouched.\n'
 }
 
 ###############################################################################
 # FRONT DOOR
 ###############################################################################
 
+# The front door is deliberately task-shaped: what a host can do to a guest
+# root filesystem, to a host build, and on Apple hardware. The previous flat
+# list had fourteen peer entries, which mixed a critical warning (an AArch64
+# host) in with a static guide page and pushed real actions past the dialog's
+# visible list height. Everything that was reachable is still reachable, one
+# group deep, and nothing was dropped.
 menu_ios_linuxkit() {
     local c
     systui_ioskit_load
+    systui_ioskit_cache_warm
     while true; do
         tui_capture_menu c tui_menu_no_tags "iOS LinuxKit" \
-            "$(systui_ioskit_state_summary)\n\nBuild, root filesystems, validation and guest shells for rcarmo/ios-linuxkit:" \
-            status    "Status \u2014 host, source, tools, build outputs, images" \
-            source    "Source \u2014 check out or update the repository" \
-            build     "Build \u2014 dependencies and make targets" \
-            images    "Guest root filesystems \u2014 download, import, export, verify" \
-            run       "Run \u2014 guest shell, command or host filesystem" \
-            host      "Host integration \u2014 bind mounts, offload, netlink" \
-            validate  "Validation \u2014 focused gates and runtime coverage" \
-            diag      "Diagnostics \u2014 variables, limits, compatibility" \
-            appbundle "Application bundle and releases" \
-            aot       "Native / AOT pipeline" \
-            maintain  "Maintenance \u2014 update, prune, diagnostics" \
-            settings  "Settings \u2014 paths, branch, root filesystem pin" \
-            about     "About iOS LinuxKit" \
-            back      "Back" || return $?
+            "$(systui_ioskit_state_summary)\n\n$(systui_ioskit_recommendation)" \
+            status   "Status and diagnostics — host, source, tools, limits" \
+            setup    "Set up and build — source, dependencies, make targets" \
+            guestfs  "Guest root filesystems — import, export, run, host access" \
+            verify   "Validate and release — gates, versions, AOT" \
+            settings "Settings — paths, branch, pin, session switches" \
+            about    "About iOS LinuxKit" \
+            back     "Back" || return $?
         case "$c" in
-            status)    systui_ioskit_status_screen ;;
-            source)    systui_ioskit_source_menu ;;
-            build)     systui_ioskit_build_menu ;;
-            images)    systui_ioskit_images_menu ;;
-            run)       systui_ioskit_run_menu ;;
-            host)      systui_ioskit_host_menu ;;
-            validate)  systui_ioskit_validation_menu ;;
-            diag)      systui_ioskit_diag_menu ;;
-            appbundle) systui_ioskit_app_menu ;;
-            aot)       systui_ioskit_aot_menu ;;
-            maintain)  systui_ioskit_maintenance_menu ;;
-            settings)  systui_ioskit_settings_menu ;;
-            about)     systui_ioskit_about ;;
-            back|'')   return 0 ;;
+            status)   systui_ioskit_status_menu ;;
+            setup)    systui_ioskit_setup_menu; systui_ioskit_cache_warm ;;
+            guestfs)  systui_ioskit_guestfs_menu; systui_ioskit_cache_warm ;;
+            verify)   systui_ioskit_verify_menu ;;
+            settings) systui_ioskit_settings_menu ;;
+            about)    systui_ioskit_about ;;
+            back|'')  return 0 ;;
+        esac
+    done
+}
+
+# One short line that says what to do next, or what is already ready. It is
+# computed from real probes, so it cannot claim a state the host is not in.
+systui_ioskit_recommendation() {
+    # The architecture comes from the cache that systui_ioskit_cache_warm
+    # populated; no fork happens here on a redraw.
+    local arch="${_SYSTUI_IOSKIT_ARCH:-}"
+    if [ -z "$arch" ]; then
+        arch=$(systui_ioskit_host_arch)
+    fi
+    if [ "$arch" != aarch64 ]; then
+        printf 'Host is %s: the Linux-host build needs AArch64. Apple path: Validate and release.\n' "$arch"
+        return 0
+    fi
+    if ! systui_ioskit_repo_present; then
+        printf 'Next: Set up and build — check out the source.\n'
+        return 0
+    fi
+    if ! systui_ioskit_ish_bin >/dev/null 2>&1; then
+        printf 'Next: Set up and build — install dependencies, then build.\n'
+        return 0
+    fi
+    if [ "$(systui_ioskit_image_count)" = 0 ]; then
+        printf 'Next: Guest root filesystems — download the pinned Alpine rootfs.\n'
+        return 0
+    fi
+    printf 'Ready: %s image(s), %s runtime.\n' \
+        "$(systui_ioskit_image_count)" "${IOSKIT_RUNTIME:-release}"
+}
+
+# "Status and diagnostics" merges two former front-door entries that both ended
+# in a report about this host.
+systui_ioskit_status_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Status and diagnostics" \
+            "What this host has, what it can do, and what it cannot." \
+            status  "Full status report (host, source, tools, outputs, images)" \
+            vars    "Runtime variables (ISH_* traces) and guest environment" \
+            compat  "Runtime compatibility settings (Go, Node, JavaScriptCore)" \
+            limits  "Known limits (security, facilities, memory, host)" \
+            back    "Back" || return $?
+        case "$c" in
+            status) systui_ioskit_status_screen ;;
+            vars)   systui_ioskit_show_text "Runtime diagnostics" systui_ioskit_diag_vars_text ;;
+            compat) systui_ioskit_show_text "Runtime compatibility" systui_ioskit_compat_text ;;
+            limits) systui_ioskit_show_text "Known limits" systui_ioskit_limits_text ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+systui_ioskit_setup_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Set up and build" \
+            "Checkout: $(systui_ioskit_version)   Runtime: $(systui_ioskit_ish_bin || printf 'not built')" \
+            source  "Source — check out, update, submodules" \
+            build   "Build — dependencies and make targets" \
+            maint   "Maintenance — update and rebuild, prune, remove" \
+            back    "Back" || return $?
+        case "$c" in
+            source) systui_ioskit_source_menu ;;
+            build)  systui_ioskit_build_menu ;;
+            maint)  systui_ioskit_maintenance_menu ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+# Guest images, running a guest and host integration belong together: all three
+# are about the guest's view of its filesystem and the host.
+systui_ioskit_guestfs_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Guest root filesystems" \
+            "Images: $(systui_ioskit_image_count)   default: ${IOSKIT_DEFAULT_IMAGE:-none}" \
+            manage "Manage images — download, import, export, verify, remove" \
+            run    "Run — guest shell, command or host filesystem" \
+            host   "Host integration — bind mounts, offload, netlink" \
+            back   "Back" || return $?
+        case "$c" in
+            manage) systui_ioskit_images_menu ;;
+            run)    systui_ioskit_run_menu ;;
+            host)   systui_ioskit_host_menu ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+# Everything that produces evidence or ships a version.
+systui_ioskit_verify_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Validate and release" \
+            "Gates, versions and the Apple and AOT paths." \
+            gates    "Validation gates — list, run, failure rules" \
+            versions "Versions, bundle and release provenance" \
+            app      "Build the iOS application — requirements and steps" \
+            aot      "Native / AOT pipeline" \
+            back     "Back" || return $?
+        case "$c" in
+            gates)    systui_ioskit_validation_menu ;;
+            versions) systui_ioskit_app_menu ;;
+            app)      systui_ioskit_show_text "iOS application" systui_ioskit_app_text ;;
+            aot)      systui_ioskit_aot_menu ;;
+            back|'')  return 0 ;;
         esac
     done
 }
@@ -2468,6 +2775,7 @@ systui_ioskit_source_menu() {
             submods)
                 systui_ioskit_repo_present || { tui_msg "Source" "No checkout yet."; continue; }
                 run_cmd "Refresh submodules" git -C "$IOSKIT_SRC_DIR" submodule update --init --recursive
+                systui_ioskit_cache_invalidate
                 ;;
             reveal)
                 tui_msg "Clone command" "git clone --recurse-submodules --branch $IOSKIT_BRANCH \\\\\n  $IOSKIT_REPO_URL \\\\\n  $IOSKIT_SRC_DIR"

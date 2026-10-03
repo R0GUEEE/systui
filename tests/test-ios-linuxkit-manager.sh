@@ -258,13 +258,40 @@ pass 'dev library state distinguishes missing from unknown'
         printf '%s\n' "${1:-}"
     }
 
-    for fn in menu_ios_linuxkit systui_ioskit_source_menu systui_ioskit_build_menu \
-              systui_ioskit_images_menu systui_ioskit_run_menu \
-              systui_ioskit_maintenance_menu systui_ioskit_settings_menu \
-              systui_ioskit_host_menu systui_ioskit_validation_menu \
-              systui_ioskit_diag_menu systui_ioskit_app_menu systui_ioskit_aot_menu \
+    # Every menu, so a re-nesting cannot leave a page unreachable.
+    for fn in menu_ios_linuxkit systui_ioskit_status_menu systui_ioskit_setup_menu \
+              systui_ioskit_guestfs_menu systui_ioskit_verify_menu systui_ioskit_settings_menu \
+              systui_ioskit_source_menu systui_ioskit_build_menu systui_ioskit_maintenance_menu \
+              systui_ioskit_settings_config_menu systui_ioskit_settings_guest_menu \
+              systui_ioskit_settings_pin_menu systui_ioskit_images_menu systui_ioskit_image_add_menu \
+              systui_ioskit_run_menu systui_ioskit_session_menu systui_ioskit_host_menu \
+              systui_ioskit_validation_menu systui_ioskit_app_menu systui_ioskit_app_guides_menu \
+              systui_ioskit_aot_menu systui_ioskit_about systui_ioskit_pin_text \
               menu_sysconfig; do
-        "$fn" || { echo "$fn failed under the stubbed widgets" >&2; exit 1; }
+        "$fn" >/dev/null 2>&1 || { echo "$fn failed under the stubbed widgets" >&2; exit 1; }
+    done
+
+    # No menu may grow past what the dialog shows at once: tui_geometry caps the
+    # visible list at 14 entries, and a long list hides the entries at the
+    # bottom (which is where the destructive ones live).
+    #
+    # The count comes from the tui_capture_menu call itself, not from the
+    # reformatted output of `declare -f`, which re-wraps the arguments.
+    for fn in menu_ios_linuxkit systui_ioskit_status_menu systui_ioskit_setup_menu \
+              systui_ioskit_guestfs_menu systui_ioskit_verify_menu systui_ioskit_settings_menu \
+              systui_ioskit_source_menu systui_ioskit_build_menu systui_ioskit_maintenance_menu \
+              systui_ioskit_settings_config_menu systui_ioskit_settings_guest_menu \
+              systui_ioskit_settings_pin_menu systui_ioskit_images_menu systui_ioskit_image_add_menu \
+              systui_ioskit_run_menu systui_ioskit_session_menu systui_ioskit_host_menu \
+              systui_ioskit_validation_menu systui_ioskit_app_menu systui_ioskit_app_guides_menu \
+              systui_ioskit_aot_menu; do
+        n=$(declare -f "$fn" | tr -d '\n' | sed 's/tui_capture_menu/\n&/' | tail -n1 \
+            | sed 's/|| return.*//' | grep -o ' [a-z_][a-z0-9_]* "' | wc -l | tr -d ' ')
+        [ -n "$n" ] || n=0
+        if [ "$n" -gt 9 ]; then
+            echo "$fn has $n entries; the dialog shows 14 and the rest are hidden" >&2
+            exit 1
+        fi
     done
 
     # tui_check takes tag/description triplets, never pairs.
@@ -438,6 +465,47 @@ pass 'session settings round trip'
     esac
 )
 pass 'export reports a missing tool instead of failing silently'
+
+###############################################################################
+# The redraw cache must speed up menus without going stale
+###############################################################################
+(
+    # shellcheck disable=SC1090
+    . "$module"
+    IOSKIT_IMAGES_DIR="$tmp/cache-images"
+    rm -rf "$IOSKIT_IMAGES_DIR"
+    mkdir -p "$IOSKIT_IMAGES_DIR/one"
+    systui_ioskit_cache_warm
+    [ "$(systui_ioskit_image_count)" = 1 ] || { echo 'cache missed the first count' >&2; exit 1; }
+    # A cached read is intentional: the menu redraw cost is the reason it exists.
+    mkdir -p "$IOSKIT_IMAGES_DIR/two"
+    [ "$(systui_ioskit_image_count)" = 1 ] || { echo 'cached count changed without invalidation' >&2; exit 1; }
+    # ... and every mutation path must clear it, which is what the actions do.
+    systui_ioskit_cache_invalidate
+    systui_ioskit_cache_warm
+    [ "$(systui_ioskit_image_count)" = 2 ] || { echo 'invalidation did not refresh the count' >&2; exit 1; }
+
+    # The architecture is resolved by the warm pass, because a command
+    # substitution runs in its own process and could never cache it.
+    _SYSTUI_IOSKIT_ARCH=''
+    systui_ioskit_cache_warm
+    [ -n "$_SYSTUI_IOSKIT_ARCH" ] || { echo 'the warm pass did not resolve the architecture' >&2; exit 1; }
+    first="$_SYSTUI_IOSKIT_ARCH"
+    [ "$(systui_ioskit_host_arch)" = "$first" ] || { echo 'cached architecture changed' >&2; exit 1; }
+    # And it must still answer when the cache is cold.
+    _SYSTUI_IOSKIT_ARCH=''
+    [ "$(systui_ioskit_host_arch)" = "$first" ] || { echo 'cold architecture probe was wrong' >&2; exit 1; }
+
+    # Every action that can change what the probes report must invalidate.
+    for fn in systui_ioskit_import_tarball systui_ioskit_remove_image \
+              systui_ioskit_settings_reset systui_ioskit_uninstall \
+              systui_ioskit_source_update systui_ioskit_source_clone; do
+        declare -f "$fn" | grep -q 'cache_invalidate' \
+            || { echo "$fn does not invalidate the redraw cache" >&2; exit 1; }
+    done
+    :
+)
+pass 'redraw cache refreshes on mutation'
 
 ###############################################################################
 # The shipped System Configuration menu is preserved under an alias
