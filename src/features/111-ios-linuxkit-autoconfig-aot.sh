@@ -242,10 +242,32 @@ systui_ioskit_aot_menu() {
 systui_ioskit_setup_menu() {
     local c
     while true; do
-        tui_capture_menu c tui_menu_no_tags "Set up and build"             "Checkout: $(systui_ioskit_version)   Runtime: $(systui_ioskit_ish_bin || printf 'not built')"             auto    "Automatic setup — discover paths, dependencies, source and build"             detect  "Discover configuration — preview detected paths and tools"             source  "Source — check out, update, submodules"             build   "Build — dependencies and make targets"             aot     "AOT setup — workspace, recorder and validation"             maint   "Maintenance — update and rebuild, prune, remove"             back    "Back" || return $?
+        tui_capture_menu c tui_menu_no_tags "iOS-linuxkit setup" \
+            "Configure and install iOS-linuxkit for iSH-AOK.  Checkout: $(systui_ioskit_version)" \
+            auto     "Quick setup (recommended) — detect paths, install dependencies, clone/update and build" \
+            detect   "Auto-detect configuration — populate paths and tools only" \
+            advanced "Advanced setup — source, build, AOT and maintenance" \
+            back     "Back" || return $?
         case "$c" in
-            auto)   systui_ioskit_complete_setup ;;
-            detect) systui_ioskit_autoconfigure ;;
+            auto)     systui_ioskit_complete_setup ;;
+            detect)   systui_ioskit_autoconfigure ;;
+            advanced) systui_ioskit_advanced_setup_menu ;;
+            back|'')  return 0 ;;
+        esac
+    done
+}
+
+systui_ioskit_advanced_setup_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Advanced iOS-linuxkit setup" \
+            "Manual iOS-linuxkit controls. Quick setup is recommended for normal iSH-AOK installs." \
+            source "Source checkout, update and submodules" \
+            build  "Dependencies and build targets" \
+            aot    "Native / AOT workspace and validation" \
+            maint  "Update, rebuild, prune or remove" \
+            back   "Back" || return $?
+        case "$c" in
             source) systui_ioskit_source_menu ;;
             build)  systui_ioskit_build_menu ;;
             aot)    systui_ioskit_aot_menu ;;
