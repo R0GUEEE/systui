@@ -499,6 +499,21 @@ The package catalogue now includes:
   ecosystem actually ships — skins from upstream and community repositories —
   and links cloned `.ini` files into `~/.local/share/mc/skins` where mc looks
   for them.
+- **System Configuration → iOS LinuxKit** manages
+  [rcarmo/ios-linuxkit](https://github.com/rcarmo/ios-linuxkit) — the iSH fork
+  that runs an AArch64 Linux userland as a command-line process on an AArch64
+  Linux host and inside the iOS app. One screen covers the whole toolchain:
+  check out the source with submodules, check and install the build
+  dependencies against the detected package manager, build the release or debug
+  runtime, download and verify the pinned Alpine root filesystem (SHA-256 plus a
+  `bin/busybox` architecture check, mirroring the app's own downloader), import
+  it with `fakefsify`, list/verify/remove images, and run guest shells or
+  commands. Settings — repository, branch, directories, default image and the
+  root filesystem pin — live in `/etc/systui/ios-linuxkit.conf`, and the
+  checkout's own `app/GuestARM64.xcconfig` is used as the pin when present. The
+  manager states its limits instead of offering dead actions: the Linux-host
+  build targets AArch64, and the runtime cannot be executed from the iOS sandbox
+  because a sideloaded app cannot spawn processes.
 - **Rootfs → Chroot workbench** works on *any* rootfs directory, not just builds
   under `$ROOTFS_BASE`, including trees unpacked from a third-party tarball:
   - Selectable execution engine — `chroot`, `proot` (no root required),
