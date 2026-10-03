@@ -2785,45 +2785,8 @@ systui_ioskit_source_menu() {
     done
 }
 
-# Add the iOS LinuxKit front door to System Configuration. The shipped menu is
-# preserved under its own name so nothing else in this file depends on the
-# redefinition, and the drift test in tests/test-ios-linuxkit-manager.sh fails
-# if the base menu gains an entry this dispatcher does not carry.
-if declare -F menu_sysconfig >/dev/null 2>&1 \
-    && ! declare -F _systui_menu_sysconfig_before_ioskit >/dev/null 2>&1; then
-    systui_alias_function menu_sysconfig _systui_menu_sysconfig_before_ioskit
-fi
-
-menu_sysconfig() {
-    local c
-    while true; do
-        tui_capture_menu c tui_menu_no_tags "System Configuration" \
-            "Detected: package manager = ${PM:-unknown}, init = ${INIT:-unknown}" \
-            ioskit       "iOS-linuxkit configuration for iSH-AOK — install, setup and guest runtime" \
-            system       "System basics — hostname, timezone, system scan" \
-            packages     "Packages, catalogue, repositories and managers" \
-            shells       "Shells, prompts and plugins" \
-            editors      "Editors" \
-            filemanagers "File managers" \
-            network      "Network, SSH, DNS, proxy and time" \
-            services     "Services and init systems" \
-            users        "Users, sudo, passwords and SSH keys" \
-            storage      "Storage, mounts, filesystems and SMART" \
-            back         "Back to main menu" || return $?
-        case "$c" in
-            ioskit)       tui_call_menu menu_ios_linuxkit "iOS-linuxkit configuration" ;;
-            system)       tui_call_menu menu_sysconfig_basics "System basics" ;;
-            packages)     tui_call_menu menu_packages "Packages" ;;
-            shells)       tui_call_menu menu_shells "Shells" ;;
-            editors)      tui_call_menu menu_editors "Editors" ;;
-            filemanagers) tui_call_menu menu_file_managers "File managers" ;;
-            network)      tui_call_menu menu_network "Network" ;;
-            services)     tui_call_menu menu_services "Services" ;;
-            users)        tui_call_menu menu_users "Users" ;;
-            storage)      tui_call_menu menu_storage "Storage" ;;
-            back|'') return 0 ;;
-        esac
-    done
-}
+# iOS-linuxkit is integrated under Rootfs by the late iSH-AOK integration layer.
+# Keep this module focused on the iOS-linuxkit feature itself; it must not
+# override System Configuration or any other top-level menu.
 
 return 0 2>/dev/null || true
