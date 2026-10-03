@@ -129,3 +129,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-shellconfig-all-shells.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ios-linuxkit-manager.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
 111-ios-linuxkit-autoconfig-aot.sh
+112-ish-aok-optimization.sh
