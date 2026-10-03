@@ -127,6 +127,10 @@ systui_ioskit_complete_setup() {
     arch=$(systui_ioskit_host_arch)
     if [ ! -d "$IOSKIT_SRC_DIR/.git" ]; then
         systui_ioskit_source_clone "$IOSKIT_REPO_URL" "$IOSKIT_BRANCH" "$IOSKIT_SRC_DIR" || return 1
+    else
+        # Quick setup is idempotent: an existing checkout is refreshed before
+        # rebuilding instead of silently compiling stale source.
+        systui_ioskit_source_update || return 1
     fi
     run_cmd "Initialise ios-linuxkit submodules" git -C "$IOSKIT_SRC_DIR" submodule update --init --recursive || return 1
     if [ "${IOSKIT_AUTO_DEPS:-1}" = 1 ]; then
