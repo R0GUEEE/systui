@@ -1,6 +1,7 @@
 # shellcheck shell=bash
-# Central System Configuration integration for iSH-AOK / iOS LinuxKit.
-# Loaded after 112-ish-aok-optimization.sh so it can extend the final menu graph.
+# Rootfs integration for iSH-AOK / iOS LinuxKit.
+# Loaded after 112-ish-aok-optimization.sh so iOS-linuxkit has one authoritative
+# home under Rootfs and does not compete with System Configuration.
 
 systui_aok_environment_text() {
     printf 'iSH-AOK / iOS LinuxKit environment\n=================================\n\n'
@@ -87,63 +88,84 @@ systui_aok_diagnostics_menu() {
     done
 }
 
-systui_aok_sysconfig_menu() {
+systui_aok_ioskit_menu() {
     local c
     while true; do
-        tui_capture_menu c tui_menu_no_tags "iSH-AOK / iOS LinuxKit Configuration" \
-            "Configure guest images, iSH-AOK performance features, runtime integration and AOT:" \
+        tui_capture_menu c tui_menu_no_tags "iSH-AOK image tuning" \
+            "Tune iOS-linuxkit guest images specifically for the iSH-AOK runtime:" \
             optimize "Image optimizer — presets, accelerators, JIT, memory and advanced features" \
             profiles "Profile management — edit, import, export and reset" \
-            images   "Guest images — download, import, export, verify and defaults" \
-            runtime  "Guest runtime — shell, commands and host filesystem" \
-            host     "Host integration — bind mounts, offload and netlink" \
-            aot      "Native/AOT — recorder, validation and workspace" \
-            paths    "iOS LinuxKit paths and automatic discovery" \
-            diag     "Diagnostics and capability detection" \
-            back     "Back to System Configuration" || return $?
+            diag     "iSH-AOK diagnostics and capability detection" \
+            back     "Back to iOS-linuxkit" || return $?
         case "$c" in
             optimize) systui_aok_menu ;;
             profiles) systui_aok_profiles_menu ;;
-            images) systui_ioskit_images_menu ;;
-            runtime) systui_ioskit_run_menu ;;
-            host) systui_ioskit_host_menu ;;
-            aot) systui_ioskit_aot_menu ;;
-            paths) systui_ioskit_settings_config_menu ;;
             diag) systui_aok_diagnostics_menu ;;
             back|'') return 0 ;;
         esac
     done
 }
 
-# Final central Config menu. This intentionally loads after phase 96.
-menu_sysconfig() {
+# Rootfs is the single authoritative location for iOS-linuxkit.  This late
+# definition intentionally follows the rootfs download/workbench integrations
+# so it extends the final Rootfs menu instead of creating another competing
+# System Configuration override.
+menu_rootfs() {
     local c
     while true; do
-        tui_capture_menu c tui_menu_no_tags "System Configuration" \
-            "Detected: package manager = ${PM:-unknown}, init = ${INIT:-unknown}" \
-            system       "System basics — hostname, timezone and system scan" \
-            aok          "iSH-AOK / iOS LinuxKit — image optimization, advanced features and AOT" \
-            packages     "Packages, catalogue, repositories and managers" \
-            shells       "Shells, prompts and plugins" \
-            editors      "Editors" \
-            filemanagers "File managers" \
-            network      "Network, SSH, DNS, proxy and time" \
-            services     "Services and init systems" \
-            users        "Users, sudo, passwords and SSH keys" \
-            storage      "Storage, mounts, filesystems and SMART" \
-            back         "Back to main menu" || return $?
+        tui_capture_menu c tui_menu_no_tags "Rootfs" \
+            "Build, download, repair and run Linux root filesystems:" \
+            ioskit    "iOS-linuxkit for iSH-AOK — install, images, runtime, AOT and tuning" \
+            build     "Build a new rootfs (guided)" \
+            download  "Download a prebuilt rootfs (always tar.gz)" \
+            workbench "Chroot workbench (manage rootfs)" \
+            bootstrap "Bootstrap tools" \
+            distros   "Distro managers" \
+            back      "Back" || return $?
         case "$c" in
-            system)       tui_call_menu menu_sysconfig_basics "System basics" ;;
-            aok)          tui_call_menu systui_aok_sysconfig_menu "iSH-AOK / iOS LinuxKit" ;;
-            packages)     tui_call_menu menu_packages "Packages" ;;
-            shells)       tui_call_menu menu_shells "Shells" ;;
-            editors)      tui_call_menu menu_editors "Editors" ;;
-            filemanagers) tui_call_menu menu_file_managers "File managers" ;;
-            network)      tui_call_menu menu_network "Network" ;;
-            services)     tui_call_menu menu_services "Services" ;;
-            users)        tui_call_menu menu_users "Users" ;;
-            storage)      tui_call_menu menu_storage "Storage" ;;
+            ioskit)    tui_call_menu menu_ios_linuxkit "iOS-linuxkit for iSH-AOK" ;;
+            build)     rootfs_builder || true ;;
+            download)  rootfs_download || true ;;
+            workbench) menu_rootfs_workbench || true ;;
+            bootstrap) menu_rootfs_bootstrap_tools || true ;;
+            distros)   menu_rootfs_distro_managers || true ;;
             back|'') return 0 ;;
+        esac
+    done
+}
+
+# Extend the iOS-linuxkit front door with iSH-AOK-specific image tuning while
+# keeping setup, diagnostics, guest filesystem, validation and settings in the
+# same Rootfs-owned feature tree.
+if declare -F menu_ios_linuxkit >/dev/null 2>&1 \
+    && ! declare -F _systui_ioskit_base_menu >/dev/null 2>&1; then
+    systui_alias_function menu_ios_linuxkit _systui_ioskit_base_menu
+fi
+
+menu_ios_linuxkit() {
+    local c
+    systui_ioskit_load
+    systui_ioskit_cache_warm
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "iOS-linuxkit for iSH-AOK" \
+            "Install, configure and operate iOS-linuxkit guest root filesystems.\n\n$(systui_ioskit_state_summary)\n\n$(systui_ioskit_recommendation)" \
+            setup    "Install / setup — guided quick setup or advanced controls" \
+            guestfs  "Guest root filesystems — import, export, run and host access" \
+            optimize "iSH-AOK image tuning — performance profiles and runtime features" \
+            status   "Status and diagnostics — host, source, tools and limits" \
+            verify   "Validate and release — gates, versions and AOT" \
+            settings "Settings — paths, branch, pin and session switches" \
+            about    "About iOS LinuxKit" \
+            back     "Back to Rootfs" || return $?
+        case "$c" in
+            setup)    systui_ioskit_setup_menu; systui_ioskit_cache_warm ;;
+            guestfs)  systui_ioskit_guestfs_menu; systui_ioskit_cache_warm ;;
+            optimize) systui_aok_ioskit_menu ;;
+            status)   systui_ioskit_status_menu ;;
+            verify)   systui_ioskit_verify_menu ;;
+            settings) systui_ioskit_settings_menu ;;
+            about)    systui_ioskit_about ;;
+            back|'')  return 0 ;;
         esac
     done
 }
