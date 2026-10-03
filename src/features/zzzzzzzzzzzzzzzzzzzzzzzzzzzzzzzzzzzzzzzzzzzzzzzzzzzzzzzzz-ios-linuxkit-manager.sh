@@ -2575,10 +2575,10 @@ menu_ios_linuxkit() {
     systui_ioskit_load
     systui_ioskit_cache_warm
     while true; do
-        tui_capture_menu c tui_menu_no_tags "iOS LinuxKit" \
-            "$(systui_ioskit_state_summary)\n\n$(systui_ioskit_recommendation)" \
+        tui_capture_menu c tui_menu_no_tags "iOS-linuxkit configuration" \
+            "Configure iOS-linuxkit for iSH-AOK.\n\n$(systui_ioskit_state_summary)\n\n$(systui_ioskit_recommendation)" \
+            setup    "Install / setup iOS-linuxkit — guided quick setup or advanced controls" \
             status   "Status and diagnostics — host, source, tools, limits" \
-            setup    "Set up and build — source, dependencies, make targets" \
             guestfs  "Guest root filesystems — import, export, run, host access" \
             verify   "Validate and release — gates, versions, AOT" \
             settings "Settings — paths, branch, pin, session switches" \
@@ -2799,7 +2799,7 @@ menu_sysconfig() {
     while true; do
         tui_capture_menu c tui_menu_no_tags "System Configuration" \
             "Detected: package manager = ${PM:-unknown}, init = ${INIT:-unknown}" \
-            ioskit       "iOS LinuxKit — build, root filesystems and guest shells" \
+            ioskit       "iOS-linuxkit configuration for iSH-AOK — install, setup and guest runtime" \
             system       "System basics — hostname, timezone, system scan" \
             packages     "Packages, catalogue, repositories and managers" \
             shells       "Shells, prompts and plugins" \
@@ -2811,7 +2811,7 @@ menu_sysconfig() {
             storage      "Storage, mounts, filesystems and SMART" \
             back         "Back to main menu" || return $?
         case "$c" in
-            ioskit)       tui_call_menu menu_ios_linuxkit "iOS LinuxKit" ;;
+            ioskit)       tui_call_menu menu_ios_linuxkit "iOS-linuxkit configuration" ;;
             system)       tui_call_menu menu_sysconfig_basics "System basics" ;;
             packages)     tui_call_menu menu_packages "Packages" ;;
             shells)       tui_call_menu menu_shells "Shells" ;;
