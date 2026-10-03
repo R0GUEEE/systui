@@ -130,3 +130,4 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ios-linuxkit-manager.s
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
 111-ios-linuxkit-autoconfig-aot.sh
 112-ish-aok-optimization.sh
+113-ish-aok-sysconfig-integration.sh
