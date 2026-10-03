@@ -502,18 +502,39 @@ The package catalogue now includes:
 - **System Configuration → iOS LinuxKit** manages
   [rcarmo/ios-linuxkit](https://github.com/rcarmo/ios-linuxkit) — the iSH fork
   that runs an AArch64 Linux userland as a command-line process on an AArch64
-  Linux host and inside the iOS app. One screen covers the whole toolchain:
+  Linux host and inside the iOS app. One screen covers the documented toolchain:
   check out the source with submodules, check and install the build
   dependencies against the detected package manager, build the release or debug
   runtime, download and verify the pinned Alpine root filesystem (SHA-256 plus a
   `bin/busybox` architecture check, mirroring the app's own downloader), import
-  it with `fakefsify`, list/verify/remove images, and run guest shells or
-  commands. Settings — repository, branch, directories, default image and the
-  root filesystem pin — live in `/etc/systui/ios-linuxkit.conf`, and the
-  checkout's own `app/GuestARM64.xcconfig` is used as the pin when present. The
-  manager states its limits instead of offering dead actions: the Linux-host
-  build targets AArch64, and the runtime cannot be executed from the iOS sandbox
-  because a sideloaded app cannot spawn processes.
+  it with `fakefsify`, **export it back to a portable tarball with
+  `unfakefsify`** (with the quiescence and `meta.db`/WAL/SHM caveats stated up
+  front), and run guest shells or commands.
+  - **Host integration** — `ISH_BIND_MOUNTS` with per-entry validation (both
+    paths absolute, host path must exist, `:ro`/`:rw` shown), and explainer
+    pages for the native-offload contracts and the opt-in route-netlink switch
+    (`ISH_NETLINK_STUB=1`), including what netlink deliberately does not do.
+  - **Validation** — the focused gate list taken from the checkout's own
+    `Makefile`, runnable in one pass with the release/debug runtime coverage
+    gates, plus the failure rules and cold-cache timeout trap.
+  - **Diagnostics** — every documented `ISH_*` tracing/statistics variable and
+    the guest compatibility defaults (`GODEBUG`, `GOMAXPROCS`, the JSC/Node
+    settings), the known-limits summary, and a full host report.
+  - **Application bundle and releases** — version and Apple build-number fields
+    read from `app/AppARM64.xcconfig` and the project file, the bundle
+    identifier, the effective packaging rootfs pin, tag provenance, the Xcode
+    build path with its requirements, and the gadget-guard gate.
+  - **Native / AOT pipeline** — the recorder → seed → generated set → build
+    stages, the `jit_aot` kit commands, the freeze checklist and the honest
+    limits (images are not executable on iOS today; no scheme enables the
+    backend).
+  Settings — repository, branch, directories, default image, root filesystem
+  pin, bind mounts, the netlink switch and the preferred runtime — live in
+  `/etc/systui/ios-linuxkit.conf`, and the checkout's own
+  `app/GuestARM64.xcconfig` is used as the pin when present. The manager states
+  its limits instead of offering dead actions: the Linux-host build targets
+  AArch64, Xcode and signing cannot run here, and the runtime cannot be executed
+  from the iOS sandbox because a sideloaded app cannot spawn processes.
 - **Rootfs → Chroot workbench** works on *any* rootfs directory, not just builds
   under `$ROOTFS_BASE`, including trees unpacked from a third-party tarball:
   - Selectable execution engine — `chroot`, `proot` (no root required),

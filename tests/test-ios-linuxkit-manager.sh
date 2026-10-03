@@ -261,9 +261,24 @@ pass 'dev library state distinguishes missing from unknown'
     for fn in menu_ios_linuxkit systui_ioskit_source_menu systui_ioskit_build_menu \
               systui_ioskit_images_menu systui_ioskit_run_menu \
               systui_ioskit_maintenance_menu systui_ioskit_settings_menu \
+              systui_ioskit_host_menu systui_ioskit_validation_menu \
+              systui_ioskit_diag_menu systui_ioskit_app_menu systui_ioskit_aot_menu \
               menu_sysconfig; do
         "$fn" || { echo "$fn failed under the stubbed widgets" >&2; exit 1; }
     done
+
+    # tui_check takes tag/description triplets, never pairs.
+    tui_check() {
+        shift 2
+        if [ $(( $# % 3 )) -ne 0 ]; then
+            echo "tui_check received $# entry arguments (expected triplets)" >&2
+            return 9
+        fi
+        printf '%s\n' "$1"
+    }
+    mkdir -p "$tmp/check/.git"
+    IOSKIT_SRC_DIR="$tmp/check"
+    systui_ioskit_run_gates || { echo 'gate chooser failed' >&2; exit 1; }
 
     IOSKIT_IMAGES_DIR="$tmp/images"
     mkdir -p "$IOSKIT_IMAGES_DIR/alpha"
@@ -277,6 +292,152 @@ pass 'dev library state distinguishes missing from unknown'
     fi
 )
 pass 'menus keep the dialog argument shape'
+
+###############################################################################
+# Bind mount validation
+###############################################################################
+(
+    # shellcheck disable=SC1090
+    . "$module"
+    for good in '/mnt/src=/tmp:ro' '/mnt/out=/tmp:rw' '/a=/b'; do
+        systui_ioskit_bind_spec_ok "$good" || { echo "valid bind spec rejected: $good" >&2; exit 1; }
+    done
+    for bad in 'relative=/tmp' '/x=relative' 'no-equals' '/x=' '=tmp'; do
+        if systui_ioskit_bind_spec_ok "$bad"; then
+            echo "invalid bind spec accepted: $bad" >&2
+            exit 1
+        fi
+    done
+    # A readable report must name the mode and the failure for each entry.
+    report=$(systui_ioskit_bind_mounts_state "/mnt/a=$tmp:ro,/mnt/b=/does/not/exist:rw")
+    case "$report" in
+        *'ro'*'ok'*) ;;
+        *) echo 'bind report did not mark the good entry' >&2; exit 1 ;;
+    esac
+    case "$report" in
+        *'does not exist'*) ;;
+        *) echo 'bind report did not explain the missing host path' >&2; exit 1 ;;
+    esac
+)
+pass 'bind mount validation'
+
+###############################################################################
+# Guest runs carry the session switches
+###############################################################################
+(
+    # shellcheck disable=SC1090
+    . "$module"
+    run_cmd() { printf '%s\n' "$*"; }
+    IOSKIT_BIND_MOUNTS='/mnt/x=/tmp:ro'
+    IOSKIT_NETLINK=1
+    out=$(systui_ioskit_guest_run "desc" /bin/true -f /img /bin/sh)
+    case "$out" in
+        *'ISH_BIND_MOUNTS=/mnt/x=/tmp:ro'*) ;;
+        *) echo "bind mounts were not passed to the run: $out" >&2; exit 1 ;;
+    esac
+    case "$out" in
+        *'ISH_NETLINK_STUB=1'*) ;;
+        *) echo "the netlink switch was not passed to the run: $out" >&2; exit 1 ;;
+    esac
+    IOSKIT_BIND_MOUNTS=''
+    IOSKIT_NETLINK=0
+    out=$(systui_ioskit_guest_run "desc" /bin/true -f /img /bin/sh)
+    case "$out" in
+        *ISH_BIND_MOUNTS*|*ISH_NETLINK_STUB*)
+            echo "a disabled switch was still exported: $out" >&2
+            exit 1
+            ;;
+    esac
+)
+pass 'guest runs carry the session switches'
+
+###############################################################################
+# Gate list is grounded in the checkout
+###############################################################################
+(
+    # shellcheck disable=SC1090
+    . "$module"
+    rows=$(systui_ioskit_gates_rows)
+    case "$rows" in
+        *'test-arm64-fcvt-vector'*) ;;
+        *) echo 'the gate list lost the AdvSIMD gate' >&2; exit 1 ;;
+    esac
+    case "$rows" in
+        *'test-xcode-gadget-guard'*) ;;
+        *) echo 'the gate list lost the Xcode gadget guard' >&2; exit 1 ;;
+    esac
+    # Every row must have four fields, so the report cannot print a broken line.
+    printf '%s\n' "$rows" | while IFS='|' read -r id label target note; do
+        [ -n "$id" ] && [ -n "$label" ] && [ -n "$target" ] && [ -n "$note" ] || {
+            echo "gate row is missing a field: $id|$label|$target|$note" >&2
+            exit 1
+        }
+    done
+    # With no checkout, availability must report "missing" rather than succeed.
+    IOSKIT_SRC_DIR="$tmp/no-such-checkout"
+    if systui_ioskit_gate_available test-arm64-upstream; then
+        echo 'a gate was reported available without a Makefile' >&2
+        exit 1
+    fi
+    mkdir -p "$IOSKIT_SRC_DIR"
+    printf 'test-arm64-upstream: build-arm64-linux\n\t@true\n' > "$IOSKIT_SRC_DIR/Makefile"
+    systui_ioskit_gate_available test-arm64-upstream \
+        || { echo 'a declared gate was not detected' >&2; exit 1; }
+    if systui_ioskit_gate_available test-arm64-does-not-exist; then
+        echo 'an undeclared gate was reported available' >&2
+        exit 1
+    fi
+)
+pass 'gate list is grounded in the checkout'
+
+###############################################################################
+# New settings keys round trip and stay whitelisted
+###############################################################################
+(
+    export SYSTUI_IOSKIT_CONF="$tmp/settings2.conf"
+    # shellcheck disable=SC1090
+    . "$module"
+    systui_ioskit_conf_set IOSKIT_BIND_MOUNTS '/mnt/x=/tmp:ro' || { echo 'bind mounts not persisted' >&2; exit 1; }
+    systui_ioskit_conf_set IOSKIT_NETLINK 1 || { echo 'netlink flag not persisted' >&2; exit 1; }
+    systui_ioskit_conf_set IOSKIT_RUNTIME debug || { echo 'runtime preference not persisted' >&2; exit 1; }
+    unset IOSKIT_BIND_MOUNTS IOSKIT_NETLINK IOSKIT_RUNTIME
+    systui_ioskit_load
+    [ "$IOSKIT_BIND_MOUNTS" = '/mnt/x=/tmp:ro' ] || { echo 'bind mounts did not reload' >&2; exit 1; }
+    [ "$IOSKIT_NETLINK" = 1 ] || { echo 'netlink flag did not reload' >&2; exit 1; }
+    [ "$IOSKIT_RUNTIME" = debug ] || { echo 'runtime preference did not reload' >&2; exit 1; }
+    systui_ioskit_conf_set IOSKIT_ANYTHING x 2>/dev/null && { echo 'unknown key accepted' >&2; exit 1; }
+    systui_ioskit_conf_unset IOSKIT_RUNTIME
+    systui_ioskit_load
+    [ "$IOSKIT_RUNTIME" = release ] || { echo 'runtime default not restored' >&2; exit 1; }
+    :
+)
+pass 'session settings round trip'
+
+###############################################################################
+# Export path refuses what it cannot do
+###############################################################################
+(
+    # shellcheck disable=SC1090
+    . "$module"
+    tui_msg() { printf 'MSG:%s\n' "$2"; }
+    tui_yesno() { return 1; }
+    tui_input() { return 1; }
+    IOSKIT_IMAGES_DIR="$tmp/export-images"
+    mkdir -p "$IOSKIT_IMAGES_DIR/one"
+    IOSKIT_SRC_DIR="$tmp/empty-checkout"
+    mkdir -p "$IOSKIT_SRC_DIR"
+    # With no build tree there is no unfakefsify, and the message must say why.
+    out=$(systui_ioskit_export_image) || true
+    case "$out" in
+        *'unfakefsify is not available'*) ;;
+        *) echo "export did not explain the missing tool: $out" >&2; exit 1 ;;
+    esac
+    case "$out" in
+        *libarchive*) ;;
+        *) echo "export did not name the libarchive requirement: $out" >&2; exit 1 ;;
+    esac
+)
+pass 'export reports a missing tool instead of failing silently'
 
 ###############################################################################
 # The shipped System Configuration menu is preserved under an alias
