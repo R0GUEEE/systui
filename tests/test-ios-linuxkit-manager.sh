@@ -15,6 +15,7 @@ module_name='zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ios-linux
 module="$repo_root/src/features/$module_name"
 manifest="$repo_root/src/features/.load-order"
 base_file="$repo_root/src/features/96-menu-consolidation-final.sh"
+integration="$repo_root/src/features/113-ish-aok-sysconfig-integration.sh"
 
 [ -f "$module" ] || { echo "missing $module" >&2; exit 1; }
 bash -n "$module"
@@ -51,32 +52,23 @@ fi
 pass 'no exported functions'
 
 ###############################################################################
-# System Configuration front door must not drift
+# Rootfs ownership and Config separation
 ###############################################################################
-menu_body() { # <file> -> body of menu_sysconfig()
-    awk '/^menu_sysconfig\(\) \{/{f=1} f{print} f&&/^\}$/{exit}' "$1"
-}
-tags_of() { # stdin -> tag list, one per line (ignores text lines)
-    sed -n 's/^[[:space:]]*\([a-z][a-z0-9]*\)[[:space:]]\{1,\}"[^"]*".*/\1/p' | sort
-}
+[ -f "$integration" ] || fail 'missing late iSH-AOK/iOS-linuxkit integration layer'
+bash -n "$integration"
 
-base_tags=$(printf '%s\n' "$(menu_body "$base_file")" | tags_of)
-mine_tags=$(printf '%s\n' "$(menu_body "$module")" | tags_of)
-[ -n "$base_tags" ] || fail 'could not read the shipped System Configuration tags'
-[ -n "$mine_tags" ] || fail 'could not read the new System Configuration tags'
+grep -Fq 'menu_rootfs()' "$integration" || fail 'late integration does not own the Rootfs menu'
+grep -Fq 'ioskit    "iOS-linuxkit for iSH-AOK' "$integration" || fail 'Rootfs does not expose iOS-linuxkit'
+grep -Fq 'tui_call_menu menu_ios_linuxkit' "$integration" || fail 'Rootfs iOS-linuxkit entry is not dispatched'
+if grep -Eq '^[[:space:]]*aok[[:space:]]+.*iSH-AOK / iOS LinuxKit|^[[:space:]]*ioskit[[:space:]]+.*iOS-linuxkit' "$base_file" "$integration"; then
+    fail 'iOS-linuxkit leaked back into System Configuration'
+fi
+if grep -q '^menu_sysconfig()' "$module"; then
+    fail 'iOS-linuxkit manager still overrides System Configuration'
+fi
+pass 'iOS-linuxkit is owned by Rootfs and absent from Config'
 
-# Compare in files rather than process substitution: the regression job runs on
-# a shell where /dev/fd may be unavailable, and the comparison is the point.
-printf '%s\n' "$base_tags" > "$tmp/base.tags"
-printf '%s\n' "$mine_tags" > "$tmp/mine.tags"
-
-missing=$(comm -23 "$tmp/base.tags" "$tmp/mine.tags")
-[ -z "$missing" ] || fail "System Configuration dropped entries: $(printf '%s ' $missing)"
-added=$(comm -13 "$tmp/base.tags" "$tmp/mine.tags")
-[ "$added" = ioskit ] || fail "unexpected new System Configuration entries: $(printf '%s ' $added)"
-pass 'System Configuration keeps every shipped entry plus ioskit'
-
-grep -Fq 'menu_ios_linuxkit' "$module" || fail 'ioskit entry is not dispatched'
+grep -Fq 'menu_ios_linuxkit' "$module" || fail 'iOS-linuxkit front door is missing'
 grep -Fq 'systui_ioskit' "$module" || fail 'manager helpers are missing'
 grep -Fq 'rcarmo/ios-linuxkit' "$module" || fail 'upstream reference is missing'
 pass 'manager wiring'
@@ -266,8 +258,7 @@ pass 'dev library state distinguishes missing from unknown'
               systui_ioskit_settings_pin_menu systui_ioskit_images_menu systui_ioskit_image_add_menu \
               systui_ioskit_run_menu systui_ioskit_session_menu systui_ioskit_host_menu \
               systui_ioskit_validation_menu systui_ioskit_app_menu systui_ioskit_app_guides_menu \
-              systui_ioskit_aot_menu systui_ioskit_about systui_ioskit_pin_text \
-              menu_sysconfig; do
+              systui_ioskit_aot_menu systui_ioskit_about systui_ioskit_pin_text ; do
         "$fn" >/dev/null 2>&1 || { echo "$fn failed under the stubbed widgets" >&2; exit 1; }
     done
 
@@ -507,8 +498,6 @@ pass 'export reports a missing tool instead of failing silently'
 )
 pass 'redraw cache refreshes on mutation'
 
-###############################################################################
-# The shipped System Configuration menu is preserved under an alias
 ###############################################################################
 (
     # shellcheck disable=SC1090
