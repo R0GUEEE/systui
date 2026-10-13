@@ -37,6 +37,10 @@ Core dependencies are pre-installed from share/systui-deps.tsv; optional
 tooling is installed on demand from the menus.
 Update checkout:
   $CACHE_DIR (fixed, root-owned)
+
+Environment:
+  SYSTUI_UPDATE_EXPECT_SHA=<sha>  refuse to install unless the cloned commit
+                                  starts with this string
 USAGE
 }
 
@@ -58,7 +62,27 @@ warn() { printf '\033[1;33m[WARN]\033[0m %s\n' "$*"; }
 die()  { printf '\033[0;31m[ERROR]\033[0m %s\n' "$*" >&2; exit 1; }
 
 detect_pm() {
-    if command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
+    # Same rule as install.sh: the distribution's own manager beats whatever
+    # tool happens to be on PATH, so a Debian apt on an Alpine host cannot win.
+    local distro=""
+    if [ -r /etc/os-release ]; then
+        distro=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-}")
+    fi
+    [ -n "$distro" ] || { [ -f /etc/alpine-release ] && distro=alpine; }
+    case "$distro" in
+        alpine)                     command -v apk    >/dev/null 2>&1 && { printf 'apk\n'; return 0; } ;;
+        arch|archarm|archlinux|manjaro|endeavouros)
+                                    command -v pacman >/dev/null 2>&1 && { printf 'pacman\n'; return 0; } ;;
+        debian|ubuntu|kali|devuan|raspbian|linuxmint|pop)
+                                    command -v apt-get >/dev/null 2>&1 && { printf 'apt\n'; return 0; } ;;
+        fedora|rhel|centos|rocky|almalinux|ol)
+                                    command -v dnf    >/dev/null 2>&1 && { printf 'dnf\n'; return 0; } ;;
+        opensuse*|sles|suse)        command -v zypper >/dev/null 2>&1 && { printf 'zypper\n'; return 0; } ;;
+        void)                       command -v xbps-install >/dev/null 2>&1 && { printf 'xbps\n'; return 0; } ;;
+        gentoo)                     command -v emerge >/dev/null 2>&1 && { printf 'emerge\n'; return 0; } ;;
+    esac
+    if [ -f /etc/alpine-release ] && command -v apk >/dev/null 2>&1; then printf 'apk\n'
+    elif command -v apt-get >/dev/null 2>&1; then printf 'apt\n'
     elif command -v apk >/dev/null 2>&1; then printf 'apk\n'
     elif command -v pacman >/dev/null 2>&1; then printf 'pacman\n'
     elif command -v dnf >/dev/null 2>&1; then printf 'dnf\n'
@@ -149,6 +173,20 @@ ensure_update_prerequisites() {
     return 0
 }
 
+# BusyBox rm rejects --one-file-system outright ("unrecognized option") and
+# deletes nothing, which is fatal here because this script runs under
+# set -Eeuo pipefail. Probe once, like rootfs_rm_tree does, and fall back.
+update_rm_tree() { # <path>
+    local p="${1:-}"
+    [ -n "$p" ] || return 64
+    [ "$p" != / ] || return 64
+    if rm --one-file-system -rf -- /nonexistent-systui-probe 2>/dev/null; then
+        rm -rf --one-file-system -- "$p"
+    else
+        rm -rf -- "$p"
+    fi
+}
+
 canonical_parent_child() { # <path>
     local p="$1" parent base
     [ -n "$p" ] || return 1
@@ -171,14 +209,7 @@ safe_remove_cache() {
     else
         die "Refusing to recursively remove untrusted update cache: $p"
     fi
-    rm -rf --one-file-system -- "$p"
-}
-
-safe_remove_library() {
-    local p="$1"
-    case "$p" in */lib/systui) ;; *) die "Unsafe systui library path: $p";; esac
-    [ "$p" != /lib/systui ] || die "Refusing unsafe library deletion: $p"
-    [ ! -e "$p" ] || rm -rf --one-file-system -- "$p"
+    update_rm_tree "$p"
 }
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -187,7 +218,10 @@ if [ "$(id -u)" -ne 0 ]; then
     [ "$MINIMAL" -eq 1 ] && args+=(--minimal)
     [ "$DRY_RUN" -eq 1 ] && args+=(--dry-run)
     command -v sudo >/dev/null 2>&1 || die "Run this script as root."
-    exec sudo "${args[@]}"
+    # sudo resets the environment by default, so the caller's prefix and state
+    # directory have to be passed explicitly; without them the privileged
+    # re-exec recomputed the defaults and updated /usr/lib/systui instead.
+    exec sudo INSTALL_PREFIX="$INSTALL_PREFIX" SYSTUI_STATE_DIR="$STATE_DIR" "${args[@]}"
 fi
 
 # Prerequisites are installed as root, before anything needs them.
@@ -212,10 +246,21 @@ if [ "$DRY_RUN" -eq 1 ]; then
     [ "$NO_DEPS" -eq 1 ] && plan_args="$plan_args --no-deps"
     info "[dry-run] would replace the update checkout: $CACHE_DIR"
     info "[dry-run] would clone $REPO_URL ($BRANCH)"
-    info "[dry-run] would remove and reinstall: $LIB_DIR"
+    info "[dry-run] would reinstall (staged swap): $LIB_DIR"
     info "[dry-run] would run: INSTALL_PREFIX=$INSTALL_PREFIX $CACHE_DIR/install.sh$plan_args"
-    SYSTUI_PM_OVERRIDE="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}" \
-        bash "$(dirname "$0")/install.sh" --deps-only --dry-run || warn "Dependency plan could not be generated."
+    # install.sh is not installed into $LIB_DIR and the clone has not happened
+    # yet, so look for a usable copy instead of assuming $(dirname $0) holds
+    # one -- the old code always failed here and still reported success.
+    _dry_installer=''
+    for _cand in "$(dirname -- "$0")/install.sh" "$CACHE_DIR/install.sh" "$LIB_DIR/install.sh"; do
+        if [ -f "$_cand" ]; then _dry_installer="$_cand"; break; fi
+    done
+    if [ -n "$_dry_installer" ]; then
+        SYSTUI_PM_OVERRIDE="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}" \
+            bash "$_dry_installer" --deps-only --dry-run || warn "Dependency plan could not be generated."
+    else
+        warn "No local install.sh to preview the dependency plan with; the clone happens on a real run."
+    fi
     ok "Dry run complete; nothing was changed."
     exit 0
 fi
@@ -236,9 +281,23 @@ info "Remote: $REPO_URL"
 info "Branch: $BRANCH"
 info "Commit: $TARGET_SHA"
 
+# Opt-in pinning. Nothing here can verify a signature the project does not
+# publish, but a caller who has recorded a commit (or a prefix of one) can make
+# the updater refuse anything else instead of executing whatever main holds.
+if [ -n "${SYSTUI_UPDATE_EXPECT_SHA:-}" ]; then
+    case "$TARGET_SHA" in
+        "${SYSTUI_UPDATE_EXPECT_SHA}"*) ;;
+        *) die "Refusing to install $TARGET_SHA: SYSTUI_UPDATE_EXPECT_SHA=${SYSTUI_UPDATE_EXPECT_SHA} does not match." ;;
+    esac
+    info "Commit matches SYSTUI_UPDATE_EXPECT_SHA"
+fi
+
 if [ -e "$LIB_DIR" ]; then
-    info "Removing previous systui installation tree: $LIB_DIR"
-    safe_remove_library "$LIB_DIR"
+    # Do not delete the installation before the replacement exists: install.sh
+    # stages the new tree beside it and swaps it in, so a failure between here
+    # and the reinstall can no longer leave the machine without a working
+    # systui (update.sh itself is running from $LIB_DIR).
+    info "Replacing the existing systui installation at: $LIB_DIR"
 fi
 
 install_args=()

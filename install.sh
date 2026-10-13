@@ -25,7 +25,7 @@ Usage: $0 [options]
 
 Options:
   --deps-only   Install and verify dependencies, then exit
-  --dry-run     Print the dependency plan without changing the system
+  --dry-run     Print the dependency plan and the install plan; change nothing
   --minimal     Accepted for compatibility; the core tier is installed anyway
   --no-deps     Skip dependency installation
   -h, --help    Show this help.
@@ -45,6 +45,30 @@ USAGE
 }
 
 detect_pm() {
+    # The distribution's own manager wins over whatever tool happens to be on
+    # PATH. A bare "apt-get first" order picked apt on Alpine/iSH whenever the
+    # Alpine 'apt' package (or any Debian toolchain) was installed, and then
+    # fed Debian package names to dpkg inside a musl root.
+    local distro=""
+    if [ -r /etc/os-release ]; then
+        distro=$(. /etc/os-release 2>/dev/null; printf '%s' "${ID:-}")
+    fi
+    [ -n "$distro" ] || { [ -f /etc/alpine-release ] && distro=alpine; }
+    case "$distro" in
+        alpine)                     command -v apk    >/dev/null 2>&1 && { echo apk; return 0; } ;;
+        arch|archarm|archlinux|manjaro|endeavouros)
+                                    command -v pacman >/dev/null 2>&1 && { echo pacman; return 0; } ;;
+        debian|ubuntu|kali|devuan|raspbian|linuxmint|pop)
+                                    command -v apt-get >/dev/null 2>&1 && { echo apt; return 0; } ;;
+        fedora|rhel|centos|rocky|almalinux|ol)
+                                    command -v dnf    >/dev/null 2>&1 && { echo dnf; return 0; } ;;
+        opensuse*|sles|suse)        command -v zypper >/dev/null 2>&1 && { echo zypper; return 0; } ;;
+        void)                       command -v xbps-install >/dev/null 2>&1 && { echo xbps; return 0; } ;;
+        gentoo)                     command -v emerge >/dev/null 2>&1 && { echo emerge; return 0; } ;;
+    esac
+    # Unknown distribution (or the manager is missing): fall back to presence,
+    # but never let a foreign apt on an Alpine/musl host win.
+    if [ -f /etc/alpine-release ] && command -v apk >/dev/null 2>&1; then echo apk; return 0; fi
     if command -v apt-get >/dev/null 2>&1; then echo apt
     elif command -v apk >/dev/null 2>&1; then echo apk
     elif command -v pacman >/dev/null 2>&1; then echo pacman
@@ -80,8 +104,16 @@ refresh_package_metadata() {
         apt) apt-get update ;;
         apk) apk update ;;
         pacman)
-            warn "Arch requires a full synchronized upgrade before dependency installation."
-            pacman -Syu --noconfirm ;;
+            # A full synchronized upgrade is a system-wide change; it must be
+            # asked for, not a side effect of installing systui's dependencies.
+            if [ "${SYSTUI_ALLOW_FULL_UPGRADE:-0}" = "1" ]; then
+                warn "Running 'pacman -Syu' (SYSTUI_ALLOW_FULL_UPGRADE=1)."
+                pacman -Syu --noconfirm
+            else
+                warn "Skipping 'pacman -Syu': Arch needs a full upgrade before new"
+                warn "packages are installed. Run it yourself, or re-run with"
+                warn "SYSTUI_ALLOW_FULL_UPGRADE=1 to let this script do it."
+            fi ;;
         dnf) dnf makecache -y ;;
         yum) yum makecache -y ;;
         zypper) zypper --non-interactive refresh ;;
@@ -342,7 +374,13 @@ install_dependencies() {
 
     if ! manifest=$(deps_manifest_path); then
         warn "Dependency manifest is missing (share/systui-deps.tsv); installing the built-in core list."
-        install_native_packages "$pm" bash dialog coreutils grep sed gawk findutils tar gzip xz-utils unzip ca-certificates curl
+        # The built-in list must use each family's own package name: xz is
+        # 'xz-utils' only on the apt/rpm families, and 'xz' everywhere else.
+        case "$pm" in
+            apt|dnf|yum|zypper) _fallback_xz=xz-utils ;;
+            *)                  _fallback_xz=xz ;;
+        esac
+        install_native_packages "$pm" bash dialog coreutils grep sed gawk findutils tar gzip "$_fallback_xz" unzip ca-certificates curl
         return 0
     fi
 
@@ -414,12 +452,36 @@ verify_dependencies() {
 install_project() {
     info "Installing systui to $LIB_DIR..."
     if [ "$PROJECT_DIR" = "$LIB_DIR" ]; then error "Refusing to install: the source directory and \$LIB_DIR are the same path ($LIB_DIR). Run install.sh from a separate checkout, or set INSTALL_PREFIX to another prefix."; fi
-    mkdir -p "$LIB_DIR" "$BIN_DIR"
-    rm -rf -- "$LIB_DIR/src" "$LIB_DIR/share" "$LIB_DIR/docs"
-    cp -r "$PROJECT_DIR/src" "$LIB_DIR/"
-    [ ! -d "$PROJECT_DIR/share" ] || cp -r "$PROJECT_DIR/share" "$LIB_DIR/"
-    [ ! -d "$PROJECT_DIR/docs" ] || cp -r "$PROJECT_DIR/docs" "$LIB_DIR/"
-    [ -f "$LIB_DIR/share/homebrew/install-homebrew-root.sh" ] && chmod 0755 "$LIB_DIR/share/homebrew/install-homebrew-root.sh"
+    mkdir -p "$BIN_DIR"
+    # Build the new tree beside the old one and swap at the end. The previous
+    # installation (which includes the update.sh the user may be running) stays
+    # intact if the copy fails part-way, instead of being deleted up front.
+    local stage="$LIB_DIR.new.$$" backup="$LIB_DIR.old.$$"
+    rm -rf -- "$stage" "$backup"
+    mkdir -p "$stage" || error "Could not create the staging directory $stage"
+    if ! cp -r "$PROJECT_DIR/src" "$stage/"; then
+        rm -rf -- "$stage"; error "Could not copy src into $stage"
+    fi
+    if [ -d "$PROJECT_DIR/share" ] && ! cp -r "$PROJECT_DIR/share" "$stage/"; then
+        rm -rf -- "$stage"; error "Could not copy share into $stage"
+    fi
+    if [ -d "$PROJECT_DIR/docs" ] && ! cp -r "$PROJECT_DIR/docs" "$stage/"; then
+        rm -rf -- "$stage"; error "Could not copy docs into $stage"
+    fi
+    if [ -f "$stage/share/homebrew/install-homebrew-root.sh" ]; then chmod 0755 "$stage/share/homebrew/install-homebrew-root.sh"; fi
+    if [ -e "$LIB_DIR" ]; then
+        if ! mv -- "$LIB_DIR" "$backup"; then
+            rm -rf -- "$stage"
+            error "Could not move the existing $LIB_DIR aside; nothing was changed"
+        fi
+    fi
+    if ! mv -- "$stage" "$LIB_DIR"; then
+        [ -e "$backup" ] && mv -- "$backup" "$LIB_DIR"
+        rm -rf -- "$stage"
+        error "Could not install the new tree at $LIB_DIR (previous installation restored)"
+    fi
+    rm -rf -- "$backup"
+    if [ -f "$LIB_DIR/share/homebrew/install-homebrew-root.sh" ]; then chmod 0755 "$LIB_DIR/share/homebrew/install-homebrew-root.sh"; fi
     if [ -f "$PROJECT_DIR/update.sh" ]; then install -m 0755 "$PROJECT_DIR/update.sh" "$LIB_DIR/update.sh"; ln -sfn "$LIB_DIR/update.sh" "$BIN_DIR/systui-update"; fi
     local state_dir="${SYSTUI_STATE_DIR:-/etc/systui}" source_url="" source_branch=""
     mkdir -p "$state_dir"
@@ -573,7 +635,7 @@ main() {
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --deps-only) deps_only=1 ;;
-            --dry-run) SYSTUI_DEPS_DRY_RUN=1 ;;
+            --dry-run) SYSTUI_DEPS_DRY_RUN=1; SYSTUI_DRY_RUN=1 ;;
             # Exported, not merely assigned: the flag is accepted for
             # compatibility with callers that pass it through (core is the
             # default dependency tier), so it is part of the environment.
@@ -586,13 +648,26 @@ main() {
     done
     echo "========== systui Installation =========="
     echo "Version: $SYSTUI_VERSION"
-    require_root
+    if [ "${SYSTUI_DRY_RUN:-0}" = "1" ]; then
+        info "Dry run: nothing on the system will be changed (root not required)"
+    else
+        require_root
+    fi
     install_dependencies
     if [ "${SYSTUI_DEPS_DRY_RUN:-0}" != "1" ]; then
         verify_dependencies
     fi
     if [ "$deps_only" -eq 1 ]; then
         success "Dependency setup complete (--deps-only)"
+        return 0
+    fi
+    if [ "${SYSTUI_DRY_RUN:-0}" = "1" ]; then
+        # The dependency step was only a preview; the project install must be
+        # one too, otherwise --dry-run overwrites the installed tree.
+        info "[dry-run] would install project files to $LIB_DIR"
+        info "[dry-run] would install $BIN_DIR/systui and $BIN_DIR/systui-update"
+        info "[dry-run] would write $SYSTUI_VERSION to the man page"
+        success "Dry run complete; the system was not changed"
         return 0
     fi
     install_project
