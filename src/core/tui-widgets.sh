@@ -44,6 +44,9 @@ tui_refresh_terminal_size() {
         if [[ ! "$cols" =~ ^[0-9]+$ ]] && command -v tput >/dev/null 2>&1; then
             if tput cols > "$probe" 2>/dev/null; then read -r cols < "$probe" || true; fi
         fi
+        # The probe is a scratch file in the private workspace; leaving one
+        # behind per shell pid accumulated until the workspace was cleaned up.
+        rm -f -- "$probe" 2>/dev/null || true
     fi
 
     [[ "$rows" =~ ^[0-9]+$ ]] || rows=24

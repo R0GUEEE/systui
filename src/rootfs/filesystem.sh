@@ -152,21 +152,43 @@ systui_rootfs_normpath() { # <path> -> lexically normalised absolute path
 # Resolve <in-tree path> inside <target>, following links as the ROOTFS would.
 # 0 + resolved in-tree path, 1 = target missing, 2 = symlink loop.
 systui_rootfs_resolve_in_tree() { # <target> <in-tree path>
-    local t="${1%/}" path="${2:-}" link depth=0
+    local t="${1%/}" path="${2:-}" link depth=0 prefix rest part rewritten
     [ -n "$t" ] || return 64
     [ -n "$path" ] || return 64
     path=$(systui_rootfs_normpath "$path")
+    # Every component is resolved lexically, never by the host kernel. Testing
+    # the whole path at once (`[ -L "$t/bin/sh" ]`) makes the kernel resolve an
+    # *intermediate* absolute link such as `/bin -> /usr/bin` against the HOST
+    # root, so a healthy usrmerge tree looked like it had no /bin/sh at all.
     while [ "$depth" -lt 24 ]; do
-        if [ -L "$t$path" ]; then
-            link=$(readlink -- "$t$path" 2>/dev/null) || return 1
-            case "$link" in
-                /*) ;;
-                *)  link="${path%/*}/$link" ;;
+        prefix=""; rest="${path#/}"; rewritten=""
+        while [ -n "$rest" ]; do
+            case "$rest" in
+                */*) part="${rest%%/*}"; rest="${rest#*/}" ;;
+                *)   part="$rest"; rest="" ;;
             esac
-            path=$(systui_rootfs_normpath "$link")
-            depth=$((depth + 1))
+            if [ -L "$t$prefix/$part" ]; then
+                link=$(readlink -- "$t$prefix/$part" 2>/dev/null) || return 1
+                case "$link" in
+                    /*) ;;
+                    *)  link="$prefix/$link" ;;
+                esac
+                if [ -n "$rest" ]; then
+                    path=$(systui_rootfs_normpath "$link/$rest")
+                else
+                    path=$(systui_rootfs_normpath "$link")
+                fi
+                depth=$((depth + 1))
+                rewritten=1
+                break
+            fi
+            prefix="$prefix/$part"
+        done
+        if [ -n "$rewritten" ]; then
+            [ "$depth" -lt 24 ] || return 2
             continue
         fi
+        # No link component is left, so this is a plain host path check.
         [ -e "$t$path" ] || return 1
         printf '%s\n' "$path"
         return 0
@@ -244,7 +266,14 @@ systui_rootfs_shell_state() { # <target>
         return 1
     fi
 
-    if [ ! -e "$t/bin/sh" ] && [ ! -L "$t/bin/sh" ]; then
+    # Resolve /bin lexically first: with `/bin -> /usr/bin` the host kernel
+    # resolves `<tree>/bin/sh` against the HOST root, where /usr/bin/sh usually
+    # does not exist, so a healthy usrmerge tree was reported as having no
+    # /bin/sh entry at all. After resolving the parent there are no symlink
+    # components left, so -e/-L are honest host checks.
+    local bin_dir
+    bin_dir=$(systui_rootfs_resolve_in_tree "$t" /bin 2>/dev/null) || bin_dir=""
+    if [ -n "$bin_dir" ] && [ ! -e "$t${bin_dir%/}/sh" ] && [ ! -L "$t${bin_dir%/}/sh" ]; then
         if resolved=$(systui_rootfs_shell_candidate "$t"); then
             printf 'missing|/bin/sh|no /bin/sh entry (%s is present in the rootfs)\n' "$resolved"
         else

@@ -207,7 +207,7 @@ safe_remove_cache() {
     if [ -f "$p/.systui-update-cache" ]; then :
     elif git -C "$p" remote get-url origin 2>/dev/null | grep -qxF "$REPO_URL"; then :
     else
-        die "Refusing to recursively remove untrusted update cache: $p"
+        die "Refusing to recursively remove untrusted update cache: $p (if you own it, remove it yourself and re-run)"
     fi
     update_rm_tree "$p"
 }

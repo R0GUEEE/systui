@@ -69,6 +69,13 @@ usrmerge=$(mk_tree usrmerge)
 rmdir "$usrmerge/bin"; ln -s usr/bin "$usrmerge/bin"
 : > "$usrmerge/usr/bin/dash"; chmod +x "$usrmerge/usr/bin/dash"; ln -s dash "$usrmerge/usr/bin/sh"
 
+# The real Debian/Ubuntu layout is an ABSOLUTE link: /bin -> /usr/bin. Testing
+# "<tree>/bin/sh" as one path made the host kernel resolve /usr/bin against the
+# HOST root, so this healthy tree was reported as having no /bin/sh entry.
+usrmerge_abs=$(mk_tree usrmerge-abs)
+rmdir "$usrmerge_abs/bin"; ln -s /usr/bin "$usrmerge_abs/bin"
+: > "$usrmerge_abs/usr/bin/dash"; chmod +x "$usrmerge_abs/usr/bin/dash"; ln -s dash "$usrmerge_abs/usr/bin/sh"
+
 dangling=$(mk_tree dangling)
 ln -s dash "$dangling/bin/sh"
 
@@ -103,6 +110,10 @@ check "absolute in-tree link is ok (host -x would say no)" \
     is_true text_has "$(status_of "$abs_link")" ok
 check "usrmerge tree is ok" \
     is_true text_has "$(status_of "$usrmerge")" ok
+check "absolute usrmerge tree is ok (/bin -> /usr/bin, the Debian layout)" \
+    is_true text_has "$(status_of "$usrmerge_abs")" ok
+check "absolute usrmerge tree is usable" \
+    is_true rootfs_wb_shell_usable "$usrmerge_abs"
 check "dangling link is reported as dangling" \
     is_true text_has "$(status_of "$dangling")" dangling
 check "missing entry is reported as missing" \

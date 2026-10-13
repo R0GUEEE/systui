@@ -53,7 +53,12 @@ run_as_brew_user() {
 
 install_deps() {
     log "Installing Homebrew prerequisites"
-    if command -v apt-get >/dev/null 2>&1; then
+    # The distribution's own manager must win over whatever is on PATH: on
+    # Alpine an installed 'apt' package would otherwise pull Debian packages
+    # into a musl root. (install.sh and update.sh decide this the same way.)
+    if [[ -f /etc/alpine-release ]] && command -v apk >/dev/null 2>&1; then
+        apk add --no-cache bash build-base curl file git python3 ruby patch perl tar gzip bzip2 xz unzip ca-certificates
+    elif command -v apt-get >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y --no-install-recommends bash build-essential ca-certificates curl file git procps gcc g++ make libc6-dev patch perl python3 ruby tar gzip bzip2 xz-utils unzip
@@ -64,7 +69,10 @@ install_deps() {
     elif command -v pacman >/dev/null 2>&1; then
         # Arch does not support partial upgrades. Make the system-wide impact
         # explicit before pacman performs its required synchronized upgrade.
-        warn "Arch Linux detected: Homebrew prerequisite setup will run 'pacman -Syu' and may upgrade the entire system."
+        warn "Arch Linux detected: a full 'pacman -Syu' may be needed before installing prereleases."
+        if [[ "${SYSTUI_ALLOW_FULL_UPGRADE:-0}" != 1 ]]; then
+            die "Refusing to upgrade the whole system. Run 'pacman -Syu' yourself, or set SYSTUI_ALLOW_FULL_UPGRADE=1."
+        fi
         pacman -Syu --noconfirm --needed base-devel curl file git python ruby ca-certificates
     elif command -v zypper >/dev/null 2>&1; then
         zypper --non-interactive refresh
@@ -80,7 +88,10 @@ ensure_user() {
     log "Preparing unprivileged Homebrew account: $BREW_USER"
     if ! id -u "$BREW_USER" >/dev/null 2>&1; then
         command -v useradd >/dev/null 2>&1 || die "useradd is required to create $BREW_USER."
-        useradd -m -d "$BREW_HOME" -s /bin/bash -c "Homebrew package manager" "$BREW_USER"
+        # -U makes useradd create the same-named group the rest of this script
+        # assumes; without it (USERGROUPS_ENAB=no) the later chown/chgrp fail
+        # after the account and prerequisites have already been created.
+        useradd -m -U -d "$BREW_HOME" -s /bin/bash -c "Homebrew package manager" "$BREW_USER"
     fi
     install -d -m 0755 -o "$BREW_USER" -g "$BREW_USER" "$BREW_HOME" "$BREW_PREFIX"
     chown -R "$BREW_USER:$BREW_USER" "$BREW_PREFIX"

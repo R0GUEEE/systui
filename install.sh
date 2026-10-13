@@ -621,7 +621,10 @@ systui is a terminal-based user interface for Linux system configuration, provis
 .SH REQUIREMENTS
 Root access, Bash, dialog, and standard Unix tools.
 MANPAGE
-    sed -i "s/__SYSTUI_VERSION__/$SYSTUI_VERSION/g" "$INSTALL_PREFIX/share/man/man1/systui.1"
+    # Escape the replacement: a version containing / & or \ would abort or
+    # corrupt the page after the tree had already been installed.
+    _version_escaped=$(printf '%s' "$SYSTUI_VERSION" | sed 's/[\\&|]/\\&/g')
+    sed -i "s/__SYSTUI_VERSION__/$_version_escaped/g" "$INSTALL_PREFIX/share/man/man1/systui.1"
 }
 
 cleanup() {

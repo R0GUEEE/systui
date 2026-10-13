@@ -196,7 +196,8 @@ provision_load_config() {
         esac
         [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || { log "WARN: ignoring invalid config key: $key"; continue; }
         case "$key" in
-            LOGFILE|WARNFILE|SYSTUI_TMP|SYSTUI_TMP_ROOT|SYSTUI_LIBDIR|PATH|IFS|PM|INIT|DISTRO|DISTRO_*|PROV_PM|PROV_INIT|PROV_OS_ID)
+            LOGFILE|WARNFILE|SYSTUI_TMP|SYSTUI_TMP_ROOT|SYSTUI_LIBDIR|PATH|IFS|PM|INIT|DISTRO|DISTRO_*|PROV_PM|PROV_INIT|PROV_OS_ID|\
+LD_PRELOAD|LD_LIBRARY_PATH|BASH_ENV|ENV|SHELLOPTS|BASHOPTS|CDPATH|GLOBIGNORE|HOME|TMPDIR|SHELL|TERM|SSH_AUTH_SOCK)
                 log "WARN: refusing protected config key: $key"; continue ;;
         esac
         printf -v "$key" '%s' "$value"
