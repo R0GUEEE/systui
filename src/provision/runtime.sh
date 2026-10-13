@@ -160,8 +160,14 @@ provision_configure_sshd_inplace() {
     set -- "Port:$port" "PermitRootLogin:$root_policy" "PasswordAuthentication:yes" "X11Forwarding:$x11" "StrictModes:yes" "ClientAliveInterval:300"
     for pair in "$@"; do
         key=${pair%%:*}; value=${pair#*:}
-        if grep -qE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]" "$cfg"; then
-            sed -i "0,/^[[:space:]]*#\{0,1\}[[:space:]]*${key}[[:space:]].*/s//${key} ${value}/" "$cfg"
+        # GNU's `0,/re/` address does not exist in BusyBox sed: it drops the
+        # edit and still exits 0, so the requested value was never written while
+        # the caller reported the host as hardened. Locate the first matching
+        # line and rewrite that single line instead.
+        local ln=""
+        ln=$(grep -nE "^[[:space:]]*#?[[:space:]]*${key}[[:space:]]" "$cfg" 2>/dev/null | head -n1 | cut -d: -f1)
+        if [ -n "$ln" ]; then
+            sed -i "${ln}s|.*|${key} ${value}|" "$cfg"
         else
             printf '%s %s\n' "$key" "$value" >> "$cfg"
         fi

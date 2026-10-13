@@ -21,11 +21,16 @@ TOP=20
 CSV=""
 
 while [ "$#" -gt 0 ]; do
+    # `set -u` + a missing value used to abort with "$2: unbound variable"
+    # instead of a usage error.
+    option_needs_value() { # <option> <argc>
+        [ "$2" -ge 2 ] || { printf 'Option %s requires a value\n' "$1" >&2; exit 2; }
+    }
     case "$1" in
-        --top) TOP="$2"; shift 2 ;;
-        --csv) CSV="$2"; shift 2 ;;
-        --features) FEATURES="$2"; MANIFEST="$FEATURES/.load-order"; shift 2 ;;
-        --manifest) MANIFEST="$2"; shift 2 ;;
+        --top) option_needs_value --top "$#"; TOP="$2"; shift 2 ;;
+        --csv) option_needs_value --csv "$#"; CSV="$2"; shift 2 ;;
+        --features) option_needs_value --features "$#"; FEATURES="$2"; MANIFEST="$FEATURES/.load-order"; shift 2 ;;
+        --manifest) option_needs_value --manifest "$#"; MANIFEST="$2"; shift 2 ;;
         -h|--help) sed -n '2,14p' "$0"; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$1" >&2; exit 2 ;;
     esac

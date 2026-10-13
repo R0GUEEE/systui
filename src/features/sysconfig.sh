@@ -3416,7 +3416,9 @@ _brew_complete_uninstall() {
     # Remove Homebrew path entries from common shell rc files
     local rcs=(/etc/profile.d/homebrew.sh ~/.bashrc ~/.bash_profile ~/.zshrc ~/.kshrc)
     for rc in "${rcs[@]}"; do
-        [ -f "$rc" ] && sed -i '/homebrew/Id' "$rc" 2>/dev/null || true
+        # BusyBox sed has no case-insensitive I flag: it reports an error and
+        # leaves the file untouched, and the old '2>/dev/null || true' hid it.
+        [ -f "$rc" ] && sed -i '/[Hh][Oo][Mm][Ee][Bb][Rr][Ee][Ww]/d' "$rc" 2>/dev/null || true
     done
 }
 

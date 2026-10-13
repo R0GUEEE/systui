@@ -20,7 +20,10 @@ CORE = ROOT / "src" / "core"
 
 WIDGETS = ("tui_menu_no_tags", "tui_menu", "tui_radio", "tui_check")
 
-FUNC_DEF = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{?\s*$", re.M)
+# A definition may carry a trailing comment on the brace line
+# (`foo() { # <args>`); missing those attributed every call site to an
+# earlier definition of a different function.
+FUNC_DEF = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*(?:\{.*)?$", re.M)
 CALL = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*(?:\(\))?")
 ARG = re.compile(r'"((?:[^"\\]|\\.)*)"|\'([^\']*)\'|(\S+)')
 
@@ -378,6 +381,28 @@ def main():
                         break
                 if consumed:
                     continue
+            # A captured menu result with no dispatch arm for it is the
+            # "nothing happens when the user picks an option" failure this tool
+            # exists to catch; it used to be skipped entirely. Two shapes must
+            # NOT be flagged:
+            #  * a bare widget call is usually a menu *helper* whose result is
+            #    returned to its caller, which does the dispatching;
+            #  * a value that is referenced after the call (passed on, consumed
+            #    as an argument, re-tested) cannot be judged statically.
+            if var and not handled:
+                # Start at the capture line itself: `sel=$(tui_check ...)`;
+                # `lines[lineno:]` is off by one and skipped it, so a value
+                # consumed on its own line looked unreferenced.
+                referenced = any(
+                    re.search(r"\$\{?" + re.escape(var) + r"\b", line)
+                    for line in lines[lineno - 1:span[1] + 1]
+                )
+                if not referenced:
+                    for t in tags:
+                        if t in ("back", "cancel", "skip", "quit"):
+                            continue
+                        dead.append((path.relative_to(ROOT), lineno, fn, t))
+                continue
             for t in tags:
                 if t in ("back", "cancel", "skip", "quit"):
                     continue
