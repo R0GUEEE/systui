@@ -51,6 +51,10 @@ jobs:
             src/features/*argmax-cleanup.sh \
             share/homebrew/install-homebrew-root.sh
           shellcheck -S warning -e SC1090 -x src/provision/runtime.sh
+          # These were only syntax-checked before. tests/*.sh is deliberately
+          # excluded: dynamic `source "$VAR"` is intentional there (SC1090).
+          shellcheck -S warning -x tools/*.sh
+          shellcheck -S warning -s sh src/provision/provision-ultimate.sh
 
       - name: Core runtime invariants
         shell: bash
@@ -70,18 +74,37 @@ jobs:
             src/sysconfig/repositories.sh
             "${modern_features[@]}"
           )
-          if grep -nE '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' "${modern[@]}"; then
-            echo 'Modern core/rootfs/sysconfig modules must not export Bash functions.' >&2
-            exit 1
-          fi
-          if grep -nE -- '--(menu|radiolist|checklist|textbox|msgbox|yesno|inputbox|passwordbox|gauge)[^#]*[[:space:]][0-9]+[[:space:]][0-9]+' src/core/tui-widgets.sh; then
-            echo 'TUI widgets must use responsive geometry rather than fixed dimensions.' >&2
-            exit 1
-          fi
-          if grep -nE 'declare -f .*\|[[:space:]]*(sed|awk)' src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh "${modern_features[@]}"; then
-            echo 'Modern modules must preserve functions with Bash builtins, not external declare-f pipelines.' >&2
-            exit 1
-          fi
+          # A grep whose file list contains a missing file exits 2, which an
+          # `if` reads as "no match" and set -e ignores in a condition -- so a
+          # renamed module used to turn a required invariant into a silent pass.
+          assert_clean() { # <description> <pattern> <files...>
+            local desc="$1" pat="$2"; shift 2
+            local out rc=0
+            out=$(grep -nE -- "$pat" "$@") || rc=$?
+            if [ "$rc" -eq 2 ]; then
+              printf 'invariant checks could not read their input (missing file?): %s\n' "$desc" >&2
+              exit 1
+            fi
+            if [ -n "$out" ]; then
+              printf '%s\n%s\n' "$desc" "$out" >&2
+              exit 1
+            fi
+          }
+          for f in "${modern[@]}"; do
+            [ -f "$f" ] || { echo "invariant list references a missing file: $f" >&2; exit 1; }
+          done
+          for g in src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh; do
+            [ -f "$g" ] || { echo "invariant glob matched nothing: $g" >&2; exit 1; }
+          done
+          assert_clean 'Modern core/rootfs/sysconfig modules must not export Bash functions.' \
+            '^[[:space:]]*export[[:space:]]+-f([[:space:]]|$)' \
+            "${modern[@]}"
+          assert_clean 'TUI widgets must use responsive geometry rather than fixed dimensions.' \
+            '--(menu|radiolist|checklist|textbox|msgbox|yesno|inputbox|passwordbox|gauge)[^#]*[[:space:]][0-9]+[[:space:]][0-9]+' \
+            src/core/tui-widgets.sh
+          assert_clean 'Modern modules must preserve functions with Bash builtins, not external declare-f pipelines.' \
+            'declare -f .*\|[[:space:]]*(sed|awk)' \
+            src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh "${modern_features[@]}"
 
       - name: Feature manifest integrity
         shell: bash

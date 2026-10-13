@@ -406,7 +406,12 @@ DEF_USER="${TARGET_USER:-${SUDO_USER:-}}"
 if [ -z "$DEF_USER" ] || [ "$DEF_USER" = root ]; then
     DEF_USER="$(awk -F: '$3>=1000 && $3<65534 {print $1; exit}' /etc/passwd)"
 fi
-[ -n "$DEF_USER" ] || DEF_USER="aok"
+# Do not invent an account. A non-interactive run (CI, cloud-init, ssh) with no
+# existing login used to create a privileged 'aok' user nobody asked for; skip
+# primary-user provisioning instead and say how to opt in.
+if [ -z "$DEF_USER" ]; then
+    warn "No existing login account to default to; set TARGET_USER=<name> to create one."
+fi
 DEF_HOSTNAME="$(cat /etc/hostname 2>/dev/null)"
 [ -n "$DEF_HOSTNAME" ] && [ "$DEF_HOSTNAME" != localhost ] || DEF_HOSTNAME="linux-ultimate"
 
@@ -917,9 +922,21 @@ if command -v sshd >/dev/null 2>&1; then
     # Use a drop-in if the main config already has an Include directive (sshd >=7.3)
     if file_has_prefix "$_SSH_MAIN" "Include" && [ -d /etc/ssh/sshd_config.d ]; then
         note "Writing SSH hardening drop-in: $_SSH_DROP"
-        cat > "$_SSH_DROP" <<'_SSHEOF'
+        # Never discard an unmanaged file at this path: keep one backup and say
+        # so. The drop-in is only ours when it carries the marker below.
+        if [ -e "$_SSH_DROP" ] && ! grep -q '^# Managed by systui provision' "$_SSH_DROP" 2>/dev/null; then
+            _rto 10 cp -a "$_SSH_DROP" "$_SSH_DROP.systui-bak" 2>/dev/null || \
+                cp -a "$_SSH_DROP" "$_SSH_DROP.systui-bak" 2>/dev/null || true
+            warn "Replaced an unmanaged $_SSH_DROP (backup: $_SSH_DROP.systui-bak)"
+        fi
+        # Keep the port the administrator already configured instead of forcing
+        # 22 back on every run.
+        _SSH_PORT="$(awk '$1=="Port" {print $2; exit}' "$_SSH_MAIN" 2>/dev/null)"
+        [ -n "$_SSH_PORT" ] || _SSH_PORT=22
+        [ "$_SSH_PORT" = "22" ] || note "Keeping the configured SSH port $_SSH_PORT"
+        cat > "$_SSH_DROP" <<_SSHEOF
 # Managed by systui provision -- do not edit manually.
-Port 22
+Port $_SSH_PORT
 PermitRootLogin no
 PasswordAuthentication yes
 PubkeyAuthentication yes

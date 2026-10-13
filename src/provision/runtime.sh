@@ -141,6 +141,12 @@ provision_configure_sshd() {
             return $?
         fi
     fi
+    # Rewriting this path unconditionally would silently discard a file the
+    # administrator (or another tool) put there. Keep one copy the first time.
+    if [ -e "$dropin" ] && ! grep -q '^# Managed by systui' "$dropin" 2>/dev/null; then
+        cp -a "$dropin" "$dropin.systui-bak" 2>/dev/null || true
+        log "WARN: replacing an unmanaged $(basename "$dropin"); backup kept as $dropin.systui-bak"
+    fi
     cat > "$dropin" <<EOF
 # Managed by systui.
 Port $port
