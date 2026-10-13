@@ -131,7 +131,10 @@ tui_capture_menu() { # <destination-var> <tui_menu|tui_menu_no_tags> <args...>
 
 tui_call_menu() { # <function> <label> [args...]
     local fn="$1" label="${2:-$1}"
-    shift 2 || true
+    # Consume both arguments when they are present. A bare `shift 2` on a
+    # one-argument call fails and consumes nothing, so the function name was
+    # forwarded to the menu as its first argument.
+    if [ "$#" -ge 2 ]; then shift 2; else shift 1; fi
     if declare -F "$fn" >/dev/null 2>&1; then
         "$fn" "$@"
         return $?
@@ -195,7 +198,7 @@ tui_radio() {
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
     local rc=0
     "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --radiolist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
-    tui_dialog_status "radiolist" "$1" "$rc"
+    tui_dialog_status "radiolist" "$title" "$rc"
 }
 
 tui_check() {
@@ -203,7 +206,7 @@ tui_check() {
     tui_geometry menu >/dev/null; h=$TUI_H; w=$TUI_W; list=$TUI_LIST
     local rc=0
     "$DIALOG" --backtitle "$BACKTITLE" --title "$title" --checklist "$text" "$h" "$w" "$list" "$@" 3>&1 1>&2 2>&3 || rc=$?
-    tui_dialog_status "checklist" "$1" "$rc"
+    tui_dialog_status "checklist" "$title" "$rc"
 }
 
 tui_text() {

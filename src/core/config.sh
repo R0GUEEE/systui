@@ -17,8 +17,11 @@ export SYSTUI_LIBDIR
 
 # Project info
 if [ -r "$SYSTUI_LIBDIR/src/VERSION" ]; then
-    # builtin read + parameter expansion: avoids the head/tr pipeline forks
-    read -r SYSTUI_VERSION < "$SYSTUI_LIBDIR/src/VERSION" || SYSTUI_VERSION=""
+    # builtin read + parameter expansion: avoids the head/tr pipeline forks.
+    # `read` also sets the variable when the last line has no newline, but it
+    # reports failure; the `|| true` keeps that good value instead of wiping it
+    # (the old `|| SYSTUI_VERSION=""` silently downgraded the version to "dev").
+    IFS= read -r SYSTUI_VERSION < "$SYSTUI_LIBDIR/src/VERSION" || true
     SYSTUI_VERSION=${SYSTUI_VERSION//[[:space:]]/}
     [ -n "$SYSTUI_VERSION" ] || SYSTUI_VERSION="dev"
 else
@@ -37,7 +40,9 @@ SYSTUI_TMP_ROOT="${SYSTUI_TMP_ROOT:-${TMPDIR:-/tmp}}"
     _systui_cwd=$PWD
     if cd -- "$SYSTUI_TMP_ROOT" 2>/dev/null; then
         SYSTUI_TMP_ROOT=$PWD
-        cd -- "$_systui_cwd" || exit 1
+        # Returning to the launch directory is cosmetic; if it was removed
+        # while the TUI ran, failing to cd back must not kill the application.
+        cd -- "$_systui_cwd" 2>/dev/null || true
     fi
     unset _systui_cwd
 if [ "${SYSTUI_STRICT_CHILD:-0}" = 1 ] && [ -n "${SYSTUI_TMP:-}" ] && [ -f "${SYSTUI_TMP}/.systui-owned" ]; then
@@ -120,6 +125,10 @@ die() {
 # STRICT EXECUTION (opt-in)
 ###############################################################################
 
+# The single definition. src/core/strict-exec.sh used to redefine run_strict
+# with a second body, which silently shadowed this one; it now points here.
+# Callers rely on: fail-fast inside the child, and the routine's own exit
+# status class preserved (see the ERR trap below).
 run_strict() {
     local desc="$1" fn="$2"; shift 2
     if ! declare -F "$fn" >/dev/null; then
@@ -136,16 +145,30 @@ run_strict() {
         . "$SYSTUI_LIBDIR/src/core/config.sh"
         . "$SYSTUI_LIBDIR/src/core/tui-widgets.sh"
         . "$SYSTUI_LIBDIR/src/core/common.sh"
-        _manifest="$SYSTUI_LIBDIR/src/features/.load-order"
-        [ -r "$_manifest" ] || { echo "systui: missing feature load manifest" >&2; exit 1; }
-        while IFS= read -r _rel || [ -n "$_rel" ]; do
-            case "$_rel" in ""|\#*) continue ;; esac
-            _f="$SYSTUI_LIBDIR/src/features/$_rel"
-            [ -f "$_f" ] || { echo "systui: manifest references missing feature: $_rel" >&2; exit 1; }
-            . "$_f" || exit 1
-        done < "$_manifest"
+        # Prefer the central loader: it also performs the ARG_MAX export scrub
+        # this child needs on constrained hosts. Fall back to an inline walk
+        # when an older tree has no loader.sh.
+        if [ -r "$SYSTUI_LIBDIR/src/core/loader.sh" ]; then
+            . "$SYSTUI_LIBDIR/src/core/loader.sh" || exit 1
+        fi
+        if declare -F systui_load_features >/dev/null 2>&1; then
+            systui_load_features || exit 1
+        else
+            _manifest="$SYSTUI_LIBDIR/src/features/.load-order"
+            [ -r "$_manifest" ] || { echo "systui: missing feature load manifest" >&2; exit 1; }
+            while IFS= read -r _rel || [ -n "$_rel" ]; do
+                case "$_rel" in ""|\#*) continue ;; esac
+                _f="$SYSTUI_LIBDIR/src/features/$_rel"
+                [ -f "$_f" ] || { echo "systui: manifest references missing feature: $_rel" >&2; exit 1; }
+                . "$_f" || exit 1
+            done < "$_manifest"
+        fi
         detect_pm; detect_init; detect_distro
-        trap '"'"'warn "$SYSTUI_STRICT_DESC: unexpected error on line $LINENO"; exit 1'"'"' ERR
+        # Exit with the code that failed instead of flattening every failure to
+        # 1, so callers can tell a validation code (64/66) or a cancel (1) from
+        # a real fault. The message records the status rather than claiming
+        # every non-zero return is an "unexpected error".
+        trap '"'"'_systui_rc=$?; warn "$SYSTUI_STRICT_DESC: exit status $_systui_rc on line $LINENO"; exit "$_systui_rc"'"'"' ERR
         "$@"
     ' _ "$fn" "$@"
 }

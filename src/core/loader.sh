@@ -3,7 +3,7 @@
 
 systui_unexport_all_functions() {
     local line fn export_dump
-    export_dump="${SYSTUI_TMP:-${TMPDIR:-/tmp}}/.systui-exported-functions.$"
+    export_dump="${SYSTUI_TMP:-${TMPDIR:-/tmp}}/.systui-exported-functions.$$"
     # Avoid process substitution here. On iSH, spawning a helper Bash for every
     # feature is expensive and works against the ARG_MAX cleanup this function
     # is meant to provide. "declare" and the loop below are Bash builtins.
@@ -27,7 +27,10 @@ systui_unexport_all_functions() {
 # historical after-every-feature behaviour.
 systui_scrub_interval() {
     local n="${SYSTUI_SCRUB_INTERVAL:-4}"
-    case "$n" in ''|*[!0-9]*) n=8 ;; esac
+    # A malformed value falls back to the documented default (4), not to 8:
+    # 8 would silently double the peak environment size on the one host that
+    # must stay under ARG_MAX.
+    case "$n" in ''|*[!0-9]*) n=4 ;; esac
     [ "$n" -ge 1 ] || n=1
     printf '%s\n' "$n"
 }
