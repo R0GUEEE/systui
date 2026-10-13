@@ -60,7 +60,11 @@ bash -n "$integration"
 grep -Fq 'menu_rootfs()' "$integration" || fail 'late integration does not own the Rootfs menu'
 grep -Fq 'ioskit    "iOS-linuxkit for iSH-AOK' "$integration" || fail 'Rootfs does not expose iOS-linuxkit'
 grep -Fq 'tui_call_menu menu_ios_linuxkit' "$integration" || fail 'Rootfs iOS-linuxkit entry is not dispatched'
-if grep -Eq '^[[:space:]]*aok[[:space:]]+.*iSH-AOK / iOS LinuxKit|^[[:space:]]*ioskit[[:space:]]+.*iOS-linuxkit' "$base_file" "$integration"; then
+# The System Configuration front door must not grow its own iOS-Linuxkit entry.
+# Only $base_file is inspected: the Rootfs integration legitimately owns an
+# `ioskit ... "iOS-linuxkit for iSH-AOK"` line (asserted above), so including it
+# here made this guard reject the very entry the check above requires.
+if grep -Eq '^[[:space:]]*aok[[:space:]]+.*iSH-AOK / iOS LinuxKit|^[[:space:]]*ioskit[[:space:]]+.*iOS-linuxkit' "$base_file"; then
     fail 'iOS-linuxkit leaked back into System Configuration'
 fi
 if grep -q '^menu_sysconfig()' "$module"; then
@@ -499,13 +503,26 @@ pass 'export reports a missing tool instead of failing silently'
 pass 'redraw cache refreshes on mutation'
 
 ###############################################################################
+# The manager must stay out of System Configuration: the Sysconfig -> Rootfs
+# move (1c6bdb7 / f17b1e9) made Rootfs the owner, so there is no menu_sysconfig
+# alias left to preserve. The previous check asserted an alias
+# (_systui_menu_sysconfig_before_ioskit) that the move deleted, so it rejected
+# the post-move design instead of guarding it.
 (
     # shellcheck disable=SC1090
     menu_sysconfig() { :; }
     . "$module"
-    declare -F _systui_menu_sysconfig_before_ioskit >/dev/null \
-        || { echo 'the shipped System Configuration menu was not preserved' >&2; exit 1; }
+    if declare -F _systui_menu_sysconfig_before_ioskit >/dev/null; then
+        echo 'the manager still captures the System Configuration menu' >&2
+        exit 1
+    fi
+    case "$(declare -f menu_sysconfig)" in
+        *ioskit*|*aok*)
+            echo 'the manager redefined the System Configuration menu' >&2
+            exit 1 ;;
+    esac
+    :
 )
-pass 'shipped menu preserved under an alias'
+pass 'manager leaves the System Configuration menu alone'
 
 printf 'PASS: iOS LinuxKit manager\n'

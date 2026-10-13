@@ -3,6 +3,16 @@
 # Loaded after 112-ish-aok-optimization.sh so iOS-linuxkit has one authoritative
 # home under Rootfs and does not compete with System Configuration.
 
+# Standalone safety: this feature calls systui_alias_function below, so it must
+# be able to pull in the helper when it is sourced without core/common.sh
+# (tests, reduced builds). Every other feature that uses the helper does this.
+if ! declare -F systui_alias_function >/dev/null 2>&1; then
+    _systui_alias_mod="${SYSTUI_LIBDIR:-$(cd "${BASH_SOURCE[0]%/*}/../.." && pwd)}/src/core/alias.sh"
+    # shellcheck disable=SC1090
+    [ -r "$_systui_alias_mod" ] && . "$_systui_alias_mod"
+    unset _systui_alias_mod
+fi
+
 systui_aok_environment_text() {
     printf 'iSH-AOK / iOS LinuxKit environment\n=================================\n\n'
     printf 'iSH-AOK runtime : %s\n' "$([ -e /proc/ish ] && printf detected || printf not-detected)"
@@ -118,6 +128,7 @@ menu_rootfs() {
             ioskit    "iOS-linuxkit for iSH-AOK — install, images, runtime, AOT and tuning" \
             build     "Build a new rootfs (guided)" \
             download  "Download a prebuilt rootfs (always tar.gz)" \
+            manage    "Manage existing rootfs (chroot, inspect, pack, delete)" \
             workbench "Chroot workbench (manage rootfs)" \
             bootstrap "Bootstrap tools" \
             distros   "Distro managers" \
@@ -126,22 +137,19 @@ menu_rootfs() {
             ioskit)    tui_call_menu menu_ios_linuxkit "iOS-linuxkit for iSH-AOK" ;;
             build)     rootfs_builder || true ;;
             download)  rootfs_download || true ;;
+            manage)    rootfs_manage || true ;;
             workbench) menu_rootfs_workbench || true ;;
             bootstrap) menu_rootfs_bootstrap_tools || true ;;
             distros)   menu_rootfs_distro_managers || true ;;
             back|'') return 0 ;;
+            *)         tui_msg "Error" "Unknown option: $c" ;;
         esac
     done
 }
 
-# Extend the iOS-linuxkit front door with iSH-AOK-specific image tuning while
-# keeping setup, diagnostics, guest filesystem, validation and settings in the
-# same Rootfs-owned feature tree.
-if declare -F menu_ios_linuxkit >/dev/null 2>&1 \
-    && ! declare -F _systui_ioskit_base_menu >/dev/null 2>&1; then
-    systui_alias_function menu_ios_linuxkit _systui_ioskit_base_menu
-fi
-
+# The iOS-linuxkit front door lives here: the definition below adds iSH-AOK
+# image tuning (optimize) to the manager's menu and keeps setup, diagnostics,
+# guest filesystem, validation and settings in the same Rootfs-owned tree.
 menu_ios_linuxkit() {
     local c
     systui_ioskit_load
