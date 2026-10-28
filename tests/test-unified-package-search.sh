@@ -91,7 +91,9 @@ check "exact native match is ranked first" test "$(head -1 <<< "$out")" = vim
 out=$(run_feature 'systui_pkg_search_managers_available') || true
 check "manager list includes the native manager" grep -qx 'native' <<< "$out"
 check "manager list includes installed ecosystems" grep -qx 'npm' <<< "$out"
-check "manager list skips managers that are not installed" test -z "$(grep -x gem <<< "$out" || true)"
+# Composer is shadowed by a non-executable file, so it cannot be "installed";
+# gem is deliberately not asserted on because GitHub runners ship Ruby.
+check "manager list skips managers that are not installed" test -z "$(grep -x composer <<< "$out" || true)"
 out=$(run_feature 'systui_pkg_find_managers vim') || true
 check "ownership probe reports the native manager" grep -q '^native' <<< "$out"
 out=$(run_feature 'systui_pkg_find_managers golang.org/x/tools' ) || true
