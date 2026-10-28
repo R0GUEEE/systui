@@ -1,4 +1,5 @@
-#!/bin/sh
+#!/usr/bin/env bash
+# shellcheck shell=bash
 set -eu
 cd "$(dirname "$0")/.."
 . src/features/117-ios-linuxkit-aot-utility.sh
@@ -41,3 +42,33 @@ rm -f "$T/args" "$IOSKIT_AOT_RECORDINGS_DIR/aot_zlib.S"
 ios_aot_link && fail 'missing image accepted'
 [ ! -e "$T/args" ] || fail 'command ran with missing image'
 echo 'AOT utility tests passed'
+# Guided front door exposes a single ordered wizard and stops after a failed stage.
+tui_capture_menu() {
+    local dest=$1; shift
+    printf '%s\n' "$@" > "$T/menu"
+    printf -v "$dest" '%s' back
+}
+systui_ioskit_load() { :; }
+menu_ios_linuxkit_aot
+grep -q 'guided' "$T/menu" || fail 'guided setup is absent from AOT menu'
+GUIDE_LOG=$T/guide
+: > "$GUIDE_LOG"
+tui_msg() { :; }
+tui_yesno() { return 0; }
+ios_aot_host() { return 0; }
+ios_aot_setup() { echo setup >> "$GUIDE_LOG"; }
+ios_aot_configure() { echo paths >> "$GUIDE_LOG"; }
+ios_aot_build() { echo "build:$1" >> "$GUIDE_LOG"; if [ "${GUIDE_FAIL:-}" = "$1" ]; then return 1; fi; return 0; }
+ios_aot_rootfs() { echo rootfs >> "$GUIDE_LOG"; }
+ios_aot_prepare_guest() { echo guest >> "$GUIDE_LOG"; }
+ios_aot_record() { echo record >> "$GUIDE_LOG"; }
+ios_aot_link() { echo link >> "$GUIDE_LOG"; }
+ios_aot_validate() { echo validate >> "$GUIDE_LOG"; }
+GUIDE_FAIL=recorder
+if ios_aot_guided_setup; then fail 'guided setup ignored recorder failure'; fi
+[ "$(tail -1 "$GUIDE_LOG")" = build:recorder ] || fail 'guided setup continued after failure'
+GUIDE_FAIL=
+: > "$GUIDE_LOG"
+ios_aot_guided_setup || fail 'guided workflow did not complete'
+[ "$(tail -1 "$GUIDE_LOG")" = validate ] || fail 'guided workflow skipped validation'
+echo 'Guided AOT setup tests passed'

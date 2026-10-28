@@ -170,19 +170,36 @@ ios_aot_rollback() {
     tui_yesno 'Linux AOT rollback' 'Run a gadget-only guest shell? No files or builds will be deleted.' || return 1
     env ISH_JIT=0 "$IOSKIT_AOT_GADGET_DIR/ish" -f "$IOSKIT_AOT_ROOT" /bin/sh
 }
+ios_aot_guided_setup() {
+    ios_aot_host || return 1
+    tui_msg 'Guided AOT setup' 'This guided workflow builds and validates an experimental AOT executable for AArch64 Linux. It is not iOS-app JIT. It may install host/guest packages, run guest training workloads, and create new build, recording, and evidence directories. Existing data is never overwritten.'
+    tui_yesno 'Guided AOT setup' 'Start at source and dependency setup? You can cancel between every stage.' || return 0
+    ios_aot_setup || { ios_aot_error 'Source/dependency setup did not complete. Fix the reported issue, then resume from the matching individual step.'; return 1; }
+    ios_aot_configure || return 1
+    ios_aot_build gadget || { ios_aot_error 'Gadget build did not complete; remaining steps were skipped.'; return 1; }
+    ios_aot_build recorder || { ios_aot_error 'Recorder build did not complete; remaining steps were skipped.'; return 1; }
+    ios_aot_rootfs || return 1
+    ios_aot_configure || return 1
+    ios_aot_prepare_guest || { ios_aot_error 'Guest preparation did not complete; recording was skipped.'; return 1; }
+    ios_aot_record || { ios_aot_error 'Recording did not complete; linking was skipped.'; return 1; }
+    ios_aot_link || { ios_aot_error 'Linking did not complete; validation was skipped.'; return 1; }
+    ios_aot_validate || { ios_aot_error 'Linked validation did not pass. Do not treat this build as validated.'; return 1; }
+    tui_msg 'Guided AOT setup' 'The upstream linked-AOT validation target returned success. This validates the Linux-host artifact only; it does not enable JIT in the iOS app.'
+}
+
 menu_ios_linuxkit_aot() {
     local c
     systui_ioskit_load || return 1
     ios_aot_defaults
     while :; do
         tui_capture_menu c tui_menu_no_tags 'AArch64 Linux AOT' 'iOS-app JIT is not provided.' \
-          status 'Status' setup 'Setup checkout and dependencies' paths 'Configure paths' \
+          status 'Status' guided 'Guided AOT installation and setup' setup 'Setup checkout and dependencies' paths 'Configure paths' \
           gadget 'Build gadget' recorder 'Build recorder' rootfs 'Import or select training rootfs' \
           guest 'Install training guest packages' \
           record 'Record images' link 'Link AOT executable' validate 'Validate linked target' \
           rollback 'Run gadget shell (no persistent changes)' back 'Back' || return $?
         case "$c" in
-          status) ios_aot_status;; setup) ios_aot_setup;; paths) ios_aot_configure;;
+          status) ios_aot_status;; guided) ios_aot_guided_setup;; setup) ios_aot_setup;; paths) ios_aot_configure;;
           gadget|recorder) ios_aot_build "$c";; rootfs) ios_aot_rootfs;; guest) ios_aot_prepare_guest;;
           record) ios_aot_record;; link) ios_aot_link;; validate) ios_aot_validate;;
           rollback) ios_aot_rollback;; back|'') return 0;;
