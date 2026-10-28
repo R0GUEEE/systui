@@ -137,8 +137,10 @@ cmd_exists <command>            # Check if command exists
 
 The main menu’s **iSH-AOK Tools** entry contains Ultimate Provision and discovers
 runnable top-level files in `/AOK/tools` each time the menu opens or redraws.
-Provision scripts, data files, directories and symbolic links are excluded.
-Selecting a tool lets you supply literal arguments and review the command before
+Tools are grouped into task-based submenus with descriptive names; unrecognized
+new tools appear under Other. Provision scripts, data files, directories and
+symbolic links are excluded. Selecting a tool lets you supply literal arguments
+and review the command before
 running it interactively; tools can make system changes with your current
 privileges. If `/AOK/tools` is unavailable, Ultimate Provision remains accessible.
 `SYSTUI_AOK_TOOLS_DIR` overrides the directory, including for tests.

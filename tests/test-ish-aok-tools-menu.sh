@@ -8,30 +8,46 @@ source "$root/src/features/116-ish-aok-tools.sh"
 fail() { echo "FAIL: $*" >&2; exit 1; }
 tui_msg() { :; }
 menu_ultimate_provision() { : > "$tmp/provision-called"; }
-# Snapshot each draw without relying on subshell state.
+# Snapshot category and submenu draws, including refresh while browsing.
 draw=0
- tui_capture_menu() {
+tui_capture_menu() {
     local dest=$1; shift 4
     draw=$((draw+1)); printf '%s\n' "$@" > "$tmp/draw$draw"
     case $draw in
         1) printf -v "$dest" '%s' provision ;;
-        2) printf '#!/bin/sh\nexit 0\n' > "$SYSTUI_AOK_TOOLS_DIR/new tool"; printf -v "$dest" '%s' provision ;;
+        2) printf -v "$dest" '%s' desktop ;;
+        3) printf '#!/bin/sh\nexit 0\n' > "$SYSTUI_AOK_TOOLS_DIR/setup-xfce.sh"; printf -v "$dest" '%s' tool_0 ;;
+        4) printf -v "$dest" '%s' back ;;
+        5) printf -v "$dest" '%s' other ;;
+        6) printf -v "$dest" '%s' back ;;
         *) printf -v "$dest" '%s' back ;;
     esac
 }
+# Verify selected tag resolves to the actual file without executing it.
+systui_aok_tool_run_original=$(declare -f systui_aok_tool_run)
+eval "${systui_aok_tool_run_original/systui_aok_tool_run ()/systui_aok_tool_run_saved ()}"
+systui_aok_tool_run() { printf '%s\n' "$1" > "$tmp/selected"; }
+printf '#!/bin/sh\nexit 0\n' > "$SYSTUI_AOK_TOOLS_DIR/setup-wayland.sh"
 printf '#!/bin/sh\nexit 0\n' > "$SYSTUI_AOK_TOOLS_DIR/first tool"
 printf '#!/bin/sh\nexit 0\n' > "$SYSTUI_AOK_TOOLS_DIR/Ultimate-Provision.sh"
-printf 'data\n' > "$SYSTUI_AOK_TOOLS_DIR/notes.txt"; chmod 644 "$SYSTUI_AOK_TOOLS_DIR/notes.txt"
+printf 'data\n' > "$SYSTUI_AOK_TOOLS_DIR/notes.txt"
 ln -s "$SYSTUI_AOK_TOOLS_DIR/first tool" "$SYSTUI_AOK_TOOLS_DIR/linked-tool"
+[ "$(systui_aok_tool_info setup-wayland.sh)" = 'desktop|Install Wayland Desktop|Install labwc, sway and display components' ] || fail 'wayland classification'
+[ "$(systui_aok_tool_info manage-roots.sh)" = 'roots|Manage Root Filesystems|List, install or select root filesystems' ] || fail 'roots classification'
+[ "$(systui_aok_tool_info future-new_tool.sh)" = 'other|future new tool|Unrecognized tool; review before running' ] || fail 'unknown classification'
 menu_ish_aok_tools
 [ -e "$tmp/provision-called" ] || fail 'provision menu'
-grep -q -F 'first tool' "$tmp/draw1" || fail 'tool with spaces missing'
-! grep -q -F 'new tool' "$tmp/draw2" || fail 'tool discovered before creation'
-grep -q -F 'new tool' "$tmp/draw3" || fail 'dynamic refresh'
-! grep -Eqi 'Ultimate-Provision.sh|notes.txt|linked-tool' "$tmp/draw3" || fail 'excluded files'
-SYSTUI_AOK_TOOLS_DIR="$tmp/missing"; draw=2; menu_ish_aok_tools
-grep -q -F 'Ultimate Provision' "$tmp/draw3" || fail 'missing directory'
+grep -q -F 'Wayland and Desktop' "$tmp/draw1" || fail 'desktop category missing'
+grep -q -F 'Other Tools' "$tmp/draw1" || fail 'other category missing'
+grep -q -F 'Install Wayland Desktop' "$tmp/draw3" || fail 'friendly title missing'
+grep -q -F 'Install the Xfce desktop' "$tmp/draw4" || fail 'dynamic refresh'
+[ "$(cat "$tmp/selected")" = "$SYSTUI_AOK_TOOLS_DIR/setup-wayland.sh" ] || fail 'wrong tool selected'
+grep -q -F 'first tool' "$tmp/draw6" || fail 'unknown tool missing'
+! grep -Eqi 'Ultimate-Provision.sh|notes.txt|linked-tool' "$tmp/draw6" || fail 'excluded files'
+SYSTUI_AOK_TOOLS_DIR="$tmp/missing"; draw=6; menu_ish_aok_tools
+grep -q -F 'Ultimate Provision' "$tmp/draw7" || fail 'missing directory'
 SYSTUI_AOK_TOOLS_DIR="$tmp/tools"
+eval "$(declare -f systui_aok_tool_run_saved | sed '1s/systui_aok_tool_run_saved/systui_aok_tool_run/')"
 # Record literal argument bytes and prove shell metacharacters are not evaluated.
 printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "$OUT"\n' > "$tmp/tools/safe tool"
 chmod 644 "$tmp/tools/safe tool"
