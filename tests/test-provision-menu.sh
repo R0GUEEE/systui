@@ -34,10 +34,13 @@ done
 grep -q 'skipped: \$p (unavailable or timed out)' \
     "$PROJECT_DIR/src/provision/provision-ultimate.sh"
 
-# Ultimate Provision is a first-class main-menu option.
-grep -q 'provision "Ultimate Provision — quick system setup"' "$PROJECT_DIR/install.sh"
-grep -q 'provision)' "$PROJECT_DIR/install.sh"
-grep -q 'menu_ultimate_provision' "$PROJECT_DIR/install.sh"
+# Provision is nested under the iSH-AOK Tools entry.
+grep -q 'ish_aok "iSH-AOK Tools"' "$PROJECT_DIR/install.sh"
+grep -q 'ish_aok) tui_call_menu menu_ish_aok_tools' "$PROJECT_DIR/install.sh"
+grep -q 'menu_ultimate_provision' "$PROJECT_DIR/src/features/116-ish-aok-tools.sh"
+! grep -q 'performance "Performance tuning"' "$PROJECT_DIR/install.sh"
+! grep -q 'performance) tui_call_menu menu_performance' "$PROJECT_DIR/install.sh"
+! grep -q 'performance "Advanced performance tuning"' "$PROJECT_DIR/src/features/sysconfig.sh"
 grep -q 'quick "Quick setup (install/update, configure, and run)"' \
     "$PROJECT_DIR/src/features/ultimate-provision.sh"
 

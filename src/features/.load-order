@@ -131,4 +131,5 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ios-linuxkit-manager.s
 112-ish-aok-optimization.sh
 113-ish-aok-sysconfig-integration.sh
 115-unified-package-search.sh
+116-ish-aok-tools.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh

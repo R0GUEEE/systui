@@ -30,6 +30,7 @@ sudo systui
 ```bash
 sudo systui
 → Main Menu
+→ iSH-AOK Tools
 → Ultimate Provision
 → Configure quick-setup settings
 → Quick setup (install/update, review, and run)
@@ -131,6 +132,16 @@ pm_remove <pkgs...>             # Remove packages
 pm_update                        # Update package lists
 cmd_exists <command>            # Check if command exists
 ```
+
+### iSH-AOK Tools
+
+The main menu’s **iSH-AOK Tools** entry contains Ultimate Provision and discovers
+runnable top-level files in `/AOK/tools` each time the menu opens or redraws.
+Provision scripts, data files, directories and symbolic links are excluded.
+Selecting a tool lets you supply literal arguments and review the command before
+running it interactively; tools can make system changes with your current
+privileges. If `/AOK/tools` is unavailable, Ultimate Provision remains accessible.
+`SYSTUI_AOK_TOOLS_DIR` overrides the directory, including for tests.
 
 ### Package search across every installed manager
 
@@ -237,13 +248,14 @@ sudo systui
 
 # Navigate with arrow keys, Enter to select
 Main Menu
-  → Ultimate Provision
-    → Quick setup (install/update, review, and run)
-    → Install or update Ultimate Provision
-    → Configure quick-setup settings
-    → Show status and current settings
-    → Run Ultimate Provision now
-    → Remove installed Ultimate Provision
+  → iSH-AOK Tools
+    → Ultimate Provision
+      → Quick setup (install/update, review, and run)
+      → Install or update Ultimate Provision
+      → Configure quick-setup settings
+      → Show status and current settings
+      → Run Ultimate Provision now
+      → Remove installed Ultimate Provision
 ```
 
 ### Quick System Setup
@@ -251,7 +263,7 @@ Main Menu
 ```bash
 # On a supported Linux distribution
 sudo systui
-→ Ultimate Provision → Configure quick-setup settings
+→ iSH-AOK Tools → Ultimate Provision → Configure quick-setup settings
 → Quick setup (install/update, review, and run)
 ```
 

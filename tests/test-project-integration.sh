@@ -39,7 +39,7 @@ declare -f svc | grep -q 'SYSTUI_SERVICE_RUNTIME'
 # Final assembled menu graph: every user-visible top-level and System
 # Configuration target must exist after the complete feature manifest loads.
 for menu_fn in \
-    menu_health menu_ultimate_provision menu_rootfs menu_sysconfig menu_performance \
+    menu_health menu_ish_aok_tools menu_ultimate_provision menu_rootfs menu_sysconfig \
     menu_sysconfig_basics menu_packages menu_shells menu_editors menu_file_managers \
     menu_network menu_services menu_users menu_storage; do
     declare -F "$menu_fn" >/dev/null || {

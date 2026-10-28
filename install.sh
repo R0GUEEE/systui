@@ -572,10 +572,9 @@ main_menu() {
         runtime="${SYSTUI_ENVIRONMENT:-unknown}"
         choice=$(tui_menu "Main Menu" "Runtime: $runtime  ·  Init: ${INIT:-unknown}  ·  Packages: ${PM:-unknown}\n\nsystui — choose a section:" \
             health "System Health & diagnostics" \
-            provision "Ultimate Provision — quick system setup" \
+            ish_aok "iSH-AOK Tools" \
             rootfs "Root Filesystems — build, enter and manage" \
             config "System Configuration" \
-            performance "Performance tuning" \
             quit "Quit")
         rc=$?
         case "$rc" in
@@ -589,10 +588,9 @@ main_menu() {
         esac
         case "$choice" in
             health) tui_call_menu menu_health "System Health" ;;
-            provision) tui_call_menu menu_ultimate_provision "Ultimate Provision" ;;
+            ish_aok) tui_call_menu menu_ish_aok_tools "iSH-AOK Tools" ;;
             rootfs) tui_call_menu menu_rootfs "Root Filesystems" ;;
             config) tui_call_menu menu_sysconfig "System Configuration" ;;
-            performance) tui_call_menu menu_performance "Performance tuning" ;;
             quit) return ;;
             *) printf 'systui: unexpected main-menu selection: %s\n' "$choice" >&2; return 1 ;;
         esac

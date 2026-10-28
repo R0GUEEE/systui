@@ -11982,7 +11982,6 @@ menu_sysconfig() {
             services    "Services ($INIT, logs, unit creator, init swap)" \
             users       "Users (passwords, sudoers, aging, SSH keys...)" \
             storage     "Storage (mounts, labels, format, SMART...)" \
-            performance "Advanced performance tuning" \
             back        "Back to main menu") || return 0
         case "$c" in
             common)      menu_sysconfig_common ;;
@@ -11994,7 +11993,6 @@ menu_sysconfig() {
             services)    menu_services ;;
             users)       menu_users ;;
             storage)     menu_storage ;;
-            performance) menu_performance ;;
             back)        return 0 ;;
         esac
     done
