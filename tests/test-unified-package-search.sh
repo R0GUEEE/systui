@@ -88,12 +88,12 @@ check "cargo search returns crate names" grep -qx 'stubcrate' <<< "$out"
 out=$(run_feature 'systui_pkg_search_native vim') || true
 check "native search returns the exact package" grep -qx 'vim' <<< "$out"
 check "exact native match is ranked first" test "$(head -1 <<< "$out")" = vim
-out=$(run_feature 'systui_pkg_search_managers_available') || true
+out=$(run_feature 'SYSTUI_PKG_SEARCH_BACKENDS="$SYSTUI_PKG_SEARCH_BACKENDS
+missing-test|systui-command-that-does-not-exist-47531|Missing|package"; systui_pkg_search_managers_available') || true
 check "manager list includes the native manager" grep -qx 'native' <<< "$out"
 check "manager list includes installed ecosystems" grep -qx 'npm' <<< "$out"
-# Composer is shadowed by a non-executable file, so it cannot be "installed";
-# gem is deliberately not asserted on because GitHub runners ship Ruby.
-check "manager list skips managers that are not installed" test -z "$(grep -x composer <<< "$out" || true)"
+# Test a deliberately nonexistent command; CI runners may ship gem or composer.
+check "manager list skips managers that are not installed" test -z "$(grep -x missing-test <<< "$out" || true)"
 out=$(run_feature 'systui_pkg_find_managers vim') || true
 check "ownership probe reports the native manager" grep -q '^native' <<< "$out"
 out=$(run_feature 'systui_pkg_find_managers golang.org/x/tools' ) || true
