@@ -69,6 +69,11 @@ systui_native_manager() { printf "apk\n"; }
 systui_package_manager_command() { command -v "$1" || printf "%s\n" "$1"; }
 systui_package_install_with() { printf "INSTALL[%s]:%s\n" "$1" "${*:2}"; }
 pm_search() { printf "RAW %s\n" "$1"; }
+# The real installer asks dpkg whether a failed package is already present; in
+# a subshell that has lost its function table the lookup falls through to the
+# web-install fallback, which needs helpers this test does not stub.
+dpkg() { return 1; }
+pkg_web_fallback() { return 1; }
 . "$FEATURE"
 eval "$BODY"
 CHECK
