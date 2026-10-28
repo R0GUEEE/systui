@@ -57,7 +57,11 @@ Modern core/rootfs modules must not use `export -f`.
 
 Feature files are sourced into one Bash process and normally do not need function inheritance. Serialized `BASH_FUNC_*` definitions consume a large portion of iSH-AOK's constrained process argument/environment space.
 
-Legacy exports still exist for compatibility. `src/core/loader.sh` automatically removes exported-function attributes after each feature on iSH so the environment does not grow throughout startup.
+Legacy exports still exist for compatibility. On iSH, `src/core/loader.sh`
+removes exported-function attributes in batches of four features by default and
+performs a final scrub, limiting environment growth during startup. Set
+`SYSTUI_SCRUB_INTERVAL` to change the batch size or
+`SYSTUI_SCRUB_FUNCTION_EXPORTS` to control the automatic policy.
 
 Any child process that needs Systui functions should source the required modules or use `run_strict`; it should not depend on exported Bash function bodies.
 
