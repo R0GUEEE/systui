@@ -18,7 +18,7 @@ menu_bedrock_aok() { echo invoked > "$tmp/opened"; }
 menu_rootfs
 [ -f "$tmp/opened" ] || { echo 'Bedrock not dispatched' >&2; exit 1; }
 for tag in bedrock aot build download manage workbench bootstrap distros back; do
-    rg -qx "$tag" "$tmp/rootfs-args" || { echo "Missing rootfs entry: $tag" >&2; exit 1; }
+    grep -qx "$tag" "$tmp/rootfs-args" || { echo "Missing rootfs entry: $tag" >&2; exit 1; }
 done
 # Dispatch is in the caller, not the command-substitution widget process.
 rm "$tmp/selected" "$tmp/opened"
@@ -32,11 +32,11 @@ tui_menu_no_tags() {
 }
 menu_ios_linuxkit_aot() { aot_state=opened; }
 aot_state=closed; menu_rootfs; [ "$aot_state" = opened ]
-rg -Fxq 'Ahead-of-time JIT — installation, setup and configuration' "$tmp/rootfs-args"
-! rg -qx ioskit "$tmp/rootfs-args"
+grep -Fxq 'Ahead-of-time JIT — installation, setup and configuration' "$tmp/rootfs-args"
+! grep -qx ioskit "$tmp/rootfs-args"
 # Cancellation exits; real widget errors propagate unchanged.
 tui_menu_no_tags() { return 1; }; menu_rootfs
 tui_menu_no_tags() { return 3; }; rc=0; menu_rootfs || rc=$?; [ "$rc" = 3 ]
 # Original widget should not contain the historical injection wrapper.
-! declare -f tui_menu | rg -q 'menu_bedrock_aok|Bedrock-AOK'
+! declare -f tui_menu | grep -Eq 'menu_bedrock_aok|Bedrock-AOK'
 printf 'Bedrock rootfs full-manifest routing checks passed.\n'
