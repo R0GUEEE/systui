@@ -19,7 +19,7 @@ systui_load_features "$ROOT/src/features/.load-order"
 # Validate the effective functions after the entire override stack is loaded,
 # not intermediate phase implementations.
 required=(
-    menu_health menu_ish_aok_tools menu_ultimate_provision menu_rootfs menu_sysconfig
+    menu_health menu_ish_aok_tools menu_ultimate_provision menu_rootfs menu_sysconfig menu_ios_linuxkit_aot
     menu_sysconfig_basics menu_packages menu_shells menu_editors menu_file_managers
     menu_network menu_services menu_users menu_storage
     menu_package_operations pkg_catalogue menu_repos menu_package_managers menu_pkg_advanced

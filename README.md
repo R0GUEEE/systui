@@ -534,10 +534,11 @@ The package catalogue now includes:
   ecosystem actually ships — skins from upstream and community repositories —
   and links cloned `.ini` files into `~/.local/share/mc/skins` where mc looks
   for them.
-- **System Configuration → iOS LinuxKit** manages
-  [rcarmo/ios-linuxkit](https://github.com/rcarmo/ios-linuxkit) — the iSH fork
+- **Rootfs → Ahead-of-time JIT** provides the AArch64 Linux-host AOT pipeline
+  for [rcarmo/ios-linuxkit](https://github.com/rcarmo/ios-linuxkit) — the iSH fork
   that runs an AArch64 Linux userland as a command-line process on an AArch64
-  Linux host and inside the iOS app. One screen covers the documented toolchain:
+  Linux host. The AOT CLI workflow is distinct from the iOS app: the upstream
+  Xcode bridge disables the native JIT/AOT backend. The manager covers:
   check out the source with submodules, check and install the build
   dependencies against the detected package manager, build the release or debug
   runtime, download and verify the pinned Alpine root filesystem (SHA-256 plus a
@@ -570,6 +571,12 @@ The package catalogue now includes:
   its limits instead of offering dead actions: the Linux-host build targets
   AArch64, Xcode and signing cannot run here, and the runtime cannot be executed
   from the iOS sandbox because a sideloaded app cannot spawn processes.
+- **Rootfs → Bedrock-AOK** opens the Bedrock-AOK management menu; it is no
+  longer injected into the main menu. Rootfs → Ahead-of-time JIT provides
+  source/dependency setup, persistent path configuration, gadget and recorder
+  builds, guest preparation, recording, linking and upstream validation. It
+  requires a compatible AArch64 Linux host and a supported checkout; generated
+  artifacts alone do not prove validation, and it does not enable iOS-app JIT.
 - **Rootfs → Chroot workbench** works on *any* rootfs directory, not just builds
   under `$ROOTFS_BASE`, including trees unpacked from a third-party tarball:
   - Selectable execution engine — `chroot`, `proot` (no root required),

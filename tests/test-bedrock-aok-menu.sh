@@ -46,23 +46,12 @@ check "Rootfs picker removes Bedrock tag" bash -c "! grep -qx bedrock '$tmp/chec
 check "Rootfs picker keeps Debian" grep -qx debian "$tmp/check-args"
 check "Rootfs picker keeps Alpine" grep -qx alpine "$tmp/check-args"
 
-# The top-level menu wrapper inserts Bedrock before Quit, consumes that choice
-# locally, opens menu_bedrock_aok, then returns the next ordinary main choice.
-: > "$tmp/main-count"
-_systui_bedrock_orig_tui_menu() {
-    printf '%s\n' "$@" > "$tmp/main-args"
-    if [ ! -s "$tmp/main-count" ]; then
-        printf x > "$tmp/main-count"
-        printf 'bedrock\n'
-    else
-        printf 'quit\n'
-    fi
-}
-menu_bedrock_aok() { printf opened > "$tmp/bedrock-opened"; }
-main_result=$(tui_menu "Main Menu" "systui — choose a section:" rootfs "Rootfs Builder" quit "Quit")
-check "main-menu wrapper returns non-Bedrock choice" test "$main_result" = quit
-check "main-menu wrapper inserts Bedrock entry" grep -qx bedrock "$tmp/main-args"
-check "Bedrock choice opens dedicated menu" test -f "$tmp/bedrock-opened"
+# Bedrock does not wrap or inject into the top-level widget.
+tui_menu() { printf '%s\n' "$@" > "$tmp/main-args"; printf 'quit\n'; }
+source "$PROJECT_DIR/src/features/zzzzz-bedrock-aok-ui-fixes.sh"
+main_result=$(tui_menu "Main Menu" "Choose:" rootfs "Rootfs" quit "Quit")
+check "main menu returns ordinary selection" test "$main_result" = quit
+check "main menu has no injected Bedrock entry" bash -c "! grep -qx bedrock '$tmp/main-args'"
 
 # Static guards for the requested SPACE-to-select workflows and upstream source.
 feature="$PROJECT_DIR/src/features/zzz-bedrock-aok.sh"

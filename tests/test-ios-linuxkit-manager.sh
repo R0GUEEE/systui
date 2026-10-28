@@ -58,11 +58,11 @@ pass 'no exported functions'
 bash -n "$integration"
 
 grep -Fq 'menu_rootfs()' "$integration" || fail 'late integration does not own the Rootfs menu'
-grep -Fq 'ioskit    "iOS-linuxkit for iSH-AOK' "$integration" || fail 'Rootfs does not expose iOS-linuxkit'
-grep -Fq 'tui_call_menu menu_ios_linuxkit' "$integration" || fail 'Rootfs iOS-linuxkit entry is not dispatched'
+grep -Fq 'aot       "Ahead-of-time JIT — installation, setup and configuration' "$integration" || fail 'Rootfs does not expose iOS-linuxkit'
+grep -Fq 'tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT"' "$integration" || fail 'Rootfs iOS-linuxkit entry is not dispatched'
 # The System Configuration front door must not grow its own iOS-Linuxkit entry.
 # Only $base_file is inspected: the Rootfs integration legitimately owns an
-# `ioskit ... "iOS-linuxkit for iSH-AOK"` line (asserted above), so including it
+# `aot ... "Ahead-of-time JIT"` line (asserted above), so including it
 # here made this guard reject the very entry the check above requires.
 if grep -Eq '^[[:space:]]*aok[[:space:]]+.*iSH-AOK / iOS LinuxKit|^[[:space:]]*ioskit[[:space:]]+.*iOS-linuxkit' "$base_file"; then
     fail 'iOS-linuxkit leaked back into System Configuration'
