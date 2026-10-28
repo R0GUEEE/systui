@@ -2,8 +2,8 @@
 # Dedicated Bedrock-AOK integration for iSH-AOK.
 #
 # Bedrock-AOK is intentionally NOT part of the Rootfs Builder.  It is a
-# host-level multi-distro environment and is managed from its own top-level
-# systui menu.  The implementation follows:
+# host-level multi-distro environment and is managed from the Rootfs
+# submenu.  The implementation follows:
 #   https://github.com/vjnzbcsbgf-maker/Bedrock-AOK
 
 
@@ -525,51 +525,12 @@ menu_bedrock_aok() {
 ###############################################################################
 # Menu integration overlays
 #
-# install.sh defines the generated main_menu after feature modules are sourced.
-# To add Bedrock-AOK without duplicating that generated main menu, wrap tui_menu:
-# when the Main Menu is displayed, insert a Bedrock-AOK entry before Quit.  If
-# selected, run the Bedrock menu locally and then re-display Main Menu; only
-# non-Bedrock choices are returned to install.sh's main_menu case statement.
-#
-# Rootfs Builder's distro chooser is similarly filtered so its former Bedrock
-# entry cannot be selected.  Bedrock-AOK is now exclusively a host-level menu.
+# Keep Bedrock out of the Rootfs Builder distro checklist.
 ###############################################################################
 
-if declare -F tui_menu >/dev/null 2>&1 && ! declare -F _systui_bedrock_orig_tui_menu >/dev/null 2>&1; then
-    systui_alias_function tui_menu _systui_bedrock_orig_tui_menu
-fi
 if declare -F tui_check >/dev/null 2>&1 && ! declare -F _systui_bedrock_orig_tui_check >/dev/null 2>&1; then
     systui_alias_function tui_check _systui_bedrock_orig_tui_check
 fi
-
-tui_menu() {
-    local title="${1:-}" choice i inserted=0
-    local -a src=("$@") out=()
-    if [ "$title" != "Main Menu" ] || ! declare -F _systui_bedrock_orig_tui_menu >/dev/null 2>&1; then
-        _systui_bedrock_orig_tui_menu "$@"
-        return $?
-    fi
-
-    out+=("${src[0]}" "${src[1]}")
-    for ((i=2; i<${#src[@]}; i+=2)); do
-        if [ "${src[i]}" = quit ] && [ "$inserted" = 0 ]; then
-            out+=(bedrock "Bedrock-AOK (install/manage multi-distro environment)")
-            inserted=1
-        fi
-        out+=("${src[i]}" "${src[i+1]}")
-    done
-    [ "$inserted" = 1 ] || out+=(bedrock "Bedrock-AOK (install/manage multi-distro environment)")
-
-    while true; do
-        choice=$(_systui_bedrock_orig_tui_menu "${out[@]}") || return 1
-        if [ "$choice" = bedrock ]; then
-            menu_bedrock_aok
-            continue
-        fi
-        printf '%s\n' "$choice"
-        return 0
-    done
-}
 
 tui_check() {
     local title="${1:-}" i

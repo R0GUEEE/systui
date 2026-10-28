@@ -125,7 +125,8 @@ menu_rootfs() {
     while true; do
         tui_capture_menu c tui_menu_no_tags "Rootfs" \
             "Build, download, repair and run Linux root filesystems:" \
-            ioskit    "iOS-linuxkit for iSH-AOK — install, images, runtime, AOT and tuning" \
+            aot       "Ahead-of-time JIT — installation, setup and configuration" \
+            bedrock   "Bedrock-AOK (install/manage multi-distro environment)" \
             build     "Build a new rootfs (guided)" \
             download  "Download a prebuilt rootfs (always tar.gz)" \
             manage    "Manage existing rootfs (chroot, inspect, pack, delete)" \
@@ -134,7 +135,8 @@ menu_rootfs() {
             distros   "Distro managers" \
             back      "Back" || return $?
         case "$c" in
-            ioskit)    tui_call_menu menu_ios_linuxkit "iOS-linuxkit for iSH-AOK" ;;
+            aot)       tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT" ;;
+            bedrock)   tui_call_menu menu_bedrock_aok "Bedrock-AOK" ;;
             build)     rootfs_builder || true ;;
             download)  rootfs_download || true ;;
             manage)    rootfs_manage || true ;;

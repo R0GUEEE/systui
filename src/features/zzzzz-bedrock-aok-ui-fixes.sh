@@ -243,44 +243,4 @@ bedrock_aok_strata_menu() {
     done
 }
 
-# The initial Bedrock integration wrapped tui_menu and launched menu_bedrock_aok
-# directly when "bedrock" was selected from Main Menu. Main Menu itself is
-# invoked as: choice=$(tui_menu ...), so that launch occurs inside a command
-# substitution subshell. Attach the entire nested Bedrock UI to /dev/tty so its
-# dialog widgets, command output and interactive shells are not captured by the
-# parent's $(...) pipe. This removes the apparent freezes/double-Enter behavior.
-tui_menu() {
-    local title="${1:-}" choice i inserted=0
-    local -a src=("$@") out=()
-
-    if [ "$title" != "Main Menu" ] || ! declare -F _systui_bedrock_orig_tui_menu >/dev/null 2>&1; then
-        _systui_bedrock_orig_tui_menu "$@"
-        return $?
-    fi
-
-    out+=("${src[0]}" "${src[1]}")
-    for ((i=2; i<${#src[@]}; i+=2)); do
-        if [ "${src[i]}" = quit ] && [ "$inserted" = 0 ]; then
-            out+=(bedrock "Bedrock-AOK (install/manage multi-distro environment)")
-            inserted=1
-        fi
-        out+=("${src[i]}" "${src[i+1]}")
-    done
-    [ "$inserted" = 1 ] || out+=(bedrock "Bedrock-AOK (install/manage multi-distro environment)")
-
-    while true; do
-        choice=$(_systui_bedrock_orig_tui_menu "${out[@]}") || return 1
-        if [ "$choice" = bedrock ]; then
-            if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-                menu_bedrock_aok </dev/tty >/dev/tty 2>/dev/tty
-            else
-                menu_bedrock_aok
-            fi
-            continue
-        fi
-        printf '%s\n' "$choice"
-        return 0
-    done
-}
-
 return 0 2>/dev/null || true

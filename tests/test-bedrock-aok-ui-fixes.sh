@@ -58,14 +58,6 @@ shell_attaches_tty() {
 }
 check "interactive stratum shell attaches directly to tty" shell_attaches_tty
 
-main_bedrock_attaches_tty() {
-    local body
-    body=$(declare -f tui_menu)
-    # declare -f prints: menu_bedrock_aok < /dev/tty > /dev/tty 2> /dev/tty
-    grep -qE 'menu_bedrock_aok[[:space:]]+<[[:space:]]*/dev/tty[[:space:]]+>[[:space:]]*/dev/tty[[:space:]]+2>?[[:space:]]*/dev/tty' <<<"$body"
-}
-check "nested Bedrock main menu bypasses command-substitution capture" main_bedrock_attaches_tty
-
 # --- Config management + info-menu crash fix (added in this layer) -------------
 config_menu_functions_exist() {
     declare -F bedrock_aok_config_menu >/dev/null &&

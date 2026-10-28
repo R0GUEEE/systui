@@ -778,7 +778,8 @@ systui_ioskit_image_size() { # <path>
 
 systui_ioskit_image_valid() { # <path> -> a fakefs image is a directory tree
     [ -d "$1" ] || return 1
-    [ -d "$1/bin" ] || [ -d "$1/usr" ] || [ -d "$1/etc" ]
+    { [ -d "$1/data" ] && [ -f "$1/meta.db" ]; } ||
+        [ -d "$1/bin" ] || [ -d "$1/usr" ] || [ -d "$1/etc" ]
 }
 
 # The leading "/" is not part of a name, and neither are path separators or
