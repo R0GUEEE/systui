@@ -132,6 +132,27 @@ pm_update                        # Update package lists
 cmd_exists <command>            # Check if command exists
 ```
 
+### Package search across every installed manager
+
+`Packages -> Packages -> install`, `... -> search` and the catalogue's search
+all run through one search box (`src/features/115-unified-package-search.sh`).
+Instead of asking only the distro's own package manager, every manager
+installed on the host is consulted: the native manager (apt/apk/pacman/dnf/
+zypper/xbps/portage), apt-fast/nala, Flatpak, pip/pipx, npm/pnpm/yarn, Cargo,
+RubyGems, Composer, Go modules, AUR helpers, Nix and Homebrew.
+
+1. Type a name. Each manager's own index is queried (30 s cap per manager;
+   `SYSTUI_PKG_SEARCH_TIMEOUT=0` disables it).
+2. A preview lists what each manager found.
+3. Pick the manager that should install it. Managers that did not claim the
+   name are still offered as "search <manager> for <name>", and if nothing
+   matches, the native install path is offered anyway.
+
+Native results are filtered to exact-name hits (a full `apk search` dump would
+bury the ecosystem matches) and ranked exact-first; on apt with `apt-file`,
+hits show the program a package provides. The `Search managers` checklist
+(`Packages -> search`) narrows the set of managers for the rest of the session.
+
 ### Provisioning Modules
 
 #### `src/provision/provision-ultimate.sh`
