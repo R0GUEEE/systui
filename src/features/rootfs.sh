@@ -414,45 +414,70 @@ rootfs_resolve_backend() { # <distro> <selected> [arch] [release]
 rootfs_backend_menu() { # <distro> [arch] [release]
     local distro="$1" arch="${2:-}" release="${3:-}" tag desc selected
     local -a args=() missing=()
-    local usable=0
+    local usable=0 hint text menu_rc
 
-    while IFS='|' read -r tag desc; do
-        [ -n "$tag" ] || continue
-        if rootfs_backend_available "$tag"; then
-            args+=("$tag" "$desc" off)
-            usable=$((usable + 1))
+    # Stay on this step until a backend is chosen or the user explicitly leaves.
+    # Returning silently here used to drop the whole wizard back to the Rootfs
+    # menu right after the release choice, which looked like "the release menu
+    # is broken" on hosts with no bootstrap tool installed.
+    while true; do
+        args=(); missing=(); usable=0
+        while IFS='|' read -r tag desc; do
+            [ -n "$tag" ] || continue
+            if rootfs_backend_available "$tag"; then
+                args+=("$tag" "$desc" off)
+                usable=$((usable + 1))
+            else
+                missing+=("$tag — needs $(rootfs_backend_requirements "$tag")")
+            fi
+        done <<< "$(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)"
+
+        if [ "$usable" -eq 0 ]; then
+            hint=""
+            if [ ${#missing[@]} -gt 0 ]; then
+                printf -v hint '  %s\n' "${missing[@]}"
+                hint="\n\nCompatible tools for $distro and what each one needs:\n$hint"
+            fi
+            text="None of the bootstrap tools that can build a $distro${release:+/$release}${arch:+/$arch} rootfs are installed on this host.$hint\n\nOpen the bootstrap-tools menu to install one now? Choosing No returns to the Rootfs menu."
+            if ! tui_yesno "Rootfs Builder 4/13 — no bootstrap tool" "$text"; then
+                return 1
+            fi
+            if declare -F menu_rootfs_bootstrap_tools >/dev/null 2>&1; then
+                menu_rootfs_bootstrap_tools || true
+            else
+                tui_msg "Bootstrap tools unavailable" \
+                    "The bootstrap-tools menu could not be loaded.\n\nInstall one of the tools listed above with your package manager, then retry."
+                return 1
+            fi
+            continue
+        fi
+
+        # "Automatic" is only a meaningful choice when there is more than one
+        # usable tool to choose between.
+        if [ "$usable" -gt 1 ]; then
+            args=(auto "Automatic — first available: $(rootfs_resolve_backend "$distro" auto "$arch" "$release")" on "${args[@]}")
         else
-            missing+=("$tag — needs $(rootfs_backend_requirements "$tag")")
+            args[2]=on
         fi
-    done <<< "$(rootfs_backend_catalog "$distro" "$arch" "$release" 2>/dev/null)"
 
-    if [ "$usable" -eq 0 ]; then
-        local hint=""
+        text="Bootstrap backend (SPACE selects).\nOnly tools that can build $distro${release:+/$release}${arch:+/$arch} and are installed here are listed:"
         if [ ${#missing[@]} -gt 0 ]; then
-            printf -v hint '  %s\n' "${missing[@]}"
-            hint="\n\nCompatible tools for $distro and what each one needs:\n$hint"
+            text="$text\n\nNot installed: $(printf '%s, ' "${missing[@]%% —*}" | sed 's/, $//')"
         fi
-        tui_msg "No usable bootstrap backend" \
-            "None of the bootstrap tools that can build a $distro${release:+/$release}${arch:+/$arch} rootfs are installed on this host.$hint\nInstall one with Rootfs > Bootstrap tools, then retry."
-        return 1
-    fi
 
-    # "Automatic" is only a meaningful choice when there is more than one
-    # usable tool to choose between.
-    if [ "$usable" -gt 1 ]; then
-        args=(auto "Automatic — first available: $(rootfs_resolve_backend "$distro" auto "$arch" "$release")" on "${args[@]}")
-    else
-        args[2]=on
-    fi
-
-    local text="Bootstrap backend (SPACE selects).\nOnly tools that can build $distro${release:+/$release}${arch:+/$arch} and are installed here are listed:"
-    if [ ${#missing[@]} -gt 0 ]; then
-        text="$text\n\nNot installed: $(printf '%s, ' "${missing[@]%% —*}" | sed 's/, $//')"
-    fi
-
-    selected=$(tui_radio "Rootfs Builder 4/13" "$text" "${args[@]}") || return 1
-    [ -n "$selected" ] || return 1
-    rootfs_resolve_backend "$distro" "$selected" "$arch" "$release"
+        menu_rc=0
+        selected=$(tui_radio "Rootfs Builder 4/13" "$text" "${args[@]}") || menu_rc=$?
+        if [ "$menu_rc" -ne 0 ] || [ -z "$selected" ]; then
+            # Same guard as the release step: a widget that drops the selection
+            # must not abandon the wizard without asking.
+            if tui_yesno "Rootfs Builder 4/13" "No bootstrap backend was selected.\n\nReturn to the Rootfs menu?"; then
+                return 1
+            fi
+            continue
+        fi
+        rootfs_resolve_backend "$distro" "$selected" "$arch" "$release"
+        return $?
+    done
 }
 
 # Debian-family backend configuration is kept separate from the general build
@@ -4586,7 +4611,11 @@ rootfs_builder_impl() {
     # rootfs_backend_menu only lists backends that are both compatible with
     # $distro/$release/$arch and installed here, so it can only return a usable tool.
     backend=$(rootfs_backend_menu "$distro" "$arch" "$release") || return 0
-    [ -n "$backend" ] || return 0
+    if [ -z "$backend" ]; then
+        tui_msg "No bootstrap backend" \
+            "No backend was resolved for $distro${release:+/$release}${arch:+/$arch}.\n\nNothing was created. Pick a backend under Rootfs > Bootstrap tools and retry."
+        return 0
+    fi
     # Auto-optimize build settings for this distro+backend before showing the
     # config menu. The user sees pre-tuned values instead of raw defaults, and
     # can still adjust anything via the menu before proceeding.

@@ -1,4 +1,13 @@
-#!/bin/bash
+#!/bin/sh
+# This installer is implemented in Bash. POSIX-compatible entrypoint lets
+# `sh install.sh` (also dash/ash/zsh) re-exec before parsing Bash-only syntax.
+if [ -z "${BASH_VERSION:-}" ]; then
+    if ! command -v bash >/dev/null 2>&1; then
+        printf '%s\n' 'systui installer requires Bash. Install bash (e.g. apk add bash or apt-get install bash), then run: bash install.sh' >&2
+        exit 127
+    fi
+    exec bash "$0" "$@"
+fi
 ###############################################################################
 # systui — Installation Script
 ###############################################################################
@@ -501,7 +510,17 @@ create_executable() {
     info "Creating the latest executable wrapper..."
     rm -f -- "$wrapper_tmp"
     cat > "$wrapper_tmp" << 'WRAPPER'
-#!/bin/bash
+#!/bin/sh
+# systui is implemented in Bash. This POSIX preamble lets the launcher be
+# started by sh, dash, zsh, ash, ksh or any other shell and re-execs Bash
+# before any Bash-only syntax is parsed.
+if [ -z "${BASH_VERSION:-}" ]; then
+    if ! command -v bash >/dev/null 2>&1; then
+        printf '%s\n' 'systui requires Bash. Install it (apk add bash, apt-get install bash, ...) and retry.' >&2
+        exit 127
+    fi
+    exec bash "$0" "$@"
+fi
 LIBDIR="__SYSTUI_LIBDIR__"
 SYSTUI_LIBDIR="$LIBDIR"
 export SYSTUI_LIBDIR

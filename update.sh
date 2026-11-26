@@ -1,4 +1,13 @@
-#!/usr/bin/env bash
+#!/bin/sh
+# systui's updater is implemented in Bash. Re-exec under Bash first so it can
+# be started as `sh update.sh`, `dash update.sh`, `zsh update.sh`, etc.
+if [ -z "${BASH_VERSION:-}" ]; then
+    if ! command -v bash >/dev/null 2>&1; then
+        printf '%s\n' 'systui update requires Bash. Install it (apk add bash, apt-get install bash, ...) and retry.' >&2
+        exit 127
+    fi
+    exec bash "$0" "$@"
+fi
 ###############################################################################
 # systui Update Script
 # Replaces the local systui installation with a fresh copy of GitHub main.
