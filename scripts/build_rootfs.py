@@ -86,7 +86,7 @@ def package_command(distro, packages, include_ssh, init):
     if distro == "Alpine": return f"apk update; apk add --no-cache {p}; rm -rf /var/cache/apk/*"
     if distro == "Fedora": return f"dnf install -y {p}; dnf clean all"
     if distro.startswith("openSUSE"): return f"zypper --non-interactive refresh; zypper --non-interactive install --no-recommends {p}; zypper clean --all"
-    if distro == "Arch Linux ARM": return f"pacman -Sy --noconfirm; pacman -S --noconfirm --needed {p}; pacman -Scc --noconfirm"
+    if distro == "Arch Linux ARM": return "sed -i 's/^#DisableSandbox/DisableSandbox/' /etc/pacman.conf; pacman -Sy --noconfirm; pacman -S --noconfirm --needed " + p + "; pacman -Scc --noconfirm"
     if distro == "Gentoo": return f"emerge --sync; emerge --ask=n {p}; rm -rf /var/cache/distfiles/*"
     if distro == "Void Linux": return f"xbps-install -Suy xbps; xbps-install -y {p}; rm -rf /var/cache/xbps/*"
     raise SystemExit("No package manager adapter for " + distro)
@@ -113,7 +113,8 @@ def main():
     out = pathlib.Path(args.output); out.parent.mkdir(parents=True,exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="systui-rootfs-") as td:
         work=pathlib.Path(td); image=resolve_base(recipe,work)
-        run(["docker","pull","--platform","linux/arm64",image])
+        if subprocess.run(["docker","image","inspect",image],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode != 0:
+            run(["docker","pull","--platform","linux/arm64",image])
         name="systui-rootfs-build"; subprocess.run(["docker","rm","-f",name],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         run(["docker","create","--platform","linux/arm64","--name",name,image,"sh","-c","while :; do sleep 3600; done"])
         try:
