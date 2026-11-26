@@ -66,7 +66,7 @@ struct ContentView: View {
         }
     }
 
-    private var safeName: String { recipe.name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.split(separator: "-").map(String.init).joined(separator: "-") }
+    private var safeName: String { recipe.name.lowercased().components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty }.joined(separator: "-") }
     private func recipeData() -> Data { (try? JSONEncoder.pretty.encode(recipe)) ?? Data("{}".utf8) }
     private func exportRecipe() { showExporter = true }
 }
