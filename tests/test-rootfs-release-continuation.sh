@@ -33,7 +33,7 @@ set -eE
 . "$SYSTUI_LIBDIR/src/core/common.sh"
 . "$SYSTUI_LIBDIR/src/features/rootfs.sh"
 . "$SYSTUI_LIBDIR/src/features/zzzzzzzzzzzzzzz-rootfs-build-autoconfig.sh"
-. "$SYSTUI_LIBDIR/src/features/$(rg -F 'rootfs-bootstrap-config.sh' "$SYSTUI_LIBDIR/src/features/.load-order")"
+. "$SYSTUI_LIBDIR/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-bootstrap-config.sh"
 . "$SYSTUI_LIBDIR/src/features/113-ish-aok-sysconfig-integration.sh"
 # Exercise the same builder/menu functions in-process so only the selected
 # fixture modules are loaded; run_strict's production child loads every feature
