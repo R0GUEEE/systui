@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=bash
 # This installer is implemented in Bash. POSIX-compatible entrypoint lets
 # `sh install.sh` (also dash/ash/zsh) re-exec before parsing Bash-only syntax.
 if [ -z "${BASH_VERSION:-}" ]; then
