@@ -24,7 +24,7 @@ struct ContentView: View {
     @State private var showError = false
 
     private let distributions = ["Alpine", "Debian", "Ubuntu", "Devuan", "Arch Linux", "Void Linux"]
-    private let architectures = ["aarch64", "armv7", "x86_64"]
+    private let architectures = ["aarch64"]
     private let initSystems = ["OpenRC", "BusyBox init", "runit", "systemd"]
     private let compressionTypes = ["gzip", "xz"]
 

@@ -10,7 +10,7 @@ import subprocess
 import tempfile
 import urllib.request
 
-ALPINE_ARCH = {"aarch64": "aarch64", "armv7": "armv7", "x86_64": "x86_64"}
+ALPINE_ARCH = {"aarch64": "aarch64"}
 SAFE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$")
 
 def fetch(url, dest):

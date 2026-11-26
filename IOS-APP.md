@@ -8,7 +8,7 @@ Configure distribution/release/architecture/init/packages/SSH/archive compressio
 
 The upstream Systui shell/TUI remains intact. Rootfs assembly now has an on-demand GitHub Actions workflow for **Alpine/OpenRC**. Export the recipe from the app, add the JSON under `recipes/` in this repository, then run **Actions → Build rootfs tarball** and select its path. The workflow checks expected root entries and uploads the archive as an artifact.
 
-The first builder supports Alpine on aarch64, armv7, and x86_64. Other distributions and init systems are not implemented yet. This produces a minimal Alpine rootfs, not the full distribution-specific configuration supported by Systui’s interactive Linux builder.
+The first builder supports Alpine on aarch64 with OpenRC. Other architectures, distributions and init systems are not implemented yet. This produces a minimal Alpine rootfs, not the full distribution-specific configuration supported by Systui’s interactive Linux builder.
 
 ## Build
 
