@@ -1232,7 +1232,7 @@ rootfs_release_candidates() { # <distro> <arch>
 }
 
 rootfs_release_menu() { # <distro> <arch>
-    local distro="$1" arch="$2" candidates="" discovered="" tags=() r def
+    local distro="$1" arch="$2" candidates="" discovered="" tags=() r def release_retries=0
     # Keep the interactive path offline-safe. Repository discovery used to run
     # synchronously before this dialog appeared; on iSH a stalled downloader or
     # an incompatible BusyBox parser made the wizard look broken immediately
@@ -1281,26 +1281,30 @@ rootfs_release_menu() { # <distro> <arch>
         # tag, including for the refresh/custom actions below.
         tags+=(refresh "Refresh releases from the repository (network)" \
                custom "Enter a release manually")
-        # A plain menu (or radiolist) returns the selected tag, or a non-zero
-        # status / empty string when the widget is dismissed with Cancel/Esc or
-        # when a particular dialog build fails to deliver the selection through
-        # the 3>&1 1>&2 2>&3 capture. Guard against that: an empty result must
-        # not silently abort the whole build wizard back to the Rootfs menu,
-        # which is confusing when only the widget hiccuped. Keep the widget's
-        # status in a variable (this also keeps the assignment safe under
-        # `set -e` in the run_strict child), and re-ask once before leaving.
+        # A menu returns the selected tag, or nothing when dismissed. Dialog
+        # builds on iSH can also return an empty result with status 0, or an
+        # unexpected status, after a perfectly good key press because the
+        # 3>&1 1>&2 2>&3 capture lost the answer. Do not turn that into "the
+        # user cancelled": a misread yes/no prompt used to answer itself and
+        # drop the whole wizard back to the Rootfs menu right after the user
+        # picked a release. Retry the menu first for capture hiccups, and only
+        # honour a genuine Cancel (status 1/255).
         local menu_rc=0
         r=$(tui_menu "Rootfs Builder 3/13" "Release (ENTER selects; refresh is optional):" "${tags[@]}") || menu_rc=$?
-        if [ "$menu_rc" -ne 0 ] || [ -z "$r" ]; then
-            # A genuinely dismissed dialog wants to leave; but on a display
-            # where dialog returns Cancel after the user made a choice, ask
-            # before giving up so the build is not silently abandoned.
-            if tui_yesno "Rootfs Builder 3/13" "No release was selected.
-
-Exit the release chooser and return to the Rootfs menu?"; then
-                return 1
+        if [ "$menu_rc" -eq 0 ] && [ -n "$r" ]; then
+            : # usable selection, handled below
+        elif [ "$menu_rc" -eq 1 ] || [ "$menu_rc" -eq 255 ]; then
+            return 1
+        else
+            release_retries=$((release_retries + 1))
+            if [ "$release_retries" -le 2 ]; then
+                tui_msg "Release menu needs another try" \
+                    "The release chooser did not return a selection (dialog exit $menu_rc).\n\nReopening it with the same list. Nothing was created."
+                continue
             fi
-            continue
+            tui_msg "Release selection failed" \
+                "The release chooser kept returning no selection (dialog exit $menu_rc).\n\nNo rootfs was created. Check that 'dialog' works in this terminal, or pick the release again from the local rootfs builder."
+            return 1
         fi
         case "$r" in
             refresh)
