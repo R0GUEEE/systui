@@ -145,6 +145,16 @@ running it interactively; tools can make system changes with your current
 privileges. If `/AOK/tools` is unavailable, Ultimate Provision remains accessible.
 `SYSTUI_AOK_TOOLS_DIR` overrides the directory, including for tests.
 
+[AOK-iSH build 566](https://github.com/emkey1/ish-AOK/releases/tag/builds/iSH-AOK_566)
+(2026-11-24, source `d28604d0c40873f98f18a452df718878073aedf9`) renamed the app;
+its tools still live under `/AOK/tools`. When present, **Root Filesystems → Set Up
+Native Companion** prepares the Devuan 6 arm64 companion for packages, and
+**Wayland and Desktop → Install Native Wayland Desktop** adds a desktop there.
+Neither installs packages into the native root. **System and Session → SSH Account
+Stash** accepts `list`, `save` or `restore`; the latter two can copy private keys.
+These upstream tools require root for changes; systui does not elevate privileges.
+Older builds do not gain placeholder entries for tools they lack.
+
 ### Package search across every installed manager
 
 `Packages -> Packages -> install`, `... -> search` and the catalogue's search

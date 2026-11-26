@@ -2,14 +2,15 @@
 # Dynamic guest tools; never source discovered files.
 systui_aok_tool_executable() {
     local mode
+    [ -x "$1" ] || return 1  # Skip stat for non-executable scripts on each menu redraw.
     mode=$(stat -c %a -- "$1" 2>/dev/null) || return 1
-    [[ $mode =~ ^[0-7]+$ ]] && (( (8#$mode & 0111) != 0 )) && [ -x "$1" ]
+    [[ $mode =~ ^[0-7]+$ ]] && (( (8#$mode & 0111) != 0 ))
 }
 
 systui_aok_tool_eligible() {
     local path=$1 name=${1##*/} first=
     [ ! -L "$path" ] && [ -f "$path" ] && [ -r "$path" ] || return 1
-    case ${name,,} in *provision*) return 1 ;; esac
+    case ${name,,} in *provision*|companion-root.sh|wayland-root.sh) return 1 ;; esac
     systui_aok_tool_executable "$path" && return 0
     IFS= read -r first < "$path" || :
     [[ $first == '#!'* ]]
@@ -49,6 +50,9 @@ systui_aok_tool_run() {
 # Known guest tools: category, concise display name, purpose.
 systui_aok_tool_info() {
     case "$1" in
+        setup-native-wayland.sh) printf '%s\n' 'desktop|Install Native Wayland Desktop|Install the desktop in the Devuan companion, not the native root' ;;
+        setup-companion.sh) printf '%s\n' 'roots|Set Up Native Companion|Prepare Devuan arm64 for native-mode packages' ;;
+        ssh-stash.sh) printf '%s\n' 'system|SSH Account Stash|List, save or restore SSH files for a login across roots; may copy private keys' ;;
         setup-wayland.sh) printf '%s\n' 'desktop|Install Wayland Desktop|Install labwc, sway and display components' ;;
         setup-wayland-extras.sh) printf '%s\n' 'desktop|Install Desktop Extras|Install optional games, tools or X11 packages' ;;
         setup-wayfire.sh) printf '%s\n' 'desktop|Install Wayfire|Install the GPU-composited Wayfire desktop' ;;

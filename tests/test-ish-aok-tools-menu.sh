@@ -23,6 +23,15 @@ tui_capture_menu() {
         *) printf -v "$dest" '%s' back ;;
     esac
 }
+# Tagged build 566 ships two sourced libraries; an executable mount mode must not expose them.
+for helper in companion-root.sh wayland-root.sh; do
+    printf '#!/bin/sh\n' > "$tmp/tools/$helper"; chmod +x "$tmp/tools/$helper"
+    if systui_aok_tool_eligible "$tmp/tools/$helper"; then fail "source-only $helper eligible"; fi
+done
+for entry in 'setup-native-wayland.sh:desktop' 'setup-companion.sh:roots' 'ssh-stash.sh:system'; do
+    info=$(systui_aok_tool_info "${entry%:*}")
+    [[ ${info%%|*} == "${entry#*:}" ]] || fail "wrong build 566 category: $entry"
+done
 # Verify selected tag resolves to the actual file without executing it.
 systui_aok_tool_run_original=$(declare -f systui_aok_tool_run)
 eval "${systui_aok_tool_run_original/systui_aok_tool_run ()/systui_aok_tool_run_saved ()}"
