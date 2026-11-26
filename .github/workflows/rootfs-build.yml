@@ -1,0 +1,53 @@
+name: Build rootfs tarball
+on:
+  workflow_dispatch:
+    inputs:
+      recipe:
+        description: 'Recipe JSON path in the repository (e.g. recipes/alpine-aarch64.json)'
+        required: true
+        default: 'recipes/alpine-aarch64.json'
+        type: string
+      output_name:
+        description: 'Artifact name'
+        required: true
+        default: 'ish-aok-rootfs'
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate recipe path
+        env:
+          RECIPE: ${{ inputs.recipe }}
+        run: |
+          case "$RECIPE" in recipes/*.json) test -f "$RECIPE" ;; *) echo 'Recipe must be a JSON file under recipes/' >&2; exit 2 ;; esac
+      - name: Build Alpine rootfs in pinned container
+        env:
+          RECIPE: ${{ inputs.recipe }}
+        run: |
+          mkdir -p out
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/work" -w /work \
+            alpine:3.23 \
+            sh -ec 'apk add --no-cache python3 tar xz; python3 scripts/build_rootfs.py --recipe "$RECIPE" --output out/rootfs'
+      - name: Verify archive layout
+        run: |
+          python3 - <<'PY'
+          import glob, tarfile
+          paths=glob.glob('out/rootfs.tar.*')
+          assert len(paths)==1, f'expected one archive, found {paths}'
+          with tarfile.open(paths[0], 'r:*') as t:
+              names={m.name.lstrip('./').split('/')[0] for m in t.getmembers() if m.name.lstrip('./')}
+          required={'etc','bin','usr'}
+          assert required <= names, f'missing root directories: {required-names}'
+          print(paths[0], 'entries validated:', ', '.join(sorted(names)))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.output_name }}
+          path: out/rootfs.tar.*
+          if-no-files-found: error
+          retention-days: 14

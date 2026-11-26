@@ -2,13 +2,13 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct RootfsRecipe: Codable {
+    var schemaVersion = 1
     var name = "Alpine iSH-AOK"
     var distribution = "Alpine"
     var release = "latest-stable"
     var architecture = "aarch64"
     var packages = "alpine-base, busybox, ca-certificates"
     var initSystem = "OpenRC"
-    var rootPassword = ""
     var includeSSH = false
     var compression = "gzip"
 
@@ -41,8 +41,6 @@ struct ContentView: View {
                 Section("Packages and access") {
                     TextField("Comma-separated package names", text: $recipe.packages, axis: .vertical).lineLimit(2...5)
                     Toggle("Include OpenSSH server", isOn: $recipe.includeSSH)
-                    SecureField("Optional root password", text: $recipe.rootPassword)
-                    Text("Password is used only for this local build recipe and is not saved in the exported archive metadata.").font(.caption).foregroundStyle(.secondary)
                 }
                 Section("Archive") {
                     Picker("Compression", selection: $recipe.compression) { ForEach(compressionTypes, id: \.self) { Text($0) } }
@@ -54,9 +52,9 @@ struct ContentView: View {
                     Button { exportRecipe() } label: { Label("Export build recipe JSON", systemImage: "square.and.arrow.up") }
                 }
                 Section("Build and import") {
-                    Label("Rootfs image construction runs on Linux, not inside iOS.", systemImage: "server.rack")
-                    Text("This app currently exports a portable recipe for a Linux builder. It does not claim that a root filesystem has been built.").font(.caption).foregroundStyle(.secondary)
-                    Text("In iSH-AOK, use its rootfs import flow to select the generated .tar.gz/.tar.xz archive. Keep the archive rooted at / (top-level entries such as etc, bin, usr). Choose a format supported by that importer.").font(.caption)
+                    Label("Build a supported Alpine recipe in GitHub Actions.", systemImage: "server.rack")
+                    Text("Export the recipe JSON, add it under recipes/ in this repository, then run Actions → Build rootfs tarball. Download the resulting artifact and import that tarball in iSH-AOK.").font(.caption).foregroundStyle(.secondary)
+                    Text("The first builder supports Alpine on aarch64, armv7, and x86_64 with OpenRC. The generated tarball is a minimal Alpine root, not a complete replacement for Systui’s full distro-specific configuration yet.").font(.caption)
                 }
             }
             .navigationTitle("Systui Rootfs")

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "name": "Alpine iSH-AOK",
+  "distribution": "Alpine",
+  "release": "latest-stable",
+  "architecture": "aarch64",
+  "packages": ["alpine-base", "busybox", "ca-certificates"],
+  "initSystem": "OpenRC",
+  "includeSSH": false,
+  "compression": "gzip"
+}
