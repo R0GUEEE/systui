@@ -4546,7 +4546,20 @@ rootfs_new_target_available() {
 }
 
 rootfs_builder() {
-    run_strict "rootfs_builder" rootfs_builder_impl
+    # run_strict runs the wizard in a fail-fast child. Without this, a child
+    # that died on an unguarded command (or a widget that returned an unusual
+    # status) looked exactly like a cancel: the Rootfs menu simply reappeared
+    # with no explanation right after the release step.
+    local rc=0
+    run_strict "rootfs_builder" rootfs_builder_impl || rc=$?
+    case "$rc" in
+        0|1) ;;  # finished, or the user cancelled/backed out
+        *)
+            tui_msg "Rootfs builder stopped" \
+                "The build wizard exited with status $rc before the backend step completed.\n\nNo rootfs was created. Nothing was removed. The last steps are in:\n${LOGFILE:-the systui log}\n\nIf this repeats, install a bootstrap tool from Rootfs > Bootstrap tools and retry."
+            ;;
+    esac
+    return 0
 }
 
 rootfs_builder_impl() {
