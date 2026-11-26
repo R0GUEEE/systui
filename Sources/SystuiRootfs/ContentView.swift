@@ -66,7 +66,7 @@ struct ContentView: View {
         }
     }
 
-    private var safeName: String { recipe.name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.split(separator: "-").joined(separator: "-") }
+    private var safeName: String { recipe.name.lowercased().map { $0.isLetter || $0.isNumber ? $0 : "-" }.split(separator: "-").map(String.init).joined(separator: "-") }
     private func recipeData() -> Data { (try? JSONEncoder.pretty.encode(recipe)) ?? Data("{}".utf8) }
     private func exportRecipe() { showExporter = true }
 }
@@ -76,7 +76,7 @@ struct RecipeDocument: FileDocument {
     var data: Data
     init(data: Data) { self.data = data }
     init(configuration: ReadConfiguration) throws { data = configuration.file.regularFileContents ?? Data() }
-    func fileWrapper(configuration: WriteConfiguration) throws { FileWrapper(regularFileWithContents: data) }
+    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { return FileWrapper(regularFileWithContents: data) }
 }
 
 private extension JSONEncoder {

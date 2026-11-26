@@ -17,12 +17,14 @@ jobs:
         run: xcodegen generate
       - name: Build unsigned app
         run: |
+          set -o pipefail
           xcodebuild -project SystuiRootfs.xcodeproj -scheme SystuiRootfs \
             -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
             -derivedDataPath build CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" | tee build.log
       - name: Package IPA
         run: |
+          test -x build/Build/Products/Release-iphoneos/SystuiRootfs.app/SystuiRootfs
           mkdir -p Payload
           cp -R build/Build/Products/Release-iphoneos/SystuiRootfs.app Payload/
           zip -qr SystuiRootfs.ipa Payload
