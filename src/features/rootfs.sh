@@ -4605,12 +4605,26 @@ rootfs_builder_impl() {
     esac
 
     # ---- release (repository-backed, architecture-aware) ----
-    release=$(rootfs_release_menu "$distro" "$arch") || return 0
+    local wizard_rc=0
+    release=$(rootfs_release_menu "$distro" "$arch") || wizard_rc=$?
+    if [ "$wizard_rc" -ne 0 ] || [ -z "$release" ]; then
+        tui_msg "Release selection ended" \
+            "The $distro/$arch build stopped before choosing a release. No files were created. Reopen the local rootfs builder to retry."
+        return 0
+    fi
 
     # ---- 4: bootstrap backend (release-aware) ----
-    # rootfs_backend_menu only lists backends that are both compatible with
-    # $distro/$release/$arch and installed here, so it can only return a usable tool.
-    backend=$(rootfs_backend_menu "$distro" "$arch" "$release") || return 0
+    # Keep the backend menu's diagnostic visible if the dialog implementation
+    # returns a failure status after a selection. Previously `|| return 0`
+    # silently dropped the wizard back to the Rootfs menu, indistinguishable
+    # from a crash on some dialog builds.
+    wizard_rc=0
+    backend=$(rootfs_backend_menu "$distro" "$arch" "$release") || wizard_rc=$?
+    if [ "$wizard_rc" -ne 0 ]; then
+        tui_msg "Rootfs build paused" \
+            "The backend-selection step ended for $distro $release ($arch). No rootfs was created. Open Rootfs > Bootstrap tools, install a compatible backend, then retry the build."
+        return 0
+    fi
     if [ -z "$backend" ]; then
         tui_msg "No bootstrap backend" \
             "No backend was resolved for $distro${release:+/$release}${arch:+/$arch}.\n\nNothing was created. Pick a backend under Rootfs > Bootstrap tools and retry."
