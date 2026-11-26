@@ -4500,6 +4500,26 @@ rootfs_distro_archs() { # <distro>
 
 # Entry point kept thin: the build itself runs fail-fast inside run_strict so a
 # mid-build failure aborts the build rather than the whole TUI.
+# A new build never reuses populated trees. Check hidden entries too, and
+# reject symlink components (including dangling links) rather than following
+# them into another root. Run again after the final dialog before writing.
+rootfs_new_target_available() {
+    local path=$1 part=$1 entries
+    [[ $path == /* && $path != */ && $path != *//* ]] || return 1
+    if [[ -e $path || -L $path ]]; then
+        [[ -d $path && ! -L $path && -r $path && -x $path ]] || return 1
+        entries=$(LC_ALL=C ls -Aq -- "$path") && [[ -z $entries ]] || return 1
+    fi
+    # Walk ancestors without treating a not-yet-created parent as an error.
+    while [[ $part != / && -n $part ]]; do
+        case ${part##*/} in .|..) return 1 ;; esac
+        [[ ! -L $part ]] || return 1
+        part=${part%/*}; [[ -n $part ]] || part=/
+        [[ ! -e $part || -d $part ]] || return 1
+    done
+    [[ $path == /* && $path != */ && $path != *//* ]]
+}
+
 rootfs_builder() {
     run_strict "rootfs_builder" rootfs_builder_impl
 }
@@ -4764,14 +4784,10 @@ user creation). Install on the host first if you haven't:
     # ---- 7: target directory ----
     target=$(tui_input "Rootfs Builder 8/13" "Target directory for the rootfs:" \
         "$ROOTFS_BASE/${distro}-${release}-${arch}") || return 0
-    if [ -e "$target" ] && [ -n "$(ls -A "$target" 2>/dev/null)" ]; then
-        tui_msg "Target exists" "$target is not empty.\n\nUse Rootfs > Manage > Continue generation to safely resume it."
+    rootfs_new_target_available "$target" || {
+        tui_msg "Target unavailable" "Use an empty or new absolute directory without symlinks. To resume a build, use Rootfs > Manage."
         return 0
-    fi
-    mkdir -p "$target"
-    case "$distro" in
-        debian|devuan|ubuntu|kali) rootfs_backend_config_write "$target" ;;
-    esac
+    }
 
     # ---- 8: identity ----
     hostname_v=$(tui_input "Rootfs Builder 9/13" "Hostname for the rootfs:" "${distro}-mini") || return 0
@@ -4858,6 +4874,12 @@ user creation). Install on the host first if you haven't:
   Strata   : ${bedrock_strata:-<none>}${bedrock_extra_strata:+ $bedrock_extra_strata}
 
 Proceed?" || return 0
+
+    rootfs_new_target_available "$target" || { tui_msg "Target changed" "The target is no longer available: $target"; return 1; }
+    mkdir -p -- "$target" || return 1
+    case "$distro" in
+        debian|devuan|ubuntu|kali) rootfs_backend_config_write "$target" || return 1 ;;
+    esac
 
     rootfs_write_build_state "$target" \
         "$distro" "$release" "$arch" "$mirror" "$pkgs" "$use_qemu" \

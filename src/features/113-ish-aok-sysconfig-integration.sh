@@ -127,7 +127,8 @@ menu_rootfs() {
             "Build, download, repair and run Linux root filesystems:" \
             aot       "Ahead-of-time JIT — installation, setup and configuration" \
             bedrock   "Bedrock-AOK (install/manage multi-distro environment)" \
-            build     "Build a new rootfs (guided)" \
+            guestroots "AOK app roots — catalog, install, mount or enter" \
+            build     "Build a new local rootfs (guided; not an app install)" \
             download  "Download a prebuilt rootfs (always tar.gz)" \
             manage    "Manage existing rootfs (chroot, inspect, pack, delete)" \
             workbench "Chroot workbench (manage rootfs)" \
@@ -137,6 +138,7 @@ menu_rootfs() {
         case "$c" in
             aot)       tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT" ;;
             bedrock)   tui_call_menu menu_bedrock_aok "Bedrock-AOK" ;;
+            guestroots) tui_call_menu systui_aok_roots_menu "AOK app roots" ;;
             build)     rootfs_builder || true ;;
             download)  rootfs_download || true ;;
             manage)    rootfs_manage || true ;;

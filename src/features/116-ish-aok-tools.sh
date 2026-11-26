@@ -16,11 +16,69 @@ systui_aok_tool_eligible() {
     [[ $first == '#!'* ]]
 }
 
+# These are installed guest scripts, not the upstream host-side Docker builder.
+# Keep the caller's cwd, terminal and privileges. The manager accepts only
+# absolute archive paths and treats every other non-URL as a catalog ID.
+# Permanent removal is gated explicitly here before passing upstream --yes.
+systui_aok_root_usage() {
+    case $1 in
+        manage-roots.sh) printf '%s' 'First argument: list, available, status, cancel, install, default, rename or remove. Install takes a catalog ID, or an absolute archive path/HTTP(S) URL plus a name. default NAME; rename OLD NEW; remove NAME --yes destroys it. Options: --default, --exit-app, -q/--quiet, -h/--help. Writes require the app root-manager knob.' ;;
+        mount-root.sh) printf '%s' 'Needs guest root. NAME opens a shell; all prepares every root; NAME/all -- CMD [ARG...] executes a command; --unmount NAME/all tears mounts down. Enter each token separately.' ;;
+        setup-companion.sh) printf '%s' 'Needs root in the native-mode guest. No arguments sets up the default companion; optional --root NAME, repeated --user LOGIN, or --help.' ;;
+        companion-run.sh) printf '%s' 'COMMAND [ARG...] runs in the configured companion. This is not a root-install or archive-build action.' ;;
+    esac
+}
+
+systui_aok_roots_menu() {
+    systui_aok_category_menu "${SYSTUI_AOK_TOOLS_DIR:-/AOK/tools}" roots
+}
+
+# Initialize the dynamically scoped args array; extra flags/argv may then be
+# appended literally. Back cancels the entire launch. No shell parsing/eval.
+systui_aok_root_preset() {
+    local tool=$1 op value name prompt
+    case $tool in
+        manage-roots.sh)
+            op=$(tui_menu_no_tags 'App root manager' 'Choose an operation (removal is destructive):' list 'List installed roots' available 'List catalog' status 'Show current job' catalog 'Install a catalog ID' archive 'Import a local archive' url 'Install from URL' default 'Choose next boot root' rename 'Rename an installed root' remove 'Remove root permanently (requires explicit confirmation)' cancel 'Cancel current installation' help 'Show upstream help' raw 'Enter custom arguments' back 'Back') || return 1
+            case $op in
+                list|available|status|cancel) args=("$op");;
+                help) args=(--help);;
+                catalog|archive|url)
+                    case $op in catalog) prompt='Catalog ID (see List catalog):';; archive) prompt='Absolute archive path inside this guest:';; url) prompt='HTTP(S) archive URL:';; esac
+                    value=$(tui_input 'Install app root' "$prompt" '') || return 1
+                    case $op in
+                        catalog) [[ $value =~ ^[A-Za-z0-9._-]+$ ]] || { tui_msg 'Invalid catalog ID' 'Use the ID shown by List catalog.'; return 1; } ;;
+                        archive) [[ $value == /* && -f $value ]] || { tui_msg 'Archive unavailable' 'Enter an absolute path to a readable archive.'; return 1; } ;;
+                        url) [[ $value == http://?* || $value == https://?* ]] || { tui_msg 'Invalid URL' 'Enter an HTTP(S) archive URL.'; return 1; } ;;
+                    esac
+                    args=(install "$value")
+                    if [[ $op != catalog ]]; then name=$(tui_input 'Install app root' 'New root name:' '') && [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { tui_msg 'Invalid root name' 'Use letters, digits, dots, underscores or hyphens.'; return 1; }; args+=("$name"); fi ;;
+                default|rename|remove)
+                    name=$(tui_input 'App root' 'Existing root name:' '') && [[ $name =~ ^[A-Za-z0-9._-]+$ ]] || { tui_msg 'Invalid root name' 'Use letters, digits, dots, underscores or hyphens.'; return 1; }; args=("$op" "$name")
+                    case $op in
+                        rename) value=$(tui_input 'Rename root' 'New root name:' '') && [[ $value =~ ^[A-Za-z0-9._-]+$ ]] || { tui_msg 'Invalid root name' 'Use letters, digits, dots, underscores or hyphens.'; return 1; }; args+=("$value") ;;
+                        remove) tui_yesno 'Confirm permanent removal' "Delete app root $name? The upstream manager requires --yes and will destroy its files." || return 1; args+=(--yes) ;;
+                    esac ;;
+                raw) ;; *) return 1;;
+            esac ;;
+        mount-root.sh)
+            op=$(tui_menu_no_tags 'Mount app roots' 'Needs guest root. Select what the upstream script should do:' enter 'Enter a named root' all 'Prepare mounts for all roots' exec 'Run a command in a root (or all)' unmount 'Unmount a root (or all)' raw 'Enter custom arguments' back 'Back') || return 1
+            case $op in all) args=(all);; enter|exec|unmount)
+                name=$(tui_input 'App root' 'Root name:' '') && [[ $name =~ ^[A-Za-z0-9._-]+$ && $name != -* && $name != . && $name != .. ]] || { tui_msg 'Invalid root name' 'Use letters, digits, dots, underscores or hyphens.'; return 1; }
+                case $op in enter) [[ $name != all ]] || return 1; args=("$name");; unmount) args=(--unmount "$name");; exec) value=$(tui_input 'Guest command' 'Command name or executable path:' '') && [[ -n $value ]] || return 1; args=("$name" -- "$value");; esac ;;
+                raw) ;; *) return 1;; esac ;;
+    esac
+    return 0
+}
+
 systui_aok_tool_run() {
     local path=$1 arg rc=0 first='' spec interp rest item display=''
     local -a args=() command=()
+    local usage
     systui_aok_tool_eligible "$path" || { tui_msg 'Tool unavailable' "No longer available: $path"; return 0; }
-    while tui_yesno 'Tool arguments' 'Add one literal argument? Spaces are preserved.'; do
+    usage=$(systui_aok_root_usage "${path##*/}")
+    if [[ ${path##*/} == manage-roots.sh || ${path##*/} == mount-root.sh ]]; then systui_aok_root_preset "${path##*/}" || return 0; fi
+    while [[ ${path##*/} != manage-roots.sh && ${path##*/} != mount-root.sh ]] && tui_yesno 'Tool arguments' "${usage:+$usage\n\n}Add one literal argument? Spaces are preserved."; do
         arg=$(tui_input 'Tool argument' 'Enter one literal argument:' '') || return 0
         args+=("$arg")
     done
@@ -63,6 +121,7 @@ systui_aok_tool_info() {
         setup-gpu.sh) printf '%s\n' 'graphics|Configure GPU Acceleration|Install or check Vulkan and OpenGL support' ;;
         setup-games.sh) printf '%s\n' 'graphics|Install Desktop Games|Install supported games and launcher setup' ;;
         aok-sdl-game) printf '%s\n' 'graphics|SDL Game Launcher|Launch games through installed game aliases' ;;
+        companion-run.sh) printf '%s\n' 'roots|Run Companion Command|Run a command and its arguments in the configured companion' ;;
         manage-roots.sh) printf '%s\n' 'roots|Manage Root Filesystems|List, install or select root filesystems' ;;
         mount-root.sh) printf '%s\n' 'roots|Enter or Mount a Root|Mount resources or enter an installed root' ;;
         native-links.sh) printf '%s\n' 'links|Link Native Commands|Manage links to native commands and applets' ;;

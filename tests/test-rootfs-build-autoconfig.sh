@@ -25,9 +25,7 @@ check "backend tuning is automatic" grep -Fq 'rootfs_backend_auto_optimize' "$FE
 check "host bootstrap dependencies are checked automatically" grep -Fq 'rootfs_check_host_deps "$distro" "$backend" "$arch" "$comp"' "$BASE"
 check "package catalogue adds core tools and the distro init" grep -Fq '"${2:-} git curl wget $init_pkg"' "$FEATURE"
 check "default name remains distro-release-arch" grep -Fq '"$ROOTFS_BASE/${distro}-${release}-${arch}"' "$BASE"
-check "existing rootfs offers overwrite" grep -Fq 'overwrite "Overwrite the existing rootfs"' "$FEATURE"
 check "existing rootfs offers rename" grep -Fq 'rename "Use a different rootfs name"' "$FEATURE"
-check "overwrite removes existing tree" grep -Fq 'rootfs_rm_tree "$target"' "$FEATURE"
 check "renamed rootfs stays under rootfs base" grep -Fq 'target="$ROOTFS_BASE/$name"' "$FEATURE"
 
 bash -n "$FEATURE"

@@ -17,7 +17,7 @@ tui_menu_no_tags() {
 menu_bedrock_aok() { echo invoked > "$tmp/opened"; }
 menu_rootfs
 [ -f "$tmp/opened" ] || { echo 'Bedrock not dispatched' >&2; exit 1; }
-for tag in bedrock aot build download manage workbench bootstrap distros back; do
+for tag in bedrock aot guestroots build download manage workbench bootstrap distros back; do
     grep -qx "$tag" "$tmp/rootfs-args" || { echo "Missing rootfs entry: $tag" >&2; exit 1; }
 done
 # Dispatch is in the caller, not the command-substitution widget process.
@@ -34,6 +34,15 @@ menu_ios_linuxkit_aot() { aot_state=opened; }
 aot_state=closed; menu_rootfs; [ "$aot_state" = opened ]
 grep -Fxq 'Ahead-of-time JIT — installation, setup and configuration' "$tmp/rootfs-args"
 ! grep -qx ioskit "$tmp/rootfs-args"
+# AOK guest roots are separate from the local bootstrap wizard.
+rm "$tmp/selected"
+tui_menu_no_tags() {
+    printf '%s\n' "$@" > "$tmp/rootfs-args"
+    if [ ! -e "$tmp/selected" ]; then touch "$tmp/selected"; echo guestroots; else echo back; fi
+}
+systui_aok_roots_menu() { guestroots_state=opened; }
+guestroots_state=closed; menu_rootfs; [ "$guestroots_state" = opened ]
+grep -Fxq 'Build a new local rootfs (guided; not an app install)' "$tmp/rootfs-args"
 # Cancellation exits; real widget errors propagate unchanged.
 tui_menu_no_tags() { return 1; }; menu_rootfs
 tui_menu_no_tags() { return 3; }; rc=0; menu_rootfs || rc=$?; [ "$rc" = 3 ]
