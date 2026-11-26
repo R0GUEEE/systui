@@ -30,6 +30,7 @@ jobs:
         run: |
           mkdir -p out
           docker run --rm \
+            -e RECIPE="$RECIPE" \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             alpine:3.23 \
             sh -ec 'apk add --no-cache python3 tar xz; python3 scripts/build_rootfs.py --recipe "$RECIPE" --output out/rootfs'
