@@ -1,4 +1,5 @@
 #!/bin/sh
+# shellcheck shell=bash
 # systui's updater is implemented in Bash. Re-exec under Bash first so it can
 # be started as `sh update.sh`, `dash update.sh`, `zsh update.sh`, etc.
 if [ -z "${BASH_VERSION:-}" ]; then
