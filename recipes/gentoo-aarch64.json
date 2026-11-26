@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "Gentoo iSH-AOK ARM64",
+  "distribution": "Gentoo",
+  "release": "rolling",
+  "architecture": "aarch64",
+  "packages": "app-misc/ca-certificates, net-misc/curl",
+  "initSystem": "OpenRC",
+  "includeSSH": false,
+  "hostname": "ish-aok",
+  "timezone": "UTC",
+  "dns": "1.1.1.1",
+  "compression": "gzip"
+}

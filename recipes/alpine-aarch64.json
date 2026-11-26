@@ -1,11 +1,14 @@
 {
   "schemaVersion": 1,
-  "name": "Alpine iSH-AOK",
+  "name": "Alpine iSH-AOK ARM64",
   "distribution": "Alpine",
-  "release": "latest-stable",
+  "release": "v3.24",
   "architecture": "aarch64",
-  "packages": ["alpine-base", "busybox", "ca-certificates"],
+  "packages": "ca-certificates, curl",
   "initSystem": "OpenRC",
   "includeSSH": false,
+  "hostname": "ish-aok",
+  "timezone": "UTC",
+  "dns": "1.1.1.1",
   "compression": "gzip"
 }

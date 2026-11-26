@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "Devuan iSH-AOK ARM64",
+  "distribution": "Devuan",
+  "release": "excalibur",
+  "architecture": "aarch64",
+  "packages": "ca-certificates, curl",
+  "initSystem": "SysVinit",
+  "includeSSH": false,
+  "hostname": "ish-aok",
+  "timezone": "UTC",
+  "dns": "1.1.1.1",
+  "compression": "gzip"
+}

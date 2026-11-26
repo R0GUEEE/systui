@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "Ubuntu iSH-AOK ARM64",
+  "distribution": "Ubuntu",
+  "release": "24.04",
+  "architecture": "aarch64",
+  "packages": "ca-certificates, curl",
+  "initSystem": "systemd",
+  "includeSSH": false,
+  "hostname": "ish-aok",
+  "timezone": "UTC",
+  "dns": "1.1.1.1",
+  "compression": "gzip"
+}

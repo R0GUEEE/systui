@@ -3,14 +3,14 @@ on:
   workflow_dispatch:
     inputs:
       recipe:
-        description: 'Recipe JSON path in the repository (e.g. recipes/alpine-aarch64.json)'
+        description: Recipe JSON committed under recipes/
         required: true
-        default: 'recipes/alpine-aarch64.json'
+        default: recipes/alpine-aarch64.json
         type: string
       output_name:
-        description: 'Artifact name'
+        description: Downloaded artifact name
         required: true
-        default: 'ish-aok-rootfs'
+        default: ish-aok-rootfs
         type: string
 permissions:
   contents: read
@@ -24,16 +24,14 @@ jobs:
           RECIPE: ${{ inputs.recipe }}
         run: |
           case "$RECIPE" in recipes/*.json) test -f "$RECIPE" ;; *) echo 'Recipe must be a JSON file under recipes/' >&2; exit 2 ;; esac
-      - name: Build Alpine rootfs in pinned container
+      - name: Test distro mappings and package adapters
+        run: python3 -m unittest discover -s tests -p 'test_build_rootfs.py' -v
+      - name: Build ARM64 root filesystem
         env:
           RECIPE: ${{ inputs.recipe }}
         run: |
           mkdir -p out
-          docker run --rm \
-            -e RECIPE="$RECIPE" \
-            -v "$GITHUB_WORKSPACE:/work" -w /work \
-            alpine:3.23 \
-            sh -ec 'apk add --no-cache python3 tar xz; python3 scripts/build_rootfs.py --recipe "$RECIPE" --output out/rootfs'
+          python3 scripts/build_rootfs.py --recipe "$RECIPE" --output out/rootfs
       - name: Verify archive layout
         run: |
           python3 - <<'PY'

@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "name": "Void Linux iSH-AOK ARM64",
+  "distribution": "Void Linux",
+  "release": "rolling",
+  "architecture": "aarch64",
+  "packages": "ca-certificates, curl",
+  "initSystem": "runit",
+  "includeSSH": false,
+  "hostname": "ish-aok",
+  "timezone": "UTC",
+  "dns": "1.1.1.1",
+  "compression": "gzip"
+}
