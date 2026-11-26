@@ -53,7 +53,7 @@ if ! timeout 45 bash "$tmp/probe.sh" > "$tmp/out" 2> "$tmp/err"; then
     cat "$tmp/err" >&2
     exit 1
 fi
-if ! rg -q '^backend-entered:debian:amd64:trixie$' "$FIXTURE_TRACE"; then
+if ! grep -q '^backend-entered:debian:amd64:trixie$' "$FIXTURE_TRACE"; then
     printf 'Regression: selecting release did not continue to backend. Trace:\n' >&2
     cat "$FIXTURE_TRACE" >&2
     exit 1
