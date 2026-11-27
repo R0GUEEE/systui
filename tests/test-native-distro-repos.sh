@@ -60,8 +60,11 @@ extract() {
                 # Function signatures may carry a trailing comment, and a
                 # one-line definition ("fn() { body; }") must not swallow the
                 # closing brace of the next function.
-                awk -v re="^${fn}\\(\\) \\{" '
-                    $0 ~ re { print; if ($0 ~ /}[[:space:]]*$/) exit; inn = 1; next }
+                # index() rather than a regex: mawk (the Ubuntu default) strips
+                # backslash escapes out of -v assignments, which turned the
+                # escaped parens into an empty ERE group and matched nothing.
+                awk -v name="$fn" '
+                    !inn && index($0, name "() {") == 1 { print; if ($0 ~ /}[[:space:]]*$/) exit; inn = 1; next }
                     inn { print; if ($0 ~ /^}/) exit }
                 ' "$SYSCONFIG" ;;
         esac

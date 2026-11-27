@@ -50,8 +50,11 @@ extract() {
         case "$fn" in
             var:*) name=${fn#var:}; sed -n "/^${name}=/{p;q;}" "$SYSCONFIG" ;;
             *)
-                awk -v re="^${fn}\\(\\) \\{" '
-                    $0 ~ re { print; if ($0 ~ /}[[:space:]]*$/) exit; inn = 1; next }
+                # index() rather than a regex: mawk (the Ubuntu default) strips
+                # backslash escapes out of -v assignments, which turned the
+                # escaped parens into an empty ERE group and matched nothing.
+                awk -v name="$fn" '
+                    !inn && index($0, name "() {") == 1 { print; if ($0 ~ /}[[:space:]]*$/) exit; inn = 1; next }
                     inn { print; if ($0 ~ /^}/) exit }
                 ' "$SYSCONFIG" ;;
         esac
