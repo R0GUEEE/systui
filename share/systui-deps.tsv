@@ -13,27 +13,36 @@
 # commands   comma-separated executables the package is expected to provide;
 #            entries after a "|" are advisory (reported, never fatal)
 #
+# A package cell may list several packages separated by "+": they are
+# installed as separate packages. Alpine splits util-linux, for example, so
+# its cell is "util-linux+util-linux-misc".
+#
+# A tenth, optional column overrides the dnf package on zypper hosts
+# (openSUSE, SLES). It is empty when the dnf name applies there too;
+# openSUSE needs "ncurses-utils" and "procps" instead of "ncurses" and
+# "procps-ng".
+#
 # Everything else systui can use (tooling, compilers, language managers) is
 # installed on demand from the menus, not up front by install.sh.
 #
 # Placeholder "-" means the package is unavailable on that distribution; it is
 # skipped with a report and never fails the install.
-bash	bash	bash	bash	bash	bash	app-shells/bash	core	bash
-dialog	dialog	dialog	dialog	dialog	dialog	dev-util/dialog	core	dialog
-coreutils	coreutils	coreutils	coreutils	coreutils	coreutils	sys-apps/coreutils	core	id,mktemp,head,tr,cut,sort,tee,chmod,rm,date,env,stat,readlink,dirname,basename
-grep	grep	grep	grep	grep	grep	sys-apps/grep	core	grep
-sed	sed	sed	sed	sed	sed	sys-apps/sed	core	sed
-gawk	gawk	gawk	gawk	gawk	gawk	sys-apps/gawk	core	awk,gawk
-findutils	findutils	findutils	findutils	findutils	findutils	sys-apps/findutils	core	find,xargs
-diffutils	diffutils	diffutils	diffutils	diffutils	diffutils	sys-apps/diffutils	core	diff
-tar	tar	tar	tar	tar	tar	app-arch/tar	core	tar
-gzip	gzip	gzip	gzip	gzip	gzip	app-arch/gzip	core	gzip,gunzip,zcat
-bzip2	bzip2	bzip2	bzip2	bzip2	bzip2	app-arch/bzip2	core	bzip2,bunzip2
-xz-utils	xz-utils	xz	xz	xz	xz	app-arch/xz-utils	core	xz,unxz,xzcat
-unzip	unzip	unzip	unzip	unzip	unzip	app-arch/unzip	core	unzip
-ca-certificates	ca-certificates	ca-certificates	ca-certificates	ca-certificates	ca-certificates	app-misc/ca-certificates	core	-
-curl	curl	curl	curl	curl	curl	net-misc/curl	core	curl
-procps	procps	procps-ng	procps-ng	procps-ng	procps-ng	sys-process/procps	core	ps,top,free,pgrep,pkill
-util-linux	util-linux	util-linux	util-linux	util-linux	util-linux	sys-apps/util-linux	core	mount,umount,lsblk,blkid,findmnt,flock,nsenter,unshare,getopt,script
-less	less	less	less	less	less	sys-apps/less	core	less
-ncurses	ncurses-bin	ncurses	ncurses	ncurses	ncurses	sys-libs/ncurses	core	clear|tput,infocmp
+bash	bash	bash	bash	bash	bash	app-shells/bash	core	bash	
+dialog	dialog	dialog	dialog	dialog	dialog	dev-util/dialog	core	dialog	
+coreutils	coreutils	coreutils	coreutils	coreutils	coreutils	sys-apps/coreutils	core	id,mktemp,head,tr,cut,sort,tee,chmod,rm,date,env,stat,readlink,dirname,basename	
+grep	grep	grep	grep	grep	grep	sys-apps/grep	core	grep	
+sed	sed	sed	sed	sed	sed	sys-apps/sed	core	sed	
+gawk	gawk	gawk	gawk	gawk	gawk	sys-apps/gawk	core	awk,gawk	
+findutils	findutils	findutils	findutils	findutils	findutils	sys-apps/findutils	core	find,xargs	
+diffutils	diffutils	diffutils	diffutils	diffutils	diffutils	sys-apps/diffutils	core	diff	
+tar	tar	tar	tar	tar	tar	app-arch/tar	core	tar	
+gzip	gzip	gzip	gzip	gzip	gzip	app-arch/gzip	core	gzip,gunzip,zcat	
+bzip2	bzip2	bzip2	bzip2	bzip2	bzip2	app-arch/bzip2	core	bzip2,bunzip2	
+xz-utils	xz-utils	xz	xz	xz	xz	app-arch/xz-utils	core	xz,unxz,xzcat	
+unzip	unzip	unzip	unzip	unzip	unzip	app-arch/unzip	core	unzip	
+ca-certificates	ca-certificates	ca-certificates	ca-certificates	ca-certificates	ca-certificates	app-misc/ca-certificates	core	-	
+curl	curl	curl	curl	curl	curl	net-misc/curl	core	curl	
+procps	procps	procps-ng	procps-ng	procps-ng	procps-ng	sys-process/procps	core	ps,top,free,pgrep,pkill	procps
+util-linux	util-linux	util-linux+util-linux-misc	util-linux	util-linux	util-linux	sys-apps/util-linux	core	mount,umount,blkid,flock,nsenter,unshare,getopt,script|lsblk,findmnt	
+less	less	less	less	less	less	sys-apps/less	core	less	
+ncurses	ncurses-bin	ncurses	ncurses	ncurses	ncurses	sys-libs/ncurses	core	clear,tput|infocmp	ncurses-utils

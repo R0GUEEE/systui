@@ -21,8 +21,10 @@ check "dependency manifest exists" test -r "$MANIFEST"
 check "manifest declares only the core tier" bash -c '
     grep -q "	core	" "$1" || exit 1
     ! grep -qE "	(extra|build)	" "$1"' _ "$MANIFEST"
-check "every manifest row has 9 fields or is a comment" bash -c '
-    awk -F"\t" "/^[[:space:]]*#/ {next} NF==0 {next} NF!=9 {print NR\": \"NF; bad=1} END{exit bad}" "$1"' _ "$MANIFEST"
+# 9 columns, plus the optional tenth that overrides the dnf package on
+# zypper hosts (openSUSE: ncurses-utils, procps).
+check "every manifest row has 9 or 10 fields or is a comment" bash -c '
+    awk -F"\t" "/^[[:space:]]*#/ {next} NF==0 {next} NF!=9 && NF!=10 {print NR\": \"NF; bad=1} END{exit bad}" "$1"' _ "$MANIFEST"
 check "manifest has no duplicate canonical names" bash -c '
     dup=$(awk -F"\t" "!/^[[:space:]]*#/ && NF {print \$1}" "$1" | sort | uniq -d)
     [ -z "$dup" ] || { echo "duplicates: $dup"; exit 1; }' _ "$MANIFEST"

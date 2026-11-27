@@ -7,6 +7,29 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 
 ## 1.3.0 — 2026-11-27
 
+### Dependencies
+
+- **`docs/DEPENDENCIES.md` is generated from `share/systui-deps.tsv`** and
+  checked in CI, so the documented package map, the one-line install command
+  for every distribution and the manifest cannot drift apart.
+- **`install.sh --print-deps`** prints the exact install command for the host
+  it is run on, with no root and no network access — the thing to paste into a
+  minimal image where you would rather not run the installer first.
+- **`tools/deps-verify.sh <family>`** checks that every command the manifest
+  promises really exists, and reports advisory ones separately.
+- **`tools/deps-audit.py`** validates the manifest (field count, tiers,
+  duplicate names, package/command syntax) and requires the commands systui's
+  startup path needs to be provided by some row.
+- **A package cell may list several packages with `+`** (Alpine ships
+  `util-linux` in `util-linux` + `util-linux-misc`), and an optional tenth
+  column overrides the dnf name on zypper hosts — openSUSE needs
+  `ncurses-utils` and `procps` where Fedora has `ncurses` and `procps-ng`.
+  `lsblk`/`findmnt` moved to advisory commands: Alpine does not ship them.
+- **`.github/workflows/deps.yml`** installs the manifest set inside Debian 12,
+  Ubuntu 24.04, Alpine 3.22, Arch, Fedora 41, openSUSE Tumbleweed and Void
+  containers, then runs `tools/deps-verify.sh` in each. A wrong package name
+  now fails CI instead of a user's install.
+
 ### Installer portability
 
 - **`install.sh` and `update.sh` are plain POSIX sh.** `sh install.sh`,

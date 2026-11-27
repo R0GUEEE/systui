@@ -267,8 +267,16 @@ override them.
 ```bash
 sudo ./install.sh                 # core dependencies + install
 sudo ./install.sh --deps-only     # install dependencies, then exit
+sudo ./install.sh --print-deps    # print the exact install command, change nothing
 sudo ./install.sh --dry-run       # print the dependency plan, change nothing
 sudo ./install.sh --no-deps       # skip dependency installation
+```
+
+`--print-deps` needs no root and no network: it detects the distribution and
+prints the command you would otherwise type, e.g.
+
+```sh
+sudo apk add bash dialog coreutils grep sed gawk findutils diffutils tar gzip bzip2 xz unzip ca-certificates curl procps-ng util-linux util-linux-misc less ncurses
 ```
 
 Environment overrides: `SYSTUI_DEPS_TIERS=core`, `SYSTUI_DEPS_DRY_RUN=1`,
@@ -277,13 +285,37 @@ Environment overrides: `SYSTUI_DEPS_TIERS=core`, `SYSTUI_DEPS_DRY_RUN=1`,
 
 ### Dependencies
 
+Two files answer "what does systui need on this machine", and both are
+generated/checked from the same source:
+
+- **[`docs/DEPENDENCIES.md`](docs/DEPENDENCIES.md)** — the package map for every
+  distribution, one-line install commands, and the commands each package must
+  provide.
+- **[`share/systui-deps.tsv`](share/systui-deps.tsv)** — the machine-readable
+  manifest `install.sh` installs from.
+
+```sh
+sh tools/deps-verify.sh apt     # check the declared commands exist on this host
+python3 tools/deps-audit.py     # audit the manifest, or --check in CI
+```
+
+A family cell may list several packages separated by `+` (Alpine ships
+`util-linux` in `util-linux` + `util-linux-misc`); those are installed as
+separate packages. Commands after a `|` in the `commands` column are advisory:
+reported, never fatal.
+
+`.github/workflows/deps.yml` installs the manifest set inside Debian, Ubuntu,
+Alpine, Arch, Fedora, openSUSE and Void containers and runs
+`tools/deps-verify.sh` in each, so a wrong package name fails CI instead of a
+user's install.
+
 Everything installed automatically from `share/systui-deps.tsv`:
 
 **Core (required to start):**
 - bash 4.0+, dialog
 - coreutils, grep, sed, gawk, findutils, diffutils
 - tar, gzip, bzip2, xz, unzip
-- procps, util-linux, less, ncurses
+- procps, util-linux (+ `util-linux-misc` on Alpine), less, ncurses
 - curl, ca-certificates
 
 **Installed on demand (menus install these when an action needs them):**

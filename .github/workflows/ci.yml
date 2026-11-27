@@ -149,6 +149,16 @@ jobs:
             prev=$line
           done
 
+      - name: Dependency manifest and generated docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/deps-audit.py --check
+          for pm in apt apk pacman dnf zypper xbps emerge; do
+            SYSTUI_PM_OVERRIDE=$pm sh install.sh --print-deps >/dev/null
+          done
+          echo "dependency manifest, documentation and print-deps agree"
+
   regression:
     runs-on: ubuntu-latest
     timeout-minutes: 30

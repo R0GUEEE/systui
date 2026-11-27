@@ -1,0 +1,80 @@
+name: Dependency matrix
+
+# Installs share/systui-deps.tsv inside one container per distribution family
+# and checks that every command the manifest promises really exists there.
+# A wrong package name or a distribution that splits a package differently
+# fails here instead of in a user's install.
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manifest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Audit the manifest and the generated documentation
+        run: python3 tools/deps-audit.py --check
+      - name: Show the install command for every family
+        run: |
+          set -euo pipefail
+          for pm in apt apk pacman dnf xbps emerge; do
+            printf '%-8s ' "$pm"
+            sh -c 'SYSTUI_PM_OVERRIDE='"$pm"' sh install.sh --print-deps 2>&1 || true'
+          done
+
+  install:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: debian:12
+            pm: apt
+          - image: ubuntu:24.04
+            pm: apt
+          - image: alpine:3.22
+            pm: apk
+          - image: archlinux:latest
+            pm: pacman
+          - image: fedora:41
+            pm: dnf
+          - image: opensuse/tumbleweed:latest
+            pm: zypper
+          - image: voidlinux/voidlinux:latest
+            pm: xbps
+    container:
+      image: ${{ matrix.image }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install dnf's plugin requirements (Fedora)
+        if: matrix.pm == 'dnf'
+        run: dnf install -y 'dnf-command(config-manager)' >/dev/null || true
+
+      - name: Install the manifest dependency set
+        env:
+          # Arch needs a full upgrade before new packages; the installer only
+          # does that when explicitly allowed.
+          SYSTUI_ALLOW_FULL_UPGRADE: '1'
+        run: |
+          sh install.sh --deps-only || {
+            echo '--- dependency installation failed ---' >&2
+            exit 1
+          }
+
+      - name: Verify every declared command exists
+        run: sh tools/deps-verify.sh ${{ matrix.pm }}
+
+      - name: The installer still runs after the install
+        run: sh install.sh --print-deps

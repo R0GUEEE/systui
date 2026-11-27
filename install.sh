@@ -53,6 +53,7 @@ Usage: $0 [options]
 
 Options:
   --deps-only   Install and verify dependencies, then exit
+  --print-deps  Print the exact dependency install command for this host and exit
   --dry-run     Print the dependency plan and the install plan; change nothing
   --minimal     Accepted for compatibility; the core tier is installed anyway
   --no-deps     Skip dependency installation
@@ -307,7 +308,10 @@ deps_manifest_path() {
 deps_family_column() {
     case "$1" in
         apt) printf '2\n' ;; apk) printf '3\n' ;; pacman) printf '4\n' ;;
-        dnf|yum|zypper) printf '5\n' ;; xbps) printf '6\n' ;; emerge) printf '7\n' ;;
+        # openSUSE gets its own optional column (10): it shares most names with
+        # the dnf column but not all (ncurses-utils, procps).
+        zypper) printf '10\n' ;;
+        dnf|yum) printf '5\n' ;; xbps) printf '6\n' ;; emerge) printf '7\n' ;;
         *) return 1 ;;
     esac
 }
@@ -323,18 +327,32 @@ deps_tiers() {
 
 # Emit "tier<TAB>package" rows for the requested tiers on this package manager.
 deps_rows() { # <column> <tiers-csv>
-    local col="$1" tiers="$2" manifest canonical apt apk pacman dnf xbps emerge tier cmds pkg
+    local col="$1" tiers="$2" manifest canonical apt apk pacman dnf xbps emerge tier cmds zypper pkg one
+    local old_ifs
     manifest=$(deps_manifest_path) || return 1
-    while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
+    while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge tier cmds zypper || [ -n "${canonical:-}" ]; do
         case "${canonical:-}" in ''|'#'*) continue ;; esac
         case ",${tiers}," in *",${tier:-},"*) ;; *) continue ;; esac
         case "$col" in
             2) pkg="$apt" ;; 3) pkg="$apk" ;; 4) pkg="$pacman" ;;
             5) pkg="$dnf" ;; 6) pkg="$xbps" ;; 7) pkg="$emerge" ;;
+            10) pkg="${zypper:-}"; [ -n "$pkg" ] && [ "$pkg" != "-" ] || pkg="$dnf" ;;
             *) return 1 ;;
         esac
         [ -n "${pkg:-}" ] || continue
-        [ "$pkg" = "-" ] || printf '%s\t%s\n' "$tier" "$pkg"
+        # A family field may list several packages separated by "+" (Alpine
+        # splits util-linux, for instance): emit one row per package.
+        case "$pkg" in
+            -) continue ;;
+            *+*)
+                old_ifs=$IFS; IFS='+'
+                for one in $pkg; do
+                    [ -n "$one" ] && printf '%s\t%s\n' "$tier" "$one"
+                done
+                IFS=$old_ifs
+                ;;
+            *) printf '%s\t%s\n' "$tier" "$pkg" ;;
+        esac
     done < "$manifest"
 }
 
@@ -395,6 +413,47 @@ deps_install_tier() { # <pm> <tier> <packages...>
     esac
 }
 
+# Packages for one family and tier set, space separated.
+#   <pm> <tiers-csv> <core|toolkit|all>
+deps_package_list() {
+    local pm="$1" tiers="$2" want="$3" col tier pkg core="" toolkit=""
+    col=$(deps_family_column "$pm") || return 1
+    while IFS=$TAB read -r tier pkg; do
+        [ -n "$pkg" ] || continue
+        case "$tier" in
+            core) core="$core $pkg" ;;
+            *)    toolkit="$toolkit $pkg" ;;
+        esac
+    done <<EOF
+$(deps_rows "$col" "$tiers" 2>/dev/null || true)
+EOF
+    case "$want" in
+        core)    printf '%s\n' "${core# }" ;;
+        toolkit) printf '%s\n' "${toolkit# }" ;;
+        all)     printf '%s\n' "${core# }${toolkit:+ }${toolkit# }" ;;
+        *) return 1 ;;
+    esac
+}
+
+# The exact command a user would type to install the dependency set. Kept in
+# one place so --print-deps and the generated documentation cannot disagree.
+deps_install_command() { # <pm> <packages...>
+    local pm="$1"
+    shift
+    [ "$#" -gt 0 ] || return 1
+    case "$pm" in
+        apt) printf 'sudo apt-get update && sudo apt-get install -y --no-install-recommends %s' "$*" ;;
+        apk) printf 'sudo apk add %s' "$*" ;;
+        pacman) printf 'sudo pacman -S --needed --noconfirm %s' "$*" ;;
+        dnf) printf 'sudo dnf install -y %s' "$*" ;;
+        yum) printf 'sudo yum install -y %s' "$*" ;;
+        zypper) printf 'sudo zypper --non-interactive install %s' "$*" ;;
+        xbps) printf 'sudo xbps-install -Sy %s' "$*" ;;
+        emerge) printf 'sudo emerge --noreplace %s' "$*" ;;
+        *) return 1 ;;
+    esac
+}
+
 install_dependencies() {
     if [ "${SYSTUI_SKIP_DEPS:-0}" = "1" ]; then
         info "Skipping dependency installation (SYSTUI_SKIP_DEPS=1)"
@@ -422,19 +481,10 @@ install_dependencies() {
     info "Dependency tiers: $tiers"
 
     # No temporary file: mktemp is not guaranteed on a minimal host, and the
-    # whole point of this step is to install the tools it would need. A
-    # here-document feeds the loop in the current shell, so the package lists
-    # survive it (a pipe would run the loop in a subshell).
-    local core_pkgs="" toolkit_pkgs="" tier pkg
-    while IFS=$TAB read -r tier pkg; do
-        [ -n "$pkg" ] || continue
-        case "$tier" in
-            core) core_pkgs="$core_pkgs $pkg" ;;
-            *)    toolkit_pkgs="$toolkit_pkgs $pkg" ;;
-        esac
-    done <<EOF
-$(deps_rows "$col" "$tiers" 2>/dev/null || true)
-EOF
+    # whole point of this step is to install the tools it would need.
+    local core_pkgs toolkit_pkgs
+    core_pkgs=$(deps_package_list "$pm" "$tiers" core 2>/dev/null || true)
+    toolkit_pkgs=$(deps_package_list "$pm" "$tiers" toolkit 2>/dev/null || true)
 
     if [ -z "$core_pkgs$toolkit_pkgs" ]; then
         error "The dependency manifest produced no packages for $pm (tiers: $tiers)."
@@ -682,10 +732,11 @@ cleanup() {
 }
 
 main() {
-    local deps_only=0
+    local deps_only=0 print_deps=0
     while [ "$#" -gt 0 ]; do
         case "$1" in
             --deps-only) deps_only=1 ;;
+            --print-deps) print_deps=1 ;;
             --dry-run) SYSTUI_DEPS_DRY_RUN=1; SYSTUI_DRY_RUN=1 ;;
             # Exported, not merely assigned: the flag is accepted for
             # compatibility with callers that pass it through (core is the
@@ -697,6 +748,27 @@ main() {
         esac
         shift
     done
+    if [ "$print_deps" -eq 1 ]; then
+        # No root, no system change: print what this host needs.
+        _pm="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}"
+        if [ -z "$_pm" ]; then
+            printf 'Could not detect a package manager. Set SYSTUI_PM_OVERRIDE=<apt|apk|pacman|dnf|zypper|xbps|emerge>.\n' >&2
+            return 1
+        fi
+        _pkgs=$(deps_package_list "$_pm" "$(deps_tiers)" core 2>/dev/null || true)
+        if [ -z "$_pkgs" ]; then
+            printf 'The dependency manifest produced no packages for %s.\n' "$_pm" >&2
+            return 1
+        fi
+        # shellcheck disable=SC2086  # package names never contain whitespace
+        deps_install_command "$_pm" $_pkgs || {
+            printf 'No install command is defined for %s.\n' "$_pm" >&2
+            return 1
+        }
+        printf '\n'
+        return 0
+    fi
+
     echo "========== systui Installation =========="
     echo "Version: $SYSTUI_VERSION"
     if [ "${SYSTUI_DRY_RUN:-0}" = "1" ]; then
