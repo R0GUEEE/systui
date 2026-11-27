@@ -55,7 +55,11 @@ check "update.sh escalates privileges before installing prerequisites" bash -c '
     b=$(grep -n "Prerequisites are installed as root" "$1" | head -n1 | cut -d: -f1)
     [ -n "$a" ] && [ -n "$b" ] && [ "$a" -lt "$b" ]' _ "$UPDATE"
 check "update.sh forwards dependency flags to install.sh" bash -c '
-    grep -q -- "--minimal" "$1" && grep -q "install_args+=" "$1"' _ "$UPDATE"
+    # POSIX sh has no arrays: the flags are collected in a word list that is
+    # expanded unquoted at the install.sh call site, so assert both halves.
+    grep -q -- "--minimal" "$1" &&
+    grep -q "install_flags=" "$1" &&
+    grep -q -- "\$install_flags" "$1"' _ "$UPDATE"
 
 # --- runtime behaviour (no installation happens) -----------------------------
 tmp=$(mktemp -d)

@@ -1,20 +1,25 @@
 #!/bin/sh
-# shellcheck shell=bash
-# This installer is implemented in Bash. POSIX-compatible entrypoint lets
-# `sh install.sh` (also dash/ash/zsh) re-exec before parsing Bash-only syntax.
-if [ -z "${BASH_VERSION:-}" ]; then
-    if ! command -v bash >/dev/null 2>&1; then
-        printf '%s\n' 'systui installer requires Bash. Install bash (e.g. apk add bash or apt-get install bash), then run: bash install.sh' >&2
-        exit 127
-    fi
-    exec bash "$0" "$@"
+# shellcheck shell=sh
+# `local` is not in POSIX, but every sh this script targets implements it
+# (dash, ash/BusyBox, zsh, ksh, mksh, yash) and the alternative — leaking
+# loop variables into the global scope — is worse. Everything else is POSIX.
+# shellcheck disable=SC3043
+# systui's installer is plain POSIX sh. It runs unchanged under sh (dash,
+# ash/BusyBox), bash, zsh, ksh and mksh — no Bash required, no re-exec.
+#
+# zsh does not word-split an unquoted expansion by default, so it is asked for
+# sh semantics before any code below relies on that. The same emulation turns
+# off zsh's extended globbing, which would otherwise change what patterns such
+# as `opensuse*` in the case statements match.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    emulate -R sh 2>/dev/null || setopt sh_word_split 2>/dev/null || true
 fi
 ###############################################################################
 # systui — Installation Script
 ###############################################################################
 set -e
 
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SYSTUI_VERSION=$(head -n1 "$PROJECT_DIR/src/VERSION" 2>/dev/null | tr -d '[:space:]')
 [ -n "$SYSTUI_VERSION" ] || SYSTUI_VERSION=dev
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr}"
@@ -22,10 +27,23 @@ BIN_DIR="$INSTALL_PREFIX/bin"
 LIB_DIR="$INSTALL_PREFIX/lib/systui"
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
-info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-success() { echo -e "${GREEN}[OK]${NC} $*"; }
-warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-error() { echo -e "${RED}[ERROR]${NC} $*" >&2; exit 1; }
+# %b expands the colour codes in every shell; `echo -e` is bash-only and even
+# there not portable across builds.
+info() { printf '%b[INFO]%b %s\n' "$BLUE" "$NC" "$*"; }
+success() { printf '%b[OK]%b %s\n' "$GREEN" "$NC" "$*"; }
+warn() { printf '%b[WARN]%b %s\n' "$YELLOW" "$NC" "$*"; }
+error() { printf '%b[ERROR]%b %s\n' "$RED" "$NC" "$*" >&2; exit 1; }
+
+# Field separator for the dependency manifest. $'\t' is a bash/zsh quoting
+# form, not POSIX, so the tab is produced once and reused.
+TAB=$(printf '\t')
+
+# Number of whitespace-separated words in a list string. POSIX sh has no
+# arrays, so package lists are held as space-separated words instead.
+list_count() { # <list>
+    set -- $1
+    printf '%s\n' "$#"
+}
 
 require_root() { [ "$(id -u)" -eq 0 ] || error "This script must be run as root. Try: sudo $0"; }
 
@@ -202,51 +220,57 @@ deps_report_skipped() {
 # package aborts the run. SYSTUI_DEPS_STRICT=1 turns skipped packages back into
 # a hard error.
 install_native_packages() {
-    local pm="$1" pkg
+    local pm="$1" pkg missing="" available="" unlocatable="" failed="" count
     shift
     [ "$#" -gt 0 ] || return 0
-    local -a missing=() available=() unlocatable=() failed=()
-    for pkg in "$@"; do package_is_installed "$pm" "$pkg" || missing+=("$pkg"); done
-    [ ${#missing[@]} -gt 0 ] || return 0
-    info "Installing ${#missing[@]} missing package(s): ${missing[*]}"
+    for pkg in "$@"; do
+        package_is_installed "$pm" "$pkg" || missing="$missing $pkg"
+    done
+    [ -n "$missing" ] || return 0
+    # shellcheck disable=SC2086  # package names never contain whitespace
+    count=$(list_count "$missing")
+    info "Installing $count missing package(s):$missing"
     refresh_package_metadata "$pm"
 
-    for pkg in "${missing[@]}"; do
+    for pkg in $missing; do
         if deps_package_available "$pm" "$pkg"; then
-            available+=("$pkg")
+            available="$available $pkg"
         else
             case $? in
-                1) unlocatable+=("$pkg") ;;
-                *) available+=("$pkg") ;;
+                1) unlocatable="$unlocatable $pkg" ;;
+                *) available="$available $pkg" ;;
             esac
         fi
     done
-    if [ ${#unlocatable[@]} -gt 0 ]; then
-        warn "Not found in any configured repository (skipped): ${unlocatable[*]}"
-        deps_note_skipped "${unlocatable[@]}"
+    if [ -n "$unlocatable" ]; then
+        warn "Not found in any configured repository (skipped):$unlocatable"
+        # shellcheck disable=SC2086
+        deps_note_skipped $unlocatable
     fi
 
-    if [ ${#available[@]} -gt 0 ]; then
-        if deps_run_install_batch "$pm" "${available[@]}"; then
-            for pkg in "${available[@]}"; do
-                package_is_installed "$pm" "$pkg" || failed+=("$pkg")
+    if [ -n "$available" ]; then
+        # shellcheck disable=SC2086
+        if deps_run_install_batch "$pm" $available; then
+            for pkg in $available; do
+                package_is_installed "$pm" "$pkg" || failed="$failed $pkg"
             done
         else
             warn "The package batch did not complete; retrying one package at a time."
-            for pkg in "${available[@]}"; do
+            for pkg in $available; do
                 package_is_installed "$pm" "$pkg" && continue
                 if deps_run_install_one "$pm" "$pkg" >/dev/null 2>&1; then
-                    package_is_installed "$pm" "$pkg" || failed+=("$pkg")
+                    package_is_installed "$pm" "$pkg" || failed="$failed $pkg"
                 else
-                    failed+=("$pkg")
+                    failed="$failed $pkg"
                 fi
             done
         fi
     fi
 
-    if [ ${#failed[@]} -gt 0 ]; then
-        warn "Could not install (skipped): ${failed[*]}"
-        deps_note_skipped "${failed[@]}"
+    if [ -n "$failed" ]; then
+        warn "Could not install (skipped):$failed"
+        # shellcheck disable=SC2086
+        deps_note_skipped $failed
     fi
 
     if [ "${SYSTUI_DEPS_STRICT:-0}" = "1" ] && [ -n "${SYSTUI_DEPS_SKIPPED:-}" ]; then
@@ -301,7 +325,7 @@ deps_tiers() {
 deps_rows() { # <column> <tiers-csv>
     local col="$1" tiers="$2" manifest canonical apt apk pacman dnf xbps emerge tier cmds pkg
     manifest=$(deps_manifest_path) || return 1
-    while IFS=$'\t' read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
+    while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
         case "${canonical:-}" in ''|'#'*) continue ;; esac
         case ",${tiers}," in *",${tier:-},"*) ;; *) continue ;; esac
         case "$col" in
@@ -320,7 +344,7 @@ deps_rows() { # <column> <tiers-csv>
 deps_missing_commands() { # <tiers-csv>
     local tiers="$1" manifest canonical apt apk pacman dnf xbps emerge tier cmds
     manifest=$(deps_manifest_path) || return 1
-    while IFS=$'\t' read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
+    while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
         case "${canonical:-}" in ''|'#'*) continue ;; esac
         case ",${tiers}," in *",${tier:-},"*) ;; *) continue ;; esac
         [ -n "${cmds:-}" ] || continue
@@ -404,18 +428,21 @@ install_dependencies() {
         error "The dependency manifest produced no packages for $pm (tiers: $tiers)."
     fi
 
-    local -a core_pkgs=() toolkit_pkgs=()
-    while IFS=$'\t' read -r tier pkg; do
+    local core_pkgs="" toolkit_pkgs=""
+    while IFS=$TAB read -r tier pkg; do
         [ -n "$pkg" ] || continue
         case "$tier" in
-            core) core_pkgs+=("$pkg") ;;
-            *)    toolkit_pkgs+=("$pkg") ;;
+            core) core_pkgs="$core_pkgs $pkg" ;;
+            *)    toolkit_pkgs="$toolkit_pkgs $pkg" ;;
         esac
     done < "$row_file"
     rm -f "$row_file"
 
-    deps_install_tier "$pm" core "${core_pkgs[@]}"
-    [ "${#toolkit_pkgs[@]}" -eq 0 ] || deps_install_tier "$pm" toolkit "${toolkit_pkgs[@]}"
+    # shellcheck disable=SC2086  # package names never contain whitespace
+    deps_install_tier "$pm" core $core_pkgs
+    [ -n "$toolkit_pkgs" ] || return 0
+    # shellcheck disable=SC2086
+    deps_install_tier "$pm" toolkit $toolkit_pkgs
     success "Dependency installation complete"
 }
 
@@ -436,14 +463,14 @@ verify_dependencies() {
                         entry=${entry#soft:}
                         warn "Optional ${entry%%:*} command not available: ${entry#*:}"
                         ;;
-                    core:*) missing_commands+="${entry#core:} " ;;
+                    core:*) missing_commands="$missing_commands${entry#core:} " ;;
                     *) warn "Optional ${entry%%:*} command not available: ${entry#*:}" ;;
                 esac
             done < "$cmd_list"
             rm -f "$cmd_list"
         fi
     else
-        for cmd in bash dialog sed awk grep cut tr head sort find; do check_command "$cmd" || missing_commands+="$cmd "; done
+        for cmd in bash dialog sed awk grep cut tr head sort find; do check_command "$cmd" || missing_commands="$missing_commands$cmd "; done
     fi
     if ! check_command curl && ! check_command wget; then
         warn "Neither curl nor wget is available; network features will be unavailable."

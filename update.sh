@@ -1,20 +1,23 @@
 #!/bin/sh
-# shellcheck shell=bash
-# systui's updater is implemented in Bash. Re-exec under Bash first so it can
-# be started as `sh update.sh`, `dash update.sh`, `zsh update.sh`, etc.
-if [ -z "${BASH_VERSION:-}" ]; then
-    if ! command -v bash >/dev/null 2>&1; then
-        printf '%s\n' 'systui update requires Bash. Install it (apk add bash, apt-get install bash, ...) and retry.' >&2
-        exit 127
-    fi
-    exec bash "$0" "$@"
+# shellcheck shell=sh
+# `local` is not in POSIX, but every sh this script targets implements it
+# (dash, ash/BusyBox, zsh, ksh, mksh, yash) and the alternative — leaking
+# loop variables into the global scope — is worse. Everything else is POSIX.
+# shellcheck disable=SC3043
+# systui's updater is plain POSIX sh, like install.sh: it runs unchanged under
+# sh (dash, ash/BusyBox), bash, zsh, ksh and mksh. zsh is asked for sh
+# semantics because it does not word-split an unquoted expansion by default.
+if [ -n "${ZSH_VERSION:-}" ]; then
+    emulate -R sh 2>/dev/null || setopt sh_word_split 2>/dev/null || true
 fi
 ###############################################################################
 # systui Update Script
 # Replaces the local systui installation with a fresh copy of GitHub main.
 ###############################################################################
 
-set -Eeuo pipefail
+# No `pipefail`/`-E`: both are Bash extensions, and every pipeline below is
+# written so that the command whose status matters is the one being tested.
+set -eu
 
 INSTALL_PREFIX="${INSTALL_PREFIX:-/usr}"
 STATE_DIR="${SYSTUI_STATE_DIR:-/etc/systui}"
@@ -146,30 +149,29 @@ update_refresh_metadata() { # <pm>
 # cannot provide is skipped rather than aborting the update; git is the only
 # hard requirement, because without it the update cannot run at all.
 ensure_update_prerequisites() {
-    local pm pkg skipped=''
-    local -a pkgs=()
-    command -v git >/dev/null 2>&1 || pkgs+=(git)
-    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then pkgs+=(curl); fi
-    command -v tar >/dev/null 2>&1 || pkgs+=(tar)
-    [ -e /etc/ssl/certs/ca-certificates.crt ] || pkgs+=(ca-certificates)
+    local pm pkg skipped='' pkgs=''
+    command -v git >/dev/null 2>&1 || pkgs="$pkgs git"
+    if ! command -v curl >/dev/null 2>&1 && ! command -v wget >/dev/null 2>&1; then pkgs="$pkgs curl"; fi
+    command -v tar >/dev/null 2>&1 || pkgs="$pkgs tar"
+    [ -e /etc/ssl/certs/ca-certificates.crt ] || pkgs="$pkgs ca-certificates"
 
-    if [ "${#pkgs[@]}" -eq 0 ]; then
+    if [ -z "$pkgs" ]; then
         return 0
     fi
     if [ "$DRY_RUN" -eq 1 ]; then
-        info "[dry-run] update prerequisites would be installed: ${pkgs[*]}"
+        info "[dry-run] update prerequisites would be installed:$pkgs"
         return 0
     fi
     pm=$(detect_pm)
     if [ -z "$pm" ]; then
-        warn "No package manager detected; install these before updating: ${pkgs[*]}"
+        warn "No package manager detected; install these before updating:$pkgs"
         command -v git >/dev/null 2>&1 || die "git is required to update systui."
         return 0
     fi
 
-    info "Update prerequisites ($pm): ${pkgs[*]}"
+    info "Update prerequisites ($pm):$pkgs"
     update_refresh_metadata "$pm"
-    for pkg in "${pkgs[@]}"; do
+    for pkg in $pkgs; do
         update_pkg_installed "$pm" "$pkg" && continue
         if ! update_install_one "$pm" "$pkg" >/dev/null 2>&1 || ! update_pkg_installed "$pm" "$pkg"; then
             skipped="$skipped $pkg"
@@ -185,7 +187,7 @@ ensure_update_prerequisites() {
 
 # BusyBox rm rejects --one-file-system outright ("unrecognized option") and
 # deletes nothing, which is fatal here because this script runs under
-# set -Eeuo pipefail. Probe once, like rootfs_rm_tree does, and fall back.
+# set -eu. Probe once, like rootfs_rm_tree does, and fall back.
 update_rm_tree() { # <path>
     local p="${1:-}"
     [ -n "$p" ] || return 64
@@ -223,15 +225,17 @@ safe_remove_cache() {
 }
 
 if [ "$(id -u)" -ne 0 ]; then
-    args=("$0")
-    [ "$NO_DEPS" -eq 1 ] && args+=(--no-deps)
-    [ "$MINIMAL" -eq 1 ] && args+=(--minimal)
-    [ "$DRY_RUN" -eq 1 ] && args+=(--dry-run)
+    flags=''
+    [ "$NO_DEPS" -eq 1 ] && flags="$flags --no-deps"
+    [ "$MINIMAL" -eq 1 ] && flags="$flags --minimal"
+    [ "$DRY_RUN" -eq 1 ] && flags="$flags --dry-run"
     command -v sudo >/dev/null 2>&1 || die "Run this script as root."
     # sudo resets the environment by default, so the caller's prefix and state
     # directory have to be passed explicitly; without them the privileged
     # re-exec recomputed the defaults and updated /usr/lib/systui instead.
-    exec sudo INSTALL_PREFIX="$INSTALL_PREFIX" SYSTUI_STATE_DIR="$STATE_DIR" "${args[@]}"
+    # Re-run through `sh` so the elevation works whatever shell started us.
+    # shellcheck disable=SC2086  # flags are a fixed set of option words
+    exec sudo INSTALL_PREFIX="$INSTALL_PREFIX" SYSTUI_STATE_DIR="$STATE_DIR" sh "$0" $flags
 fi
 
 # Prerequisites are installed as root, before anything needs them.
@@ -267,7 +271,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
     done
     if [ -n "$_dry_installer" ]; then
         SYSTUI_PM_OVERRIDE="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}" \
-            bash "$_dry_installer" --deps-only --dry-run || warn "Dependency plan could not be generated."
+            sh "$_dry_installer" --deps-only --dry-run || warn "Dependency plan could not be generated."
     else
         warn "No local install.sh to preview the dependency plan with; the clone happens on a real run."
     fi
@@ -310,14 +314,16 @@ if [ -e "$LIB_DIR" ]; then
     info "Replacing the existing systui installation at: $LIB_DIR"
 fi
 
-install_args=()
-[ "$MINIMAL" -eq 1 ] && install_args+=(--minimal)
-[ "$DRY_RUN" -eq 1 ] && install_args+=(--dry-run)
+install_flags=''
+[ "$MINIMAL" -eq 1 ] && install_flags="$install_flags --minimal"
+[ "$DRY_RUN" -eq 1 ] && install_flags="$install_flags --dry-run"
 
 if [ "$NO_DEPS" -eq 1 ]; then
-    SYSTUI_SKIP_DEPS=1 INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh" ${install_args[@]+"${install_args[@]}"}
+    # shellcheck disable=SC2086  # flags are a fixed set of option words
+    SYSTUI_SKIP_DEPS=1 INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh" $install_flags
 else
-    INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh" ${install_args[@]+"${install_args[@]}"}
+    # shellcheck disable=SC2086
+    INSTALL_PREFIX="$INSTALL_PREFIX" "$CACHE_DIR/install.sh" $install_flags
 fi
 
 printf '%s\n' "$CACHE_DIR" > "$STATE_DIR/source-dir"

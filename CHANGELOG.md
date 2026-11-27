@@ -7,6 +7,25 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 
 ## 1.3.0 — 2026-11-27
 
+### Installer portability
+
+- **`install.sh` and `update.sh` are plain POSIX sh.** `sh install.sh`,
+  `dash install.sh`, `ash`/BusyBox, `bash`, `zsh`, `ksh` and `mksh` all run the
+  real script — no Bash needed on the host, no re-exec trampoline, so an
+  install no longer fails on a minimal image that has no bash yet (bash is
+  still installed as a *runtime* dependency of systui itself).
+- zsh is switched to sh semantics at the top of both scripts (`emulate -R sh`):
+  without it an unquoted expansion is a single word in zsh and every package
+  list would have been passed as one argument.
+- Arrays became word lists, `$'\t'` became a `TAB` variable, `echo -e` became
+  `printf %b`, `BASH_SOURCE` became `$0`, and the last `var+=` appends were
+  spelled out. `set -Eeuo pipefail` is `set -eu`, with every pipeline already
+  arranging for the status that matters to be the one tested.
+- Tests now prove it instead of asserting the trampoline: a fake `bash` that
+  exits 99 is first on PATH for every run, the dependency plan must be
+  byte-identical across all shells, and the installer is exercised end to end
+  from `dash` and `zsh` into a throw-away prefix.
+
 ### Containers & virtualization (new Rootfs utility)
 
 - **Rootfs > Containers & virtualization** is a full front door for the

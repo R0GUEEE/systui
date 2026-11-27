@@ -25,6 +25,18 @@ sudo ./install.sh
 sudo systui
 ```
 
+The installer and updater are plain POSIX sh — they run unchanged under
+`sh`, `dash`, `ash`/BusyBox, `bash`, `zsh`, `ksh` and `mksh`, with no Bash
+installed and no re-exec. (`zsh` is switched to sh semantics at the top of the
+script, because it does not word-split an unquoted expansion by default.)
+systui itself still runs on Bash; it is part of the installer's core
+dependency set and is installed for you.
+
+```sh
+sh install.sh          # works
+zsh install.sh         # works
+dash install.sh        # works
+
 ### First Run
 
 ```bash
