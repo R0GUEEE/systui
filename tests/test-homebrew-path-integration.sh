@@ -37,13 +37,14 @@ mkbin "$prefix/sbin/brew-fake-daemon"
 mkbin "$prefix/bin/sh"
 mkbin "$prefix/bin/sort"
 # Keg-only formulae: never linked into bin/, they exist only under opt/.
-mkdir -p "$prefix/opt/openjdk/bin" "$prefix/opt/sqlite/bin" "$prefix/opt/curl/bin" \
+mkdir -p "$prefix/opt/openjdk/bin" "$prefix/opt/sqlite/bin" "$prefix/opt/collide/bin" \
          "$prefix/opt/openjdk/sbin" "$prefix/opt/never/bin"
 mkbin "$prefix/opt/openjdk/bin/keg-java"
 mkbin "$prefix/opt/openjdk/bin/keg-javac"
 mkbin "$prefix/opt/openjdk/sbin/keg-jshell"
 mkbin "$prefix/opt/sqlite/bin/keg-sqlite3"
-mkbin "$prefix/opt/curl/bin/curl"
+# A keg-only formula that ships a name every POSIX host already provides.
+mkbin "$prefix/opt/collide/bin/sort"
 mkbin "$prefix/opt/never/bin/sh"
 conf="$tmpdir/brew-path.conf"
 
@@ -92,7 +93,7 @@ check "keg-only formula bin target is correct" \
     test "$(readlink "$lbin/keg-java")" = "$prefix/opt/openjdk/bin/keg-java"
 check "keg-only sbin formula reaches sbin mirror"   test -L "$lsbin/keg-jshell"
 check "second keg-only formula also mirrored"       test -L "$lbin/keg-sqlite3"
-check "keg-only name the system provides is skipped" test ! -e "$lbin/curl"
+check "keg-only name the system provides is skipped" test ! -e "$lbin/sort"
 check "keg-only formula does not ship sh"            test ! -e "$lbin/sh"
 
 mkdir -p "$prefix/opt/fresh/bin"
@@ -107,18 +108,19 @@ check "opt mirrors are kept, not churned"           test -L "$lbin/keg-java"
 SYSTUI_BREW_PREFIX="$prefix" SYSTUI_BREW_PATH_LINK_DIR="$lbin" SYSTUI_BREW_PATH_SBIN_DIR="$lsbin" \
     SYSTUI_BREW_PATH_CONF="$conf" SYSTUI_BREW_PATH_SHADOW=1 bash "$HELPER" --quiet >/dev/null
 check "shadow opt-in mirrors the system name"      test -L "$lbin/sort"
-check "shadow opt-in mirrors keg-only over system" test -L "$lbin/curl"
+check "shadow opt-in keeps linked bin ahead of opt" \
+    test "$(readlink "$lbin/sort")" = "$prefix/bin/sort"
 check "protected names survive shadow opt-in"      test ! -L "$lbin/sh"
 
 # The policy file drives resolution when no env override is present.
 run_helper --prefer-brew >/dev/null
 check "--prefer-brew persists the policy"           grep -qx 'PREFER_BREW=1' "$conf"
-check "policy file is honoured without the env"     test -L "$lbin/curl"
+check "policy file is honoured without the env"     test -L "$lbin/sort"
 policy_status=$(run_helper --status)
 check "status reports the policy"                   bash -c 'printf %s "$1" | grep -q "brew wins over system"' _ "$policy_status"
 run_helper --prefer-system >/dev/null
 check "--prefer-system persists the policy"         grep -qx 'PREFER_BREW=0' "$conf"
-check "system priority removes the shadowed link"   test ! -L "$lbin/curl"
+check "system priority removes the shadowed link"   test ! -L "$lbin/sort"
 check "new formula names still get mirrored"        test -L "$lbin/keg-java"
 
 # A formula version bump re-points the existing link instead of failing.
