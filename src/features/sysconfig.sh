@@ -955,8 +955,11 @@ repo_write_block() { # <file> <body>
             { print }
         ' "$file" 2>/dev/null) || kept=""
     fi
+    # Writability, not uid: the sandbox tests write into a temp directory as a
+    # normal user, and a root shell writing a config is only possible if the
+    # directory allows it anyway.
     mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
-    [ "$(id -u)" -eq 0 ] || { warn "repo: $file needs root"; return 1; }
+    [ -w "$(dirname "$file")" ] || { warn "repo: $(dirname "$file") is not writable (root required)"; return 1; }
     {
         [ -n "$kept" ] && printf '%s\n\n' "$kept"
         printf '%s\n' "$REPO_BLOCK_BEGIN"
@@ -1263,7 +1266,7 @@ repo_portage_write() { # <rsync|git>
         *)   uri="rsync://rsync.gentoo.org/gentoo-portage" ;;
     esac
     mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
-    [ "$(id -u)" -eq 0 ] || { warn "repo: $file needs root"; return 1; }
+    [ -w "$(dirname "$file")" ] || { warn "repo: $(dirname "$file") is not writable (root required)"; return 1; }
     {
         printf '# Managed by systui — Distro Repos (Gentoo).\n'
         printf '[gentoo]\n'
