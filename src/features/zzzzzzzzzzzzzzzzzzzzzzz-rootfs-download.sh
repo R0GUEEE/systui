@@ -209,6 +209,7 @@ menu_rootfs() {
             workbench "Chroot workbench (manage rootfs)" \
             bootstrap "Bootstrap tools" \
             distros "Distro managers" \
+            containers "Containers & virtualization" \
             back "Back") || return 0
         [ -n "$c" ] || return 0
         case "$c" in
@@ -218,6 +219,7 @@ menu_rootfs() {
             workbench) menu_rootfs_workbench || true ;;
             bootstrap) menu_rootfs_bootstrap_tools || true ;;
             distros) menu_rootfs_distro_managers || true ;;
+            containers) menu_rootfs_containers || true ;;
             back) return 0 ;;
         esac
     done

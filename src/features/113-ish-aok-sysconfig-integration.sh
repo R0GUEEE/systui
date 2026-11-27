@@ -134,6 +134,7 @@ menu_rootfs() {
             workbench "Chroot workbench (manage rootfs)" \
             bootstrap "Bootstrap tools" \
             distros   "Distro managers" \
+            containers "Containers & virtualization" \
             back      "Back" || return $?
         case "$c" in
             aot)       tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT" ;;
@@ -145,6 +146,7 @@ menu_rootfs() {
             workbench) menu_rootfs_workbench || true ;;
             bootstrap) menu_rootfs_bootstrap_tools || true ;;
             distros)   menu_rootfs_distro_managers || true ;;
+            containers) tui_call_menu menu_rootfs_containers "Containers & virtualization" ;;
             back|'') return 0 ;;
             *)         tui_msg "Error" "Unknown option: $c" ;;
         esac

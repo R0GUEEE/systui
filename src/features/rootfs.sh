@@ -4180,6 +4180,7 @@ menu_rootfs() {
             workbench  "Chroot workbench (mount, modify, pack any rootfs)" \
             bootstrap  "Bootstrap tools  (debootstrap, mmdebstrap, pacstrap...)" \
             distros    "Distro managers  (proot-distro, chroot-distro...)" \
+            containers "Containers & virtualization  (docker, podman, lxc...)" \
             back       "Back"); then
             # User pressed ESC/Cancel - gracefully return to parent menu
             return 0
@@ -4194,6 +4195,7 @@ menu_rootfs() {
             workbench)  menu_rootfs_workbench || true ;;
             bootstrap)  menu_rootfs_bootstrap_tools || true ;;
             distros)    menu_rootfs_distro_managers || true ;;
+            containers) menu_rootfs_containers || true ;;
             back)   return 0 ;;
             *)      tui_msg "Error" "Unknown option: $c"; continue ;;
         esac

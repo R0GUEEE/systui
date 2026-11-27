@@ -157,6 +157,35 @@ Stash** accepts `list`, `save` or `restore`; the latter two can copy private key
 These upstream tools require root for changes; systui does not elevate privileges.
 Older builds do not gain placeholder entries for tools they lack.
 
+### Rootfs → Containers & virtualization
+
+Container runtimes and machine virtualization live under **Rootfs → Containers
+& virtualization** (`src/features/zzz-rootfs-container-virt.sh`): Docker,
+Podman, containerd/nerdctl, LXC, LXD, Incus, libvirt + QEMU/KVM, Waydroid,
+Apptainer, bubblewrap and systemd-nspawn. Each entry installs the tool for the
+host's package manager (or from its upstream channel), controls its service,
+and exposes the options that tool actually reads — registry mirrors, insecure
+registries, data-root, storage driver, log rotation, address pools, DNS,
+live-restore, iptables, userns-remap, Podman graph/run root, OCI runtime,
+cgroup manager and the API socket.
+
+Settings are stored once, in systui's own config file (`cn_*` keys), and
+rendered into the tool's native file: `/etc/docker/daemon.json`,
+`/etc/containers/{registries,containers,storage}.conf`, `/etc/lxc/default.conf`,
+`/etc/apptainer/apptainer.conf`. `daemon.json` is validated as JSON before
+Docker is restarted. Rootless Podman gets `/etc/subuid`, `/etc/subgid`, linger
+and fuse-overlayfs through **Configuration → Rootless**.
+
+The same settings back **Rootfs → Distro managers**
+(`src/features/zzz-rootfs-distro-managers-extended.sh`). Besides proot-distro,
+chroot-distro, Distrobox, Toolbx, schroot, udocker, machinectl and arch-chroot,
+the catalogue now includes podman, docker, LXC and Incus; Distrobox and Toolbx
+call `cn_ensure_engine`, which detects a working engine, starts an installed
+one, or installs rootless Podman instead of only printing a hint. Per-manager
+configuration covers the rootfs store, run-as user, install prefix, image pull
+policy, extra `create` arguments, LXC/Incus bridge and autostart, and a view of
+every saved setting.
+
 ### Package search across every installed manager
 
 `Packages -> Packages -> install`, `... -> search` and the catalogue's search

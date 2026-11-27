@@ -133,4 +133,6 @@ zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ios-linuxkit-manager.s
 115-unified-package-search.sh
 116-ish-aok-tools.sh
 117-ios-linuxkit-aot-utility.sh
+zzz-rootfs-container-virt.sh
+zzz-rootfs-distro-managers-extended.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-argmax-cleanup.sh
