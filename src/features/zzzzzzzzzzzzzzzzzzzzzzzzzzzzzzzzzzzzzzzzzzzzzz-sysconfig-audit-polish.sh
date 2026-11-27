@@ -47,12 +47,26 @@ menu_user_advanced() {
 sysconfig_apt_key_menu() {
     local a url name tmp
     while true; do
-        a=$(tui_menu "APT Keys" "Signing-key tools:" \
-            missing "Download missing distro archive keyrings" \
+        a=$(tui_menu "Signing keys" \
+            "Archive keyrings are what makes a configured repository verifiable.\n'Required' lists the distros your sources actually reference." \
+            missing "Install keyrings for the distros your sources use" \
+            status "Show keyrings required by the configured sources" \
             import "Import a signing key from an HTTPS URL" \
             list "List installed keyrings" back "Back") || return 0
         case "$a" in
-            missing) sysconfig_call_menu apt_missing_keyrings_menu "Missing archive keyrings" ;;
+            missing) sysconfig_call_menu apt_missing_keyrings_menu "Archive keyrings" ;;
+            status)
+                {
+                    for d in $(repo_referenced_distros 2>/dev/null); do
+                        if k=$(repo_keyring_file_for "$d"); then
+                            printf '%-10s ok        %s\n' "$d" "$k"
+                        else
+                            printf '%-10s MISSING   no archive keyring installed\n' "$d"
+                        fi
+                    done
+                } > "$SYSTUI_TMP/keyreq" 2>&1
+                [ -s "$SYSTUI_TMP/keyreq" ] || echo '(no official distribution sources configured)' > "$SYSTUI_TMP/keyreq"
+                tui_text "Required keyrings" "$SYSTUI_TMP/keyreq" ;;
             list)
                 find /etc/apt/keyrings /usr/share/keyrings -maxdepth 1 -type f 2>/dev/null | sort > "$SYSTUI_TMP/keys"
                 [ -s "$SYSTUI_TMP/keys" ] || echo '(none)' > "$SYSTUI_TMP/keys"
@@ -93,7 +107,7 @@ menu_repos() {
             keys "Signing keys / archive keyrings" back "Back") || return 0
         case "$c" in
             sources) _systui_base_menu_repos_polish ;;
-            keys) [ "${PM:-}" = apt ] && sysconfig_apt_key_menu || tui_msg "Signing keys" "Use the native ${PM:-package-manager} key/repository tooling." ;;
+            keys) sysconfig_apt_key_menu ;;
             back|"") return 0 ;;
         esac
     done

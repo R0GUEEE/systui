@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "name": "Debian iSH-AOK ARM64",
+  "distribution": "Debian",
+  "release": "trixie",
+  "architecture": "aarch64",
+  "packages": "ca-certificates, curl",
+  "initSystem": "systemd",
+  "includeSSH": false,
+  "hostname": "ish-aok",
+  "timezone": "UTC",
+  "dns": "1.1.1.1",
+  "compression": "gzip",
+  "packageProfiles": [
+    "core",
+    "editors"
+  ],
+  "sshPort": 22,
+  "locale": "C.UTF-8",
+  "username": "",
+  "userShell": "/bin/sh",
+  "userSudo": false,
+  "defaultEditor": "nano",
+  "enableCron": false,
+  "enableNginx": false
+}

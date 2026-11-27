@@ -65,7 +65,9 @@ systui/
 │
 ├── share/                    # Non-code resources
 │   └── homebrew/             # Root-compatible Homebrew compatibility layer
-│       └── install-homebrew-root.sh
+│       ├── install-homebrew-root.sh
+│       └── systui-brew-path.sh   # Mirrors every formula (incl. keg-only)
+│                                 #   into /usr/local/bin
 │
 └── tests/                    # Test suite
     └── test-*.sh             # Test files
@@ -690,7 +692,75 @@ refresh responsive.
 
 System Configuration > Packages now contains Package Managers, Repos, Catalogue, Packages, and Advanced. Native install, remove, search, information, installed-package listing, hold, update, and cleanup actions are grouped under the Packages submenu.
 
-APT repository management includes both `/etc/apt/sources.list` and `/etc/apt/sources.list.d/`. The signing-key menu can install available Debian, Ubuntu, Devuan, and Kali archive keyrings using a SPACE-to-select checklist.
+APT repository management covers `/etc/apt/sources.list` and
+`/etc/apt/sources.list.d/`. Three add paths sit behind
+*Repositories* → sources:
+
+- **Distro Repos** writes the *official* repositories in the format the host
+  actually uses, so it is no longer an APT-only feature:
+  - APT (Debian, Devuan, Ubuntu, Kali) — isolated
+    `systui-distro-<distro>-<release>.list` files, after a SPACE-to-select pass
+    over release, components, pockets/suites and package types (`deb`,
+    `deb-src`). Cross-distribution entries are allowed but ask first. Each line
+    carries `[signed-by=...]` when the matching archive keyring is installed.
+  - Alpine (`apk`) — a managed block in `/etc/apk/repositories` for
+    `main`/`community` on the host's own branch plus `edge/testing`,
+    `edge/main`, `edge/community` when asked for. The mirror already configured
+    is reused instead of being replaced.
+  - Arch (`pacman`) — sections in `/etc/pacman.conf` are enabled by
+    uncommenting them and disabled by commenting them, never appended: pacman
+    refuses two sections with the same name.
+  - Fedora/RHEL (`dnf`) — official repo IDs are toggled through
+    `dnf config-manager --set-enabled/--set-disabled`, so nothing is duplicated
+    in `/etc/yum.repos.d`.
+  - openSUSE (`zypper`) — repos toggled with `zypper modifyrepo --enable/--disable`.
+  - Void (`xbps`) — a drop-in `/etc/xbps.d/00-systui-distro.conf` for
+    `base`, `nonfree` and `multilib` on the libc the host runs.
+  - Gentoo (`portage`) — `/etc/portage/repos.conf/systui-gentoo.conf` with an
+    rsync or git sync-uri for `[gentoo]`.
+
+  Managed blocks are rewritten wholesale between `# >>> systui distro repos >>>`
+  markers, so re-running an option never stacks entries and hand-written lines
+  elsewhere in the file are left alone.
+- **Popular repositories** is a category-first checklist (development,
+  infrastructure, databases, browsers, desktop, media, cloud) over 40 curated
+  third-party repositories — Docker, VS Code, nginx, PostgreSQL, MariaDB/MySQL,
+  MongoDB, Redis, NodeSource, Sury PHP, Kubernetes, Grafana, Jellyfin,
+  Tailscale, ZeroTier, Steam, Wine, GitLab CE, Temurin JDK, LibreWolf, Microsoft
+  Edge and more. Keys are downloaded to
+  `/etc/apt/keyrings/systui-<name>.gpg`, validated, and the entry is
+  written to `/etc/apt/sources.list.d/systui-<name>.list`; a repository whose key
+  cannot be fetched is skipped rather than written unsigned. The same menu has
+  native lists for `dnf`, `zypper`, `pacman` (multilib, Chaotic-AUR, BlackArch,
+  CachyOS, EndeavourOS, archlinuxcn, ArcoLinux) and `apk`.
+- **PPAs** (Ubuntu-family) is SPACE-to-select and grouped by category
+  (development, servers & networking, browsers, desktop & drivers, media &
+  gaming, security) over 37 well-known Launchpad archives, with an *All* entry
+  for one flat list. *Search Launchpad* parses
+  `launchpad.net/ubuntu/+ppas?name_filter=…` (cached for a day), decodes the
+  HTML entities Launchpad emits, ranks matches by their published binary count
+  (its only popularity signal), lists up to 40, and adds every selected PPA in
+  one pass. `add-apt-repository` is used when present; otherwise the sources
+  entry and the signing key (fetched by fingerprint from
+  `keyserver.ubuntu.com`) are written directly, so PPAs also work without
+  `software-properties-common`.
+
+*Signing keys* is requirement-driven rather than a flat list of distros. It
+reads the sources actually configured on the machine
+(`/etc/apt/sources.list`, `/etc/apt/sources.list.d/*.list`, `*.sources`), maps
+each official URL to its distribution, and lists **REQUIRED** first,
+pre-selected — those are the entries whose missing keyring makes
+`apt-get update` fail with `NO_PUBKEY`. Everything else stays available for
+preparing a future repository. Keyrings are fetched from the distribution's own
+repository (never a mirror or third party) and their URL plus SHA-256 are
+recorded next to the keyring. After an install, existing systui-written entries
+gain the matching `[signed-by=...]`, merging into an option group they already
+have (`[arch=amd64]` becomes `[arch=amd64 signed-by=...]`) instead of adding a
+second bracket group; entries that already pin a keyring and hand-written files
+are left untouched. `Distro Repos` runs the same check before writing a file:
+if the archive keyring is missing it is installed first, and an entry is never
+written unverifiable. A *status* entry in the same menu prints, per distro,
+whether the keyring your sources need is present.
 
 System Configuration > Shells separates Managers from Plugins. The manager list
 contains **every shell systui knows** — Bash, Zsh, Fish, Nushell, POSIX sh
@@ -1005,8 +1075,46 @@ makes the tool exit non-zero when a selected manager could not be installed.
 
 Homebrew is managed through a permanent root-compatibility layer for iSH-AOK /
 Debian arm64: a shared installer under `share/homebrew/`, a system wrapper at
-`/usr/local/bin/brew`, a UID shim at `/usr/local/lib/homebrew-root/`, and a
-managed environment file at `/etc/systui/homebrew.env`.
+`/usr/local/bin/brew`, and a managed environment file at
+`/etc/systui/homebrew.env`.
+
+Every installed formula is wired onto the default PATH. Homebrew links a
+formula's executables into `$BREW_PREFIX/bin`, which a shell only reaches
+through the profile snippet the installer writes — so a formula installed
+inside a running session, a non-login shell, or a cron/TUI child process used
+to stay invisible until the next login. Keg-only formulae are worse: Homebrew
+never links them at all, their commands exist only under
+`$BREW_PREFIX/opt/<formula>/`, and nothing on PATH points there.
+
+`systui-brew-path` covers both cases. It walks `$BREW_PREFIX/bin`,
+`$BREW_PREFIX/sbin` and every `$BREW_PREFIX/opt/<formula>/{bin,sbin}` and
+mirrors what it finds into `/usr/local/bin` and `/usr/local/sbin`, which are
+already on PATH for root, for normal accounts and for non-login shells. The
+`brew` wrapper re-runs it after every command that changes what is installed,
+and the logon profile plus the bash/zsh/fish rc files append the keg-only
+`opt/*/bin` directories so an interactive shell sees them directly too.
+Consequences worth knowing:
+
+- A command is runnable in the shell that installed it, and in anything it
+  spawns; no re-login, no PATH edit, no `eval "$(brew shellenv)"`.
+- This includes keg-only packages — `openjdk`, `sqlite`, `node`,
+  `postgresql@16`, `python@3.12` — whose binaries never reach `bin/`.
+- Resolution order is stable: linked `bin` first, then `opt/<formula>` in
+  alphabetical order. A name offered by two formulae keeps the first owner, so
+  the winner does not change on every refresh.
+- By default a name the distribution already provides (`git`, `curl`,
+  `python3`) stays with the system, so init scripts and package-manager hooks
+  keep running the binary they were written for. `systui-brew-path
+  --prefer-brew` flips that (persisted in `/etc/systui/brew-path.conf`, also a
+  toggle in the menu); `--prefer-system` restores the default and removes the
+  mirrors that were shadowing. Shells, `apk`, `su`, `env`, `mount` and the
+  other load-bearing names are never shadowed in either mode.
+- Removing a formula removes its mirror; `systui-brew-path --status` lists the
+  policy and the mirrors, `--verbose` reports every skipped entry, `--no-keg`
+  skips the `opt/*` scan, and `--remove` drops all mirrors while leaving
+  Homebrew installed.
+- The System Configuration menu has a matching Homebrew → *PATH integration*
+  entry for refreshing, preferring, restoring or removing the mirrors by hand.
 
 ## Notes on behaviour
 

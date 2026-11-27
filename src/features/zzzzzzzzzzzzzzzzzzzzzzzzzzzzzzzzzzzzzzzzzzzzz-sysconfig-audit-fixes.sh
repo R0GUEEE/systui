@@ -300,19 +300,19 @@ menu_repos() {
         local c
         c=$(tui_menu "Repositories  [manager: ${PM:-unknown}]" "Repository management:" \
             view "View configured repositories" manage "Manage sources (enable/disable)" listd "Manage sources.list and sources.list.d" \
-            distro "Distro Repos (official repositories)" popular "Add popular repositories" ppa "Ubuntu PPA repositories" \
+            distro "Distro Repos (official repositories, native per distro)" popular "Add popular repositories" ppa "Ubuntu PPA repositories" \
             refresh "Refresh package indexes" addrepo "Add a custom repository" keys "Signing keys / archive keyrings" \
             remove "Delete a systui-added repository" back "Back") || return 0
         case "$c" in
             view) sysconfig_repo_view > "$SYSTUI_TMP/repo" 2>&1; [ -s "$SYSTUI_TMP/repo" ] || echo '(none)' > "$SYSTUI_TMP/repo"; tui_text "Repositories" "$SYSTUI_TMP/repo" ;;
             manage) sysconfig_call_menu repo_manage "Repository manager" ;;
             listd) [ "${PM:-}" = apt ] && sysconfig_call_menu repo_sources_listd "APT sources editor" || tui_msg "N/A" "sources.list.d management is APT-specific." ;;
-            distro) [ "${PM:-}" = apt ] && sysconfig_call_menu menu_distro_repos "Distro repositories" || tui_msg "N/A" "Distro Repos currently writes APT repository definitions." ;;
+            distro) sysconfig_call_menu menu_distro_repos "Distro repositories" ;;
             popular) sysconfig_call_menu repo_popular "Popular repositories" ;;
             ppa) sysconfig_call_menu menu_ppa_repos "PPA repositories" ;;
             refresh) sysconfig_repo_refresh || tui_msg "Refresh failed" "Repository refresh failed. See $LOGFILE." ;;
             addrepo) sysconfig_repo_add_custom ;;
-            keys) [ "${PM:-}" = apt ] && sysconfig_call_menu apt_missing_keyrings_menu "APT keyrings" || tui_msg "Signing keys" "Use the native $PM key/repository tooling; the automatic keyring downloader is APT-specific." ;;
+            keys) sysconfig_call_menu sysconfig_apt_key_menu "Signing keys" ;;
             remove) [ "${PM:-}" = apt ] && { local f sel; local -a opts=(); for f in /etc/apt/sources.list.d/systui-*.list /etc/apt/sources.list.d/systui-*.list.disabled; do [ -f "$f" ] && opts+=("$f" "$(basename "$f")" off); done; [ "${#opts[@]}" -gt 0 ] || { tui_msg "None" "No systui-added APT repositories found."; continue; }; sel=$(tui_check "Delete repos" "SPACE selects repository files:" "${opts[@]}") || continue; sel=${sel//\"/}; for f in $sel; do case "$f" in /etc/apt/sources.list.d/systui-*.list|/etc/apt/sources.list.d/systui-*.list.disabled) rm -f -- "$f";; esac; done; } || tui_msg "Repository removal" "Use the native $PM repository manager for non-APT repository removal." ;;
             back|"") return 0 ;;
         esac

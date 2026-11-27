@@ -49,7 +49,8 @@ jobs:
             src/features/zz-rootfs-distro-managers.sh \
             src/features/*platform-final.sh \
             src/features/*argmax-cleanup.sh \
-            share/homebrew/install-homebrew-root.sh
+            share/homebrew/install-homebrew-root.sh \
+            share/homebrew/systui-brew-path.sh
           shellcheck -S warning -e SC1090 -x src/provision/runtime.sh
           # These were only syntax-checked before. tests/*.sh is deliberately
           # excluded: dynamic `source "$VAR"` is intentional there (SC1090).
@@ -170,5 +171,22 @@ jobs:
             bash tests/test-bedrock-aok-safe-update.sh
             bash tests/test-bedrock-aok-strata-fallbacks.sh
             bash tests/test-bedrock-aok-direct-resolver.sh
+            bash tests/test-homebrew-path-integration.sh
+            bash tests/test-native-distro-repos.sh
+            bash tests/test-distro-keyrings.sh
+            bash tests/test-repos-alternatives-final.sh
             [ ! -f tests/test-rootfs-final-hardening.sh ] || bash tests/test-rootfs-final-hardening.sh
           '
+
+  rootfs-builder-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate multi-distro builder
+        run: |
+          python -m py_compile scripts/build_rootfs.py
+          python -m unittest discover -s tests -p 'test_build_rootfs.py' -v

@@ -144,7 +144,7 @@ _systui_remove_added_repos() {
 menu_repos() {
     local c ka
     while true; do
-        c=$(tui_menu "Repositories  [manager: $PM]" "Repository management:" view "View configured repositories" manage "Manage repository sources" distro "Official distro repositories" popular "Add popular repositories" ppa "Ubuntu PPA repositories" refresh "Refresh package indexes" addrepo "Add a validated custom repository" keys "Signing keys and archive keyrings" remove "Delete a systui-added repository" back "Back") || return 0
+        c=$(tui_menu "Repositories  [manager: $PM]" "Repository management:" view "View configured repositories" manage "Manage repository sources" distro "Official distro repositories (native)" popular "Add popular repositories" ppa "Ubuntu PPA repositories" refresh "Refresh package indexes" addrepo "Add a validated custom repository" keys "Signing keys and archive keyrings" remove "Delete a systui-added repository" back "Back") || return 0
         case "$c" in
             view)
                 case "$PM" in

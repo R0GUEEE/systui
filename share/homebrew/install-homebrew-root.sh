@@ -5,9 +5,16 @@
 # root execution boundary. This installer may itself be launched as root, but
 # the actual Homebrew checkout and every brew command run as a dedicated
 # unprivileged `linuxbrew` account.
+#
+# Installed formulae are wired onto the default PATH as well: their links are
+# mirrored into /usr/local/bin and /usr/local/sbin by systui-brew-path, and the
+# root wrapper re-runs that mirror after every mutating brew command, so a
+# formula becomes runnable in the shell that installed it.
 
 set -Eeuo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly SCRIPT_DIR
 readonly BREW_USER="${SYSTUI_BREW_USER:-linuxbrew}"
 readonly BREW_HOME="${SYSTUI_BREW_HOME:-/home/linuxbrew}"
 readonly BREW_PREFIX="${SYSTUI_BREW_PREFIX:-/home/linuxbrew/.linuxbrew}"
@@ -18,6 +25,11 @@ readonly ROOT_WRAPPER="/usr/local/bin/brew"
 readonly ROOT_ENV_DIR="/etc/systui"
 readonly ROOT_ENV_FILE="${ROOT_ENV_DIR}/homebrew.env"
 readonly PROFILE_FILE="/etc/profile.d/homebrew.sh"
+readonly PATH_HELPER="/usr/local/bin/systui-brew-path"
+readonly PATH_HELPER_SOURCE="${SCRIPT_DIR}/systui-brew-path.sh"
+readonly PATH_POLICY_FILE="${ROOT_ENV_DIR}/brew-path.conf"
+readonly HOOK_BEGIN="# >>> systui homebrew >>>"
+readonly HOOK_END="# <<< systui homebrew <<<"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mWarning:\033[0m %s\n' "$*" >&2; }
@@ -57,15 +69,15 @@ install_deps() {
     # Alpine an installed 'apt' package would otherwise pull Debian packages
     # into a musl root. (install.sh and update.sh decide this the same way.)
     if [[ -f /etc/alpine-release ]] && command -v apk >/dev/null 2>&1; then
-        apk add --no-cache bash build-base curl file git python3 ruby patch perl tar gzip bzip2 xz unzip ca-certificates
+        apk add --no-cache bash build-base curl file git python3 ruby patch perl tar gzip bzip2 xz unzip ca-certificates diffutils
     elif command -v apt-get >/dev/null 2>&1; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
-        apt-get install -y --no-install-recommends bash build-essential ca-certificates curl file git procps gcc g++ make libc6-dev patch perl python3 ruby tar gzip bzip2 xz-utils unzip
+        apt-get install -y --no-install-recommends bash build-essential ca-certificates curl file git procps gcc g++ make libc6-dev patch perl python3 ruby tar gzip bzip2 xz-utils unzip diffutils
     elif command -v dnf >/dev/null 2>&1; then
-        dnf install -y bash gcc gcc-c++ make curl file git procps-ng patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates
+        dnf install -y bash gcc gcc-c++ make curl file git procps-ng patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates diffutils
     elif command -v yum >/dev/null 2>&1; then
-        yum install -y bash gcc gcc-c++ make curl file git procps-ng patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates
+        yum install -y bash gcc gcc-c++ make curl file git procps-ng patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates diffutils
     elif command -v pacman >/dev/null 2>&1; then
         # Arch does not support partial upgrades. Make the system-wide impact
         # explicit before pacman performs its required synchronized upgrade.
@@ -73,12 +85,12 @@ install_deps() {
         if [[ "${SYSTUI_ALLOW_FULL_UPGRADE:-0}" != 1 ]]; then
             die "Refusing to upgrade the whole system. Run 'pacman -Syu' yourself, or set SYSTUI_ALLOW_FULL_UPGRADE=1."
         fi
-        pacman -Syu --noconfirm --needed base-devel curl file git python ruby ca-certificates
+        pacman -Syu --noconfirm --needed base-devel curl file git python ruby ca-certificates diffutils
     elif command -v zypper >/dev/null 2>&1; then
         zypper --non-interactive refresh
-        zypper --non-interactive install bash gcc gcc-c++ make curl file git procps patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates
+        zypper --non-interactive install bash gcc gcc-c++ make curl file git procps patch perl python3 ruby tar gzip bzip2 xz unzip ca-certificates diffutils
     elif command -v apk >/dev/null 2>&1; then
-        apk add --no-cache bash build-base curl file git python3 ruby patch perl tar gzip bzip2 xz unzip ca-certificates
+        apk add --no-cache bash build-base curl file git python3 ruby patch perl tar gzip bzip2 xz unzip ca-certificates diffutils
     else
         die "No supported package manager found for Homebrew prerequisites."
     fi
@@ -128,6 +140,119 @@ install_brew() {
     chown -h "$BREW_USER:$BREW_USER" "$BREW_LINK"
 }
 
+# Replaces a marked block in a shell startup file without disturbing anything
+# else in it, and without rewriting the file when the block is already correct.
+write_hook_block() { # <file>
+    local file="$1" tmp perms=""
+    [[ -f "$file" ]] || return 0
+    tmp="$(mktemp "$(dirname "$file")/.systui-homebrew.XXXXXX")" || { warn "cannot write next to $file"; return 0; }
+    awk -v b="$HOOK_BEGIN" -v e="$HOOK_END" '
+        $0 == b { skip = 1; next }
+        skip && $0 == e { skip = 0; next }
+        !skip { print }
+    ' "$file" > "$tmp"
+    {
+        printf '%s\n' "$HOOK_BEGIN"
+        printf '[ -r %s ] && . %s\n' "$PROFILE_FILE" "$PROFILE_FILE"
+        printf '%s\n' "$HOOK_END"
+    } >> "$tmp"
+    if cmp -s "$tmp" "$file"; then
+        rm -f -- "$tmp"
+        return 0
+    fi
+    perms=$(stat -c '%a' "$file" 2>/dev/null || true)
+    chmod "${perms:-0644}" "$tmp" 2>/dev/null || chmod 0644 "$tmp"
+    mv -f -- "$tmp" "$file"
+}
+
+install_path_integration() {
+    log "Wiring installed formulae onto PATH"
+    if [[ -r "$PATH_HELPER_SOURCE" ]]; then
+        install -m 0755 -o root -g root "$PATH_HELPER_SOURCE" "$PATH_HELPER"
+    else
+        warn "PATH helper $PATH_HELPER_SOURCE is missing; only shell profiles will be updated."
+    fi
+
+    cat > "$PROFILE_FILE" <<EOF_PROFILE
+# systui-managed Homebrew environment.
+# Sourced from /etc/profile.d and again from the marked block in the shell rc
+# files, so the guard keeps a nested login shell from stacking the prefix.
+if [ -z "\${SYSTUI_HOMEBREW_ENV:-}" ]; then
+    SYSTUI_HOMEBREW_ENV=1
+    export SYSTUI_HOMEBREW_ENV
+    export HOMEBREW_PREFIX="$BREW_PREFIX"
+    export HOMEBREW_CELLAR="$BREW_PREFIX/Cellar"
+    export HOMEBREW_REPOSITORY="$BREW_REPOSITORY"
+    case ":\$PATH:" in
+        *":$BREW_PREFIX/bin:"*) ;;
+        *) PATH="/usr/local/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:\$PATH" ;;
+    esac
+    # Keg-only formulae are never linked into bin/; their executables live
+    # under opt/<formula>. A login shell adds them after the system dirs, so
+    # a distribution command still wins by default.
+    for _systui_brew_opt in "$BREW_PREFIX"/opt/*/bin; do
+        [ -d "\$_systui_brew_opt" ] || continue
+        case ":\$PATH:" in
+            *":\$_systui_brew_opt:"*) ;;
+            *) PATH="\$PATH:\$_systui_brew_opt" ;;
+        esac
+    done
+    unset _systui_brew_opt
+    export PATH
+    MANPATH="$BREW_PREFIX/share/man\${MANPATH+:\$MANPATH}"
+    INFOPATH="$BREW_PREFIX/share/info\${INFOPATH+:\$INFOPATH}"
+    export MANPATH INFOPATH
+    # Formula executables are also mirrored into /usr/local/bin by
+    # systui-brew-path, which keeps them reachable in shells that never read
+    # this file (non-login shells, running sessions, root cron jobs).
+fi
+EOF_PROFILE
+    chmod 0644 "$PROFILE_FILE"
+
+    # Login shells read /etc/profile.d; interactive non-login shells (the ones
+    # a TUI spawns, and `bash -c`) read their own rc files instead.
+    write_hook_block /etc/profile
+    write_hook_block /etc/bash.bashrc
+    write_hook_block /etc/bash/bashrc
+    write_hook_block /etc/bashrc
+    write_hook_block /etc/zsh/zshrc
+    write_hook_block /etc/zshrc
+
+    if [[ -d /etc/fish ]]; then
+        install -d -m 0755 /etc/fish/conf.d
+        # shellcheck disable=SC2154 # fish syntax, parsed as a heredoc body
+        cat > /etc/fish/conf.d/systui-homebrew.fish <<EOF_FISH
+# systui-managed Homebrew environment.
+set -gx HOMEBREW_PREFIX "$BREW_PREFIX"
+set -gx HOMEBREW_CELLAR "$BREW_PREFIX/Cellar"
+set -gx HOMEBREW_REPOSITORY "$BREW_REPOSITORY"
+set -gx MANPATH "$BREW_PREFIX/share/man" \$MANPATH
+set -gx INFOPATH "$BREW_PREFIX/share/info" \$INFOPATH
+fish_add_path --global --move-to-front /usr/local/bin "$BREW_PREFIX/bin" "$BREW_PREFIX/sbin"
+for _systui_opt in "$BREW_PREFIX"/opt/*/bin
+    test -d "$_systui_opt"; and fish_add_path --global --append "$_systui_opt"
+end
+EOF_FISH
+        chmod 0644 /etc/fish/conf.d/systui-homebrew.fish
+    fi
+
+    # Resolution policy for names Homebrew and the distribution both provide.
+    # Kept in a plain file so the helper reads it without executing anything.
+    if [[ ! -r "$PATH_POLICY_FILE" ]]; then
+        install -d -m 0755 "$ROOT_ENV_DIR"
+        {
+            printf '# systui — Homebrew PATH policy, read by systui-brew-path.\n'
+            printf '# PREFER_BREW=1 lets a Homebrew command win over the system one.\n'
+            printf 'PREFER_BREW=0\n'
+        } > "$PATH_POLICY_FILE"
+        chmod 0644 "$PATH_POLICY_FILE"
+    fi
+
+    if [[ -x "$PATH_HELPER" ]]; then
+        "$PATH_HELPER" --quiet || warn "Initial PATH mirror pass reported a problem."
+    fi
+}
+
 install_wrapper() {
     log "Installing root-safe brew wrapper"
     cat > "$ROOT_WRAPPER" <<EOF_WRAPPER
@@ -137,37 +262,47 @@ BREW_USER=$(printf %q "$BREW_USER")
 BREW_HOME=$(printf %q "$BREW_HOME")
 REAL_BREW=$(printf %q "$REAL_BREW")
 ROOT_ENV_FILE=$(printf %q "$ROOT_ENV_FILE")
+PATH_HELPER=$(printf %q "$PATH_HELPER")
 if [ -r "\$ROOT_ENV_FILE" ]; then
     while IFS='=' read -r key value; do
         case "\$key" in HOMEBREW_[A-Z0-9_]*) export "\$key=\$value" ;; esac
     done < "\$ROOT_ENV_FILE"
 fi
+AS_ROOT=0
+BREW_RUN=("\$REAL_BREW")
 if [ "\$(id -u)" -eq 0 ]; then
+    AS_ROOT=1
     BREW_CWD="\$PWD"
     if command -v runuser >/dev/null 2>&1; then
         runuser -u "\$BREW_USER" -- test -x "\$BREW_CWD" >/dev/null 2>&1 || BREW_CWD="\$BREW_HOME"
-        exec runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
+        BREW_RUN=(runuser -u "\$BREW_USER" -- env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW")
     elif command -v sudo >/dev/null 2>&1; then
         sudo -H -u "\$BREW_USER" test -x "\$BREW_CWD" >/dev/null 2>&1 || BREW_CWD="\$BREW_HOME"
-        exec sudo -H -u "\$BREW_USER" env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW" "\$@"
+        BREW_RUN=(sudo -H -u "\$BREW_USER" env HOME="\$BREW_HOME" USER="\$BREW_USER" LOGNAME="\$BREW_USER" bash -c 'cd "\$1" && shift && exec "\$@"' bash "\$BREW_CWD" "\$REAL_BREW")
     else
         echo "brew: root invocation requires runuser or sudo to drop privileges" >&2
         exit 1
     fi
 fi
-exec "\$REAL_BREW" "\$@"
+status=0
+"\${BREW_RUN[@]}" "\$@" || status=\$?
+# Anything that changes what is installed also changes what belongs on PATH.
+# Re-mirror before returning so the command the user just installed runs in
+# the very shell that installed it, with no re-login and no PATH edit.
+case "\${1:-}" in
+    install|uninstall|remove|upgrade|reinstall|link|unlink|pin|unpin|tap|untap|cleanup|update)
+        if [ -x "\$PATH_HELPER" ]; then
+            if [ "\$AS_ROOT" -eq 1 ]; then
+                "\$PATH_HELPER" --quiet || true
+            elif command -v sudo >/dev/null 2>&1; then
+                sudo -n "\$PATH_HELPER" --quiet || true
+            fi
+        fi
+        ;;
+esac
+exit \$status
 EOF_WRAPPER
     chmod 0755 "$ROOT_WRAPPER"
-
-    cat > "$PROFILE_FILE" <<EOF_PROFILE
-export HOMEBREW_PREFIX="$BREW_PREFIX"
-export HOMEBREW_CELLAR="$BREW_PREFIX/Cellar"
-export HOMEBREW_REPOSITORY="$BREW_REPOSITORY"
-export PATH="/usr/local/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:\$PATH"
-export MANPATH="$BREW_PREFIX/share/man\${MANPATH+:\$MANPATH}"
-export INFOPATH="$BREW_PREFIX/share/info\${INFOPATH+:\$INFOPATH}"
-EOF_PROFILE
-    chmod 0644 "$PROFILE_FILE"
 }
 
 install_deps
@@ -175,6 +310,7 @@ ensure_user
 ensure_env_file
 install_brew
 install_wrapper
+install_path_integration
 
 log "Verifying Homebrew through the privilege-dropping wrapper"
 ( cd "$BREW_HOME"; "$ROOT_WRAPPER" --version )
@@ -185,6 +321,17 @@ Homebrew installation completed.
 
 The brew command may be invoked from a root shell, but systui will always
 execute Homebrew itself as the unprivileged '$BREW_USER' account.
+
+Every installed formula is mirrored into /usr/local/bin and /usr/local/sbin
+the moment it finishes installing -- including keg-only formulae (openjdk,
+sqlite, node, postgresql@16, ...) whose executables never reach bin/ in the
+first place. No re-login, no shell profile edit, no PATH export: the command
+works in the shell that installed it and in every child process.
+
+  systui-brew-path --status        mirrors and resolution policy
+  systui-brew-path --verbose       show what was linked and what was skipped
+  systui-brew-path --prefer-brew   let Homebrew win over a system command
+  systui-brew-path --remove        drop the mirrors, keep Homebrew
 
   source $PROFILE_FILE
   brew --version

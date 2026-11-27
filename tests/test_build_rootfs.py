@@ -1,0 +1,60 @@
+import importlib.util
+import pathlib
+import unittest
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("build_rootfs", ROOT / "scripts/build_rootfs.py")
+builder = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(builder)
+
+class BuilderMatrixTests(unittest.TestCase):
+    def test_every_supported_distribution_has_a_preset_or_explicit_source(self):
+        recipes = list((ROOT / "recipes").glob("*-aarch64.json"))
+        names = {__import__("json").loads(p.read_text())["distribution"] for p in recipes}
+        expected = set(builder.OCI) | {"Devuan"}
+        self.assertEqual(names, expected)
+
+    def test_arm64_oci_sources_are_pinned_to_known_tags(self):
+        self.assertEqual(builder.OCI["Debian"]["trixie"], "debian:trixie-slim")
+        self.assertEqual(builder.OCI["Void Linux"]["rolling"], "ghcr.io/void-linux/void-glibc:latest")
+        self.assertEqual(builder.OCI["Arch Linux ARM"]["rolling"], "menci/archlinuxarm:latest")
+
+    def test_native_package_manager_adapters(self):
+        cases = {
+            "Debian": "apt-get update",
+            "Devuan": "apt-get update",
+            "Ubuntu": "apt-get update",
+            "Kali Linux": "apt-get update",
+            "Alpine": "apk add",
+            "Arch Linux ARM": "pacman -S",
+            "Fedora": "dnf install",
+            "openSUSE Leap": "zypper",
+            "openSUSE Tumbleweed": "zypper",
+            "Gentoo": "emerge",
+            "Void Linux": "xbps-install",
+        }
+        inits = {"Alpine":"OpenRC", "Devuan":"SysVinit", "Void Linux":"runit", "Gentoo":"OpenRC", "Arch Linux ARM":"systemd"}
+        for distro, marker in cases.items():
+            init = inits.get(distro, "systemd")
+            self.assertIn(marker, builder.package_command(distro, ["curl"], [], False, [], init, "/bin/sh", "nano", False, "C.UTF-8"))
+
+    def test_profiles_expand_to_native_names_for_every_distro(self):
+        for distro in builder.DISTRO_ALIASES:
+            for profile in builder.PROFILE_KEYS:
+                names = builder.expand_packages(distro, [], [profile], "/bin/sh", "none")
+                self.assertTrue(names, (distro, profile))
+                self.assertTrue(all(builder.PACKAGE.fullmatch(name) for name in names), (distro, profile, names))
+
+    def test_generated_configuration_shell_is_valid_for_every_init_adapter(self):
+        cases = [("Debian", "systemd"), ("Devuan", "SysVinit"), ("Alpine", "OpenRC"), ("Void Linux", "runit")]
+        for distro, init in cases:
+            shell = builder.configure_rootfs(distro, init, "ish-aok", "UTC", ["1.1.1.1", "8.8.8.8"], "C.UTF-8", "builder", "/bin/bash", True, "nano", ["sshd", "cron", "nginx"], 2200)
+            result = __import__("subprocess").run(["sh", "-n"], input=shell, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_package_parser_rejects_shell_metacharacters(self):
+        self.assertIsNone(builder.PACKAGE.fullmatch("curl; touch /tmp/oops"))
+        self.assertIsNotNone(builder.PACKAGE.fullmatch("net-misc/curl"))
+
+if __name__ == "__main__":
+    unittest.main()

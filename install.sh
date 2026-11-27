@@ -479,6 +479,7 @@ install_project() {
         rm -rf -- "$stage"; error "Could not copy docs into $stage"
     fi
     if [ -f "$stage/share/homebrew/install-homebrew-root.sh" ]; then chmod 0755 "$stage/share/homebrew/install-homebrew-root.sh"; fi
+    if [ -f "$stage/share/homebrew/systui-brew-path.sh" ]; then chmod 0755 "$stage/share/homebrew/systui-brew-path.sh"; fi
     if [ -e "$LIB_DIR" ]; then
         if ! mv -- "$LIB_DIR" "$backup"; then
             rm -rf -- "$stage"
@@ -492,6 +493,7 @@ install_project() {
     fi
     rm -rf -- "$backup"
     if [ -f "$LIB_DIR/share/homebrew/install-homebrew-root.sh" ]; then chmod 0755 "$LIB_DIR/share/homebrew/install-homebrew-root.sh"; fi
+    if [ -f "$LIB_DIR/share/homebrew/systui-brew-path.sh" ]; then chmod 0755 "$LIB_DIR/share/homebrew/systui-brew-path.sh"; fi
     if [ -f "$PROJECT_DIR/update.sh" ]; then install -m 0755 "$PROJECT_DIR/update.sh" "$LIB_DIR/update.sh"; ln -sfn "$LIB_DIR/update.sh" "$BIN_DIR/systui-update"; fi
     local state_dir="${SYSTUI_STATE_DIR:-/etc/systui}" source_url="" source_branch=""
     mkdir -p "$state_dir"

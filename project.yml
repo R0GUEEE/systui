@@ -1,0 +1,24 @@
+name: SystuiRootfs
+options:
+  bundleIdPrefix: com.r0gueee
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  SystuiRootfs:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/SystuiRootfs
+    info:
+      path: Sources/SystuiRootfs/Info.plist
+      properties:
+        CFBundleDisplayName: Systui Rootfs
+        UILaunchScreen: {}
+        UISupportsDocumentBrowser: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.r0gueee.systui-rootfs
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"

@@ -1,0 +1,56 @@
+name: Build rootfs tarball
+on:
+  workflow_dispatch:
+    inputs:
+      recipe:
+        description: Recipe JSON committed under recipes/
+        required: true
+        default: recipes/alpine-aarch64.json
+        type: string
+      output_name:
+        description: Downloaded artifact name
+        required: true
+        default: ish-aok-rootfs
+        type: string
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate recipe path
+        env:
+          RECIPE: ${{ inputs.recipe }}
+        run: |
+          case "$RECIPE" in recipes/*.json) test -f "$RECIPE" ;; *) echo 'Recipe must be a JSON file under recipes/' >&2; exit 2 ;; esac
+      - name: Test distro mappings and package adapters
+        run: python3 -m unittest discover -s tests -p 'test_build_rootfs.py' -v
+      - name: Build ARM64 root filesystem
+        env:
+          RECIPE: ${{ inputs.recipe }}
+        run: |
+          mkdir -p out
+          python3 scripts/build_rootfs.py --recipe "$RECIPE" --output out/rootfs
+      - name: Verify archive layout
+        run: |
+          python3 - <<'PY'
+          import glob, tarfile
+          paths=glob.glob('out/rootfs.tar.*')
+          assert len(paths)==1, f'expected one archive, found {paths}'
+          with tarfile.open(paths[0], 'r:*') as t:
+              members=t.getmembers()
+              paths_in_archive={m.name.removeprefix('./').lstrip('/') for m in members}
+              names={p.split('/')[0] for p in paths_in_archive if p}
+          required={'etc','bin','usr'}
+          assert required <= names, f'missing root directories: {required-names}'
+          assert 'etc/systui-rootfs.json' in paths_in_archive, 'embedded recipe metadata missing'
+          assert '.dockerenv' not in paths_in_archive, 'Docker container marker leaked into rootfs'
+          print(paths[0], 'entries validated:', ', '.join(sorted(names)))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.output_name }}
+          path: out/rootfs.tar.*
+          if-no-files-found: error
+          retention-days: 14
