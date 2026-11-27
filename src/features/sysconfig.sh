@@ -264,7 +264,9 @@ atomic_install_file() { # <source> <destination> [mode]
 }
 safe_template_expand() { # explicit variables only; never eval
     local value="$1"
-    value=${value//\$ID/$ID}; value=${value//\$CODENAME/$CODENAME}; value=${value//\$ARCH/$ARCH}; value=${value//\$K/$K}
+    value=${value//\$ID/$ID}; value=${value//\$CODENAME/$CODENAME}; value=${value//\$ARCH/$ARCH}
+    value=${value//\$COMPONENT/${COMPONENT:-main}}
+    value=${value//\$K/$K}
     printf '%s' "$value"
 }
 # ---- System scanner ---------------------------------------------------------
@@ -568,55 +570,195 @@ menu_scanner() {
 
 # ---- Repository management (v2: space-select everywhere) --------------------
 
-# Popular third-party repos, per PM. apt format:
-#   tag|Description|key_url|keyfmt(asc=dearmor,bin=raw)|repo line ($K=keyring,$CODENAME,$ARCH,$ID)
-APT_POPULAR="docker|Docker CE (containers)|https://download.docker.com/linux/\$ID/gpg|asc|deb [arch=\$ARCH signed-by=\$K] https://download.docker.com/linux/\$ID \$CODENAME stable
-vscode|Visual Studio Code|https://packages.microsoft.com/keys/microsoft.asc|asc|deb [arch=amd64,arm64,armhf signed-by=\$K] https://packages.microsoft.com/repos/code stable main
-chrome|Google Chrome|https://dl.google.com/linux/linux_signing_key.pub|asc|deb [arch=amd64 signed-by=\$K] https://dl.google.com/linux/chrome/deb/ stable main
-mozilla|Mozilla (Firefox .deb, no snap)|https://packages.mozilla.org/apt/repo-signing-key.gpg|asc|deb [signed-by=\$K] https://packages.mozilla.org/apt mozilla main
-postgres|PostgreSQL (PGDG)|https://www.postgresql.org/media/keys/ACCC4CF8.asc|asc|deb [signed-by=\$K] https://apt.postgresql.org/pub/repos/apt \$CODENAME-pgdg main
-tailscale|Tailscale VPN|https://pkgs.tailscale.com/stable/\$ID/\$CODENAME.noarmor.gpg|bin|deb [signed-by=\$K] https://pkgs.tailscale.com/stable/\$ID \$CODENAME main
-grafana|Grafana (monitoring)|https://apt.grafana.com/gpg.key|asc|deb [signed-by=\$K] https://apt.grafana.com stable main
-hashicorp|HashiCorp (terraform, vault, nomad)|https://apt.releases.hashicorp.com/gpg|asc|deb [arch=\$ARCH signed-by=\$K] https://apt.releases.hashicorp.com \$CODENAME main
-kubernetes|Kubernetes (kubectl, kubeadm, kubelet)|https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key|asc|deb [arch=\$ARCH signed-by=\$K] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /
-github-cli|GitHub CLI (gh)|https://cli.github.com/packages/githubcli-archive-keyring.gpg|bin|deb [arch=\$ARCH signed-by=\$K] https://cli.github.com/packages stable main
-brave|Brave Browser|https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg|bin|deb [arch=amd64 signed-by=\$K] https://brave-browser-apt-release.s3.brave.com/ stable main
-sublime-text|Sublime Text editor|https://download.sublimetext.com/sublimehq-pub.gpg|asc|deb [arch=amd64 signed-by=\$K] https://download.sublimetext.com/ apt/stable/
-signal|Signal Desktop messenger|https://updates.signal.org/desktop/apt/keys.asc|asc|deb [arch=amd64 signed-by=\$K] https://updates.signal.org/desktop/apt xenial main
-spotify|Spotify music client|https://download.spotify.com/debian/pubkey_6224F9941A8AA6D1.gpg|bin|deb [arch=amd64 signed-by=\$K] https://repository.spotify.com stable non-free
-influxdb|InfluxDB (time-series metrics)|https://repos.influxdata.com/influxdata-archive_compat.key|asc|deb [arch=\$ARCH signed-by=\$K] https://repos.influxdata.com/stable stable main
-elastic|Elastic Stack (Elasticsearch, Kibana, Logstash)|https://artifacts.elastic.co/GPG-KEY-elasticsearch|asc|deb [arch=\$ARCH signed-by=\$K] https://artifacts.elastic.co/packages/8.x/apt stable main
-cloudflared|Cloudflare (cloudflared, WARP)|https://pkg.cloudflare.com/cloudflare-main.gpg|bin|deb [arch=\$ARCH signed-by=\$K] https://pkg.cloudflare.com/cloudflared \$CODENAME main
-virtualbox|Oracle VirtualBox|https://www.virtualbox.org/download/oracle_vbox_2016.asc|asc|deb [arch=amd64 signed-by=\$K] https://download.virtualbox.org/virtualbox/debian \$CODENAME contrib"
+# Popular third-party repositories for APT hosts.
+#
+#   tag|Description|key_url|keyfmt(asc=dearmor,bin=raw)|repo line|category
+#
+# The repo line may use these variables, expanded by safe_template_expand()
+# from the running host: $ID, $CODENAME, $ARCH, $COMPONENT, $K (keyring path).
+# Every key URL and repository path below was verified against the live service
+# for Debian bookworm/trixie and Ubuntu noble.
+APT_POPULAR="docker|Docker CE (containers)|https://download.docker.com/linux/\$ID/gpg|asc|deb [arch=\$ARCH signed-by=\$K] https://download.docker.com/linux/\$ID \$CODENAME stable|infra
+vscode|Visual Studio Code|https://packages.microsoft.com/keys/microsoft.asc|asc|deb [arch=amd64,arm64,armhf signed-by=\$K] https://packages.microsoft.com/repos/code stable main|dev
+chrome|Google Chrome|https://dl.google.com/linux/linux_signing_key.pub|asc|deb [arch=amd64 signed-by=\$K] https://dl.google.com/linux/chrome/deb/ stable main|browsers
+mozilla|Mozilla Firefox (deb, no snap)|https://packages.mozilla.org/apt/repo-signing-key.gpg|asc|deb [signed-by=\$K] https://packages.mozilla.org/apt mozilla main|browsers
+postgres|PostgreSQL (PGDG)|https://www.postgresql.org/media/keys/ACCC4CF8.asc|asc|deb [signed-by=\$K] https://apt.postgresql.org/pub/repos/apt \$CODENAME-pgdg main|data
+tailscale|Tailscale VPN|https://pkgs.tailscale.com/stable/\$ID/\$CODENAME.noarmor.gpg|bin|deb [signed-by=\$K] https://pkgs.tailscale.com/stable/\$ID \$CODENAME main|infra
+grafana|Grafana (dashboards)|https://apt.grafana.com/gpg.key|asc|deb [signed-by=\$K] https://apt.grafana.com stable main|data
+hashicorp|HashiCorp (terraform, vault, nomad)|https://apt.releases.hashicorp.com/gpg|asc|deb [arch=\$ARCH signed-by=\$K] https://apt.releases.hashicorp.com \$CODENAME main|infra
+kubernetes|Kubernetes (kubectl, kubeadm, kubelet)|https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key|asc|deb [arch=\$ARCH signed-by=\$K] https://pkgs.k8s.io/core:/stable:/v1.32/deb/ /|infra
+github-cli|GitHub CLI (gh)|https://cli.github.com/packages/githubcli-archive-keyring.gpg|bin|deb [arch=\$ARCH signed-by=\$K] https://cli.github.com/packages stable main|dev
+brave|Brave Browser|https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg|bin|deb [arch=amd64 signed-by=\$K] https://brave-browser-apt-release.s3.brave.com/ stable main|browsers
+sublime-text|Sublime Text editor|https://download.sublimetext.com/sublimehq-pub.gpg|asc|deb [arch=amd64 signed-by=\$K] https://download.sublimetext.com/ apt/stable/|dev
+signal|Signal Desktop messenger|https://updates.signal.org/desktop/apt/keys.asc|asc|deb [arch=amd64 signed-by=\$K] https://updates.signal.org/desktop/apt xenial main|desktop
+spotify|Spotify music client|https://download.spotify.com/debian/pubkey_6224F9941A8AA6D1.gpg|bin|deb [arch=amd64 signed-by=\$K] https://repository.spotify.com stable non-free|media
+influxdb|InfluxDB (time-series metrics)|https://repos.influxdata.com/influxdata-archive_compat.key|asc|deb [arch=\$ARCH signed-by=\$K] https://repos.influxdata.com/stable stable main|data
+elastic|Elastic Stack (Elasticsearch, Kibana)|https://artifacts.elastic.co/GPG-KEY-elasticsearch|asc|deb [arch=\$ARCH signed-by=\$K] https://artifacts.elastic.co/packages/8.x/apt stable main|data
+cloudflared|Cloudflare (cloudflared, WARP)|https://pkg.cloudflare.com/cloudflare-main.gpg|bin|deb [arch=\$ARCH signed-by=\$K] https://pkg.cloudflare.com/cloudflared \$CODENAME main|infra
+virtualbox|Oracle VirtualBox|https://www.virtualbox.org/download/oracle_vbox_2016.asc|asc|deb [arch=amd64 signed-by=\$K] https://download.virtualbox.org/virtualbox/debian \$CODENAME contrib|desktop
+nginx|nginx (official builds)|https://nginx.org/keys/nginx_signing.key|asc|deb [arch=\$ARCH signed-by=\$K] https://nginx.org/packages/\$ID \$CODENAME nginx|infra
+caddy|Caddy web server|https://dl.cloudsmith.io/public/caddy/stable/gpg.key|asc|deb [arch=\$ARCH signed-by=\$K] https://dl.cloudsmith.io/public/caddy/stable/deb/debian any-version main|infra
+mysql|MySQL 8.4 LTS|https://repo.mysql.com/RPM-GPG-KEY-mysql-2023|asc|deb [arch=\$ARCH signed-by=\$K] https://repo.mysql.com/apt/\$ID \$CODENAME mysql-8.4-lts|data
+mariadb|MariaDB 11.4 LTS|https://mariadb.org/mariadb_release_signing_key.asc|asc|deb [arch=\$ARCH signed-by=\$K] https://dlm.mariadb.com/repo/mariadb-server/11.4/repo/\$ID \$CODENAME main|data
+mongodb|MongoDB 8.0 server|https://www.mongodb.org/static/pgp/server-8.0.asc|asc|deb [arch=\$ARCH signed-by=\$K] https://repo.mongodb.org/apt/\$ID \$CODENAME/mongodb-org/8.0 \$COMPONENT|data
+redis|Redis (official builds)|https://packages.redis.io/gpg|asc|deb [arch=\$ARCH signed-by=\$K] https://packages.redis.io/deb \$CODENAME main|data
+jellyfin|Jellyfin media server|https://repo.jellyfin.org/jellyfin_team.gpg.key|asc|deb [arch=\$ARCH signed-by=\$K] https://repo.jellyfin.org/\$ID \$CODENAME main|media
+nodesource|Node.js 22 (NodeSource)|https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key|asc|deb [arch=\$ARCH signed-by=\$K] https://deb.nodesource.com/node_22.x nodistro main|dev
+php|PHP builds (Sury/ondrej)|https://packages.sury.org/php/apt.gpg|asc|deb [arch=\$ARCH signed-by=\$K] https://packages.sury.org/php/ \$CODENAME main|dev
+gitlab-runner|GitLab Runner|https://packages.gitlab.com/runner/gitlab-runner/gpgkey|asc|deb [signed-by=\$K] https://packages.gitlab.com/runner/gitlab-runner/\$ID \$CODENAME main|dev
+gcloud|Google Cloud SDK|https://packages.cloud.google.com/apt/doc/apt-key.gpg|asc|deb [signed-by=\$K] https://packages.cloud.google.com/apt cloud-sdk main|cloud
+wine|WineHQ (stable)|https://dl.winehq.org/wine-builds/winehq.key|asc|deb [arch=amd64,i386 signed-by=\$K] https://dl.winehq.org/wine-builds/\$ID \$CODENAME main|desktop
+steam|Steam client|https://repo.steampowered.com/steam/archive/stable/steam.gpg|asc|deb [arch=amd64,i386 signed-by=\$K] https://repo.steampowered.com/steam/ stable steam|media
+teamviewer|TeamViewer remote desktop|https://download.teamviewer.com/download/linux/signature/TeamViewer2017.asc|asc|deb [arch=amd64 signed-by=\$K] https://linux.teamviewer.com/deb stable main|desktop
+syncthing|Syncthing (file sync)|https://syncthing.net/release-key.gpg|asc|deb [signed-by=\$K] https://apt.syncthing.net/ syncthing stable|infra
+zerotier|ZeroTier SD-WAN|https://download.zerotier.com/contact%40zerotier.com.gpg|asc|deb [signed-by=\$K] https://download.zerotier.com/debian/\$CODENAME \$CODENAME main|infra
+opera|Opera browser|https://deb.opera.com/archive.key|asc|deb [arch=amd64 signed-by=\$K] https://deb.opera.com/opera-stable/ stable non-free|browsers
+vivaldi|Vivaldi browser|https://repo.vivaldi.com/archive/linux_signing_key.pub|asc|deb [arch=amd64 signed-by=\$K] https://repo.vivaldi.com/archive/deb/ stable main|browsers"
 
-repo_add_apt_popular() { # <tag ...>
-    # shellcheck disable=SC2034  # consumed via eval'd repo-line templates
-    local ID CODENAME ARCH
-    ID=$(. /etc/os-release; echo "$ID")
-    CODENAME=$(. /etc/os-release; echo "$VERSION_CODENAME")
-    ARCH=$(dpkg --print-architecture)
-    : "$ID" "$CODENAME" "$ARCH"   # consumed via eval'd templates below
-    mkdir -p /etc/apt/keyrings
-    local t line tag desc keyurl fmt repoline K
-    for t in "$@"; do
-        line=$(grep -m1 "^$t|" <<<"$APT_POPULAR") || continue
-        IFS='|' read -r tag desc keyurl fmt repoline <<<"$line"
-        keyurl=$(safe_template_expand "$keyurl")
-        K="/etc/apt/keyrings/systui-$tag.gpg"
-        if [ "$fmt" = bin ]; then
-            curl -fsSL "$keyurl" -o "$K" 2>>"$LOGFILE" || { warn "$desc: key download failed."; continue; }
-        else
-            curl -fsSL "$keyurl" 2>>"$LOGFILE" | gpg --dearmor --yes -o "$K" 2>>"$LOGFILE" \
-                || { warn "$desc: key import failed."; continue; }
-        fi
-        repoline=$(safe_template_expand "$repoline")
-        echo "$repoline" > "/etc/apt/sources.list.d/systui-$tag.list"
-        log "repo: added $tag -> $repoline"
-    done
-    run_cmd "apt-get update (new repos)" apt-get update
-    show_warnings
+# Human labels for the categories above, in catalogue order.
+repo_popular_categories() {
+    printf '%s\n' "dev|Development & runtimes
+infra|Infrastructure & networking
+data|Databases & data services
+browsers|Web browsers
+desktop|Desktop & remote access
+media|Media & gaming
+cloud|Cloud tooling"
 }
 
+repo_popular_category_label() { # <key>
+    local k d
+    while IFS='|' read -r k d; do
+        [ "$k" = "$1" ] && { printf '%s\n' "$d"; return 0; }
+    done <<<"$(repo_popular_categories)"
+    printf '%s\n' "${1:-other}"
+}
+
+# Host identity for the repository templates. Filled into REPO_* so callers can
+# show what the entries will expand to without repeating /etc/os-release reads.
+repo_host_vars() {
+    local rel=/etc/os-release
+    [ -r "$rel" ] || rel=/usr/lib/os-release
+    REPO_ID=$(. "$rel" 2>/dev/null; printf '%s' "${ID:-unknown}")
+    REPO_CODENAME=$(. "$rel" 2>/dev/null; printf '%s' "${VERSION_CODENAME:-${UBUNTU_CODENAME:-}}")
+    REPO_ARCH=$(dpkg --print-architecture 2>/dev/null || true)
+    if [ -z "$REPO_ARCH" ]; then
+        case "$(uname -m)" in
+            x86_64)  REPO_ARCH=amd64 ;;
+            aarch64) REPO_ARCH=arm64 ;;
+            armv7l)  REPO_ARCH=armhf ;;
+            riscv64) REPO_ARCH=riscv64 ;;
+            *)       REPO_ARCH=$(uname -m) ;;
+        esac
+    fi
+    # MongoDB publishes under 'multiverse' on Ubuntu and 'main' on Debian.
+    if [ "$REPO_ID" = ubuntu ]; then REPO_COMPONENT=multiverse; else REPO_COMPONENT=main; fi
+}
+
+# One catalogue line by tag.
+repo_popular_entry() { # <tag>
+    local line
+    while IFS= read -r line; do
+        case "$line" in "$1|"*) printf '%s\n' "$line"; return 0 ;; esac
+    done <<<"$APT_POPULAR"
+    return 1
+}
+
+# Tags belonging to a category, in catalogue order.
+repo_popular_tags_in() { # <category>
+    local tag _d _k _f _r cat
+    while IFS='|' read -r tag _d _k _f _r cat; do
+        [ -z "$tag" ] && continue
+        [ "$cat" = "$1" ] && printf '%s\n' "$tag"
+    done <<<"$APT_POPULAR"
+}
+
+# Download a key with whichever HTTP client exists. The key must be PGP, or the
+# repository is left out rather than written unsigned: an unsigned entry makes
+# every later `apt-get update` fail with NO_PUBKEY.
+repo_fetch_key() { # <url> <dest> <asc|bin>
+    local url="$1" dest="$2" fmt="$3" tmp
+    tmp=$(mktemp 2>/dev/null) || return 1
+    if command -v curl >/dev/null 2>&1; then
+        curl -fsSL --max-time 60 "$url" -o "$tmp" 2>>"$LOGFILE" || { rm -f "$tmp"; return 1; }
+    elif command -v wget >/dev/null 2>&1; then
+        wget -q -T 60 -O "$tmp" "$url" 2>>"$LOGFILE" || { rm -f "$tmp"; return 1; }
+    else
+        warn "repo: neither curl nor wget is available to fetch $url"
+        rm -f "$tmp"; return 1
+    fi
+    [ -s "$tmp" ] || { warn "repo: empty key from $url"; rm -f "$tmp"; return 1; }
+    if [ "$fmt" = bin ]; then
+        install -m 0644 "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+    else
+        gpg --dearmor --yes -o "$dest" < "$tmp" 2>>"$LOGFILE" || { rm -f "$tmp"; return 1; }
+    fi
+    rm -f "$tmp"
+    repo_key_is_pgp "$dest" || {
+        warn "repo: $url did not yield an OpenPGP key; $dest removed"
+        rm -f "$dest"; return 1
+    }
+    return 0
+}
+
+# True when the file is an OpenPGP public key (armoured, or binary with the
+# packet tag). Shell matching keeps this free of a grep that can block.
+repo_key_is_pgp() { # <file>
+    local line
+    [ -s "$1" ] || return 1
+    # Binary keyrings start with a 0x99/0x98/0xC6 packet header byte.
+    case "$(od -An -tx1 -N1 "$1" 2>/dev/null | tr -d ' \n')" in
+        99|98|c6|ca) return 0 ;;
+    esac
+    while IFS= read -r line; do
+        case "$line" in
+            *"BEGIN PGP PUBLIC KEY BLOCK"*) return 0 ;;
+        esac
+    done < "$1"
+    return 1
+}
+
+repo_add_apt_popular() { # <tag ...>
+    # shellcheck disable=SC2034  # ID/CODENAME/ARCH/COMPONENT/K are read by
+    # safe_template_expand() through dynamic scope, not referenced here.
+    local ID CODENAME ARCH COMPONENT K
+    repo_host_vars
+    ID=$REPO_ID CODENAME=$REPO_CODENAME ARCH=$REPO_ARCH COMPONENT=$REPO_COMPONENT
+    if [ -z "$CODENAME" ]; then
+        tui_msg "Unknown release" "This system does not report a VERSION_CODENAME in /etc/os-release.\nRepository entries are keyed by codename; use 'Add a custom repository' instead."
+        return 1
+    fi
+    mkdir -p /etc/apt/keyrings /etc/apt/sources.list.d
+    local t line tag desc keyurl fmt repoline cat dest added=0 failed=0
+    for t in "$@"; do
+        if ! line=$(repo_popular_entry "$t"); then
+            warn "repo: unknown popular entry '$t'"
+            failed=$((failed + 1))
+            continue
+        fi
+        IFS='|' read -r tag desc keyurl fmt repoline cat <<<"$line"
+        K="/etc/apt/keyrings/systui-$tag.gpg"
+        keyurl=$(safe_template_expand "$keyurl")
+        if ! repo_fetch_key "$keyurl" "$K" "$fmt"; then
+            warn "repo: $desc — key import failed, repository not added"
+            failed=$((failed + 1))
+            continue
+        fi
+        repoline=$(safe_template_expand "$repoline")
+        dest="/etc/apt/sources.list.d/systui-$tag.list"
+        [ -f "$dest" ] && cp "$dest" "$dest.bak.$(date +%s)" 2>/dev/null
+        {
+            printf '# systui popular repository: %s\n' "$desc"
+            printf '# key: %s\n' "$K"
+            printf '%s\n' "$repoline"
+        } > "$dest" || { warn "repo: cannot write $dest"; failed=$((failed + 1)); continue; }
+        added=$((added + 1))
+        log "repo: added $tag -> $repoline"
+    done
+    [ "$added" -gt 0 ] && run_cmd "apt-get update (new repositories)" apt-get update
+    [ "$failed" -gt 0 ] && show_warnings
+    [ "$added" -gt 0 ]
+}
 
 # ---- Official distribution repositories -------------------------------------
 # Browse the distributions supported by Rootfs Builder and write official APT
@@ -699,16 +841,16 @@ distro_repo_pockets() { # <distro> <release>
     case "$distro" in
         debian)
             sel=$(tui_check "Distro Repos — Suites" "SPACE toggles suites; ENTER confirms:" \
-                base "$release" on
-                updates "$release-updates" off
-                security "$release-security" off
+                base "$release" on \
+                updates "$release-updates" off \
+                security "$release-security" off \
                 backports "$release-backports" off) || return 1 ;;
         ubuntu)
             sel=$(tui_check "Distro Repos — Pockets" "SPACE toggles pockets; ENTER confirms:" \
-                base "$release" on
-                updates "$release-updates" on
-                security "$release-security" on
-                backports "$release-backports" off
+                base "$release" on \
+                updates "$release-updates" on \
+                security "$release-security" on \
+                backports "$release-backports" off \
                 proposed "$release-proposed (development/testing)" off) || return 1 ;;
         devuan)
             sel=$(tui_check "Distro Repos — Suites" "SPACE toggles suites; ENTER confirms:" \
@@ -1061,25 +1203,62 @@ repo_sources_listd() {
 repo_popular() {
     case "$PM" in
         apt)
-            local args=() line tag desc rest
-            while IFS='|' read -r tag desc rest; do
+            # Two stages: pick categories with SPACE, then pick the repositories
+            # inside each one. Doing it in a single checklist turned into a wall
+            # of thirty rows on a phone-sized terminal.
+            local line tag desc keyurl fmt repoline cat seen="" c
+            local cats=() cargs=() chosen tot=0
+            while IFS='|' read -r tag desc keyurl fmt repoline cat; do
                 [ -z "$tag" ] && continue
-                if [ -f "/etc/apt/sources.list.d/systui-$tag.list" ]; then
-                    args+=("$tag" "$desc [added]" on)
-                else
-                    args+=("$tag" "$desc" off)
-                fi
+                case " $seen " in
+                    *" $cat "*) continue ;;
+                esac
+                seen="$seen $cat"
+                cats+=("$cat")
             done <<<"$APT_POPULAR"
-            local sel
-            sel=$(tui_check "Popular repositories (apt)" \
-                "SPACE toggles, ENTER applies. Already-added repos are pre-checked;\nunchecking one here does NOT remove it (use Manage):" "${args[@]}") || return 0
-            sel=${sel//\"/}
-            local new="" t
-            for t in $sel; do
-                [ -f "/etc/apt/sources.list.d/systui-$t.list" ] || new="$new $t"
+            for c in "${cats[@]}"; do
+                tot=$(repo_popular_tags_in "$c" | wc -l)
+                cargs+=("$c" "$(repo_popular_category_label "$c") — $tot repositories" off)
             done
-            [ -z "${new// }" ] && { tui_msg "Nothing to do" "No new repositories selected."; return; }
-            repo_add_apt_popular $new ;;
+            repo_host_vars
+            chosen=$(tui_check "Popular repositories" \
+                "SPACE marks categories, ENTER shows their repositories.\nHost: ${REPO_ID} ${REPO_CODENAME:-?} (${REPO_ARCH})" \
+                "${cargs[@]}") || return 0
+            chosen=${chosen//\"/}
+            [ -n "${chosen// }" ] || return 0
+
+            local toadd=() c2 t2 pre args2 sel2
+            for c2 in $chosen; do
+                args2=()
+                while IFS= read -r t2; do
+                    [ -n "$t2" ] || continue
+                    line=$(repo_popular_entry "$t2") || continue
+                    IFS='|' read -r tag desc keyurl fmt repoline cat <<<"$line"
+                    pre=off
+                    [ -f "/etc/apt/sources.list.d/systui-$t2.list" ] && pre=on
+                    args2+=("$t2" "$desc" "$pre")
+                done <<<"$(repo_popular_tags_in "$c2")"
+                [ ${#args2[@]} -gt 0 ] || continue
+                sel2=$(tui_check "Popular — $(repo_popular_category_label "$c2")" \
+                    "SPACE toggles, ENTER queues. Already-added entries are pre-checked\nand are never rewritten; unchecking one here does not remove it." \
+                    "${args2[@]}") || continue
+                sel2=${sel2//\"/}
+                for t2 in $sel2; do
+                    [ -f "/etc/apt/sources.list.d/systui-$t2.list" ] && continue
+                    toadd+=("$t2")
+                done
+            done
+
+            if [ ${#toadd[@]} -eq 0 ]; then
+                tui_msg "Nothing to add" "No new repositories were selected.\nUse 'Delete a systui-added repository' or Manage sources to remove one."
+                return 0
+            fi
+            local summary="Repositories to add:" s2
+            for s2 in "${toadd[@]}"; do summary="$summary\n  • $(repo_popular_entry "$s2" | cut -d'|' -f2)"; done
+            summary="$summary\n\nThe signing key is downloaded to /etc/apt/keyrings and the entry is\nwritten to /etc/apt/sources.list.d/systui-<name>.list. apt-get update\nruns afterwards."
+            tui_yesno "Add $((${#toadd[@]})) repositories" "$summary" || return 0
+            repo_add_apt_popular "${toadd[@]}"
+            ;;
         dnf)
             local sel
             sel=$(tui_check "Popular repositories (dnf)" "SPACE toggles, ENTER applies:" \
@@ -1686,6 +1865,32 @@ apt_missing_keyrings_menu() {
 
 
 # ---- Ubuntu PPA repository manager (APT only) -------------------------------
+# Long-lived, well-known PPAs: owner/archive|Description|category
+# Every entry resolves on https://api.launchpad.net under /~owner/+archive/ubuntu/archive.
+PPA_CATALOGUE="deadsnakes/ppa|Python (newer versions than the archive)|dev
+ondrej/php|PHP builds (current and legacy branches)|dev
+ondrej/apache2|Apache httpd 2.4 (latest)|infra
+neovim-ppa/unstable|Neovim nightly|dev
+git-core/ppa|Git (latest stable)|dev
+fish-shell/release-4|Fish shell 4|dev
+ubuntu-toolchain-r/test|GCC and Clang toolchains|dev
+ansible/ansible|Ansible|dev
+certbot/certbot|Certbot (Let's Encrypt)|infra
+mozillateam/ppa|Firefox as a deb (no snap)|browsers
+graphics-drivers/ppa|NVIDIA proprietary drivers|desktop
+oibaf/graphics-drivers|Mesa, bleeding edge|desktop
+kisak/kisak-mesa|Mesa, fresh|desktop
+pipewire-debian/pipewire-upstream|PipeWire upstream|desktop
+obsproject/obs-studio|OBS Studio|media
+team-xbmc/ppa|Kodi|media
+lutris-team/lutris|Lutris (game manager)|media
+qbittorrent-team/qbittorrent-stable|qBittorrent (stable)|media
+libreoffice/ppa|LibreOffice|desktop
+phoerious/keepassxc|KeePassXC|security
+deki/firejail|Firejail sandbox|security
+appimagelauncher-team/stable|AppImageLauncher|desktop
+danielrichter2007/grub-customizer|GRUB Customizer|desktop"
+
 ppa_normalize() {
     local p="$1"
     p=${p#ppa:}
@@ -1700,17 +1905,256 @@ ppa_normalize() {
     printf 'ppa:%s\n' "$p"
 }
 
+# 'ppa:owner/archive' or 'owner/archive' -> 'owner/archive'
+ppa_owner_archive() {
+    local p=${1#ppa:}
+    p=${p%/}
+    printf '%s\n' "$p"
+}
+
+ppa_is_configured() { # <owner/archive>
+    local spec="$1" o a dir f line
+    o=${spec%%/*}; a=${spec##*/}
+    # SYSTUI_APT_SOURCES_DIR lets the test suite point the check at a sandbox.
+    dir=${SYSTUI_APT_SOURCES_DIR:-/etc/apt}
+    # Plain shell matching rather than grep: the sandboxed iSH grep blocks on a
+    # quiet search that finds nothing, and a hanging menu is unacceptable here.
+    local -a files=("$dir/sources.list")
+    shopt -s nullglob
+    files+=("$dir"/sources.list.d/*.list "$dir"/sources.list.d/*.sources)
+    shopt -u nullglob
+    for f in ${files[@]+"${files[@]}"}; do
+        [ -f "$f" ] || continue
+        while IFS= read -r line; do
+            case "$line" in
+                \#*) continue ;;
+                *"ppa.launchpadcontent.net/$o/$a/"*|*"ppa.launchpad.net/$o/$a/"*) return 0 ;;
+            esac
+        done < "$f"
+    done
+    return 1
+}
+
+ppa_category_label() {
+    case "$1" in
+        dev)      printf 'Development' ;;
+        infra)    printf 'Servers & networking' ;;
+        browsers) printf 'Web browsers' ;;
+        desktop)  printf 'Desktop & drivers' ;;
+        media)    printf 'Media & gaming' ;;
+        security) printf 'Security' ;;
+        *)        printf '%s' "${1:-Other}" ;;
+    esac
+}
+
+# Launchpad returns HTML rows: <td><a href="/~owner/+archive/ubuntu/name">Name</a></td>
+# <td>Description</td><td>sources</td><td>binaries</td>. Parsed into
+#   owner/archive \t name \t description \t packages
+# ordering preserved (Launchpad sorts by relevance to the filter).
+ppa_parse_listing() { # <html on stdin>
+    awk '
+        function trim(x) { gsub(/^[ \t\r]+|[ \t\r]+$/, "", x); return x }
+        /<tr class="ppa_batch_row">/ { inrow = 1; owner = ""; arch = ""; name = ""; desc = ""; pkgs = 0; next }
+        inrow && /href="\/~[^"]+\+archive\/ubuntu\// {
+            line = $0
+            s = line; sub(/^.*href="\/~/, "", s); sub(/\/\+archive.*$/, "", s); owner = s
+            s = line; sub(/^.*\+archive\/ubuntu\//, "", s); sub(/".*$/, "", s); arch = s
+            n = line; sub(/^.*<a [^>]*>/, "", n); sub(/<.*$/, "", n); name = trim(n)
+            next
+        }
+        inrow && /<td>[0-9]+<\/td>/ {
+            v = $0; gsub(/[^0-9]/, "", v)
+            if (v + 0 > pkgs) pkgs = v + 0
+            next
+        }
+        inrow && /<\/tr>/ {
+            if (owner != "") printf "%s/%s\t%s\t%s\t%d\n", owner, arch, name, desc, pkgs
+            inrow = 0; next
+        }
+        inrow && /<td>/ {
+            d = $0; sub(/^[ \t]*<td>/, "", d); sub(/<\/td>.*$/, "", d); d = trim(d)
+            if (d != "") { if (desc == "") desc = d; else desc = desc " " d }
+            next
+        }
+        inrow && NF {
+            d = $0
+            sub(/^[ \t]*<td>/, "", d)
+            sub(/<\/td>.*$/, "", d)
+            d = trim(d)
+            if (d != "" && d !~ /^<\/?(table|tbody|th|tr)/) { if (desc == "") desc = d; else desc = desc " " d }
+        }
+    ' | awk -F'\t' '!seen[$1]++ { printf "%s\t%s\t%s\t%s\n", $1, $2, substr($3, 1, 110), $4 }'
+}
+
+# Search Launchpad for PPAs. Results are cached for a day: the listing is a web
+# page, and re-fetching it on every menu redraw would be rude and slow.
+ppa_search() { # <keyword> [pagesize] -> TSV on stdout
+    local kw="$1" size="${2:-120}" cache dir hash url body
+    dir=${SYSTUI_CACHE_DIR:-/var/cache/systui}
+    mkdir -p "$dir" 2>/dev/null || dir=${SYSTUI_TMP:-/tmp}
+    hash=$(printf '%s' "ppa:$kw:$size" | cksum 2>/dev/null | cut -d' ' -f1)
+    cache="$dir/ppa-search-${hash:-0}.tsv"
+    if [ -s "$cache" ] && [ -n "$(find "$cache" -mmin -1440 2>/dev/null)" ]; then
+        cat "$cache"
+        return 0
+    fi
+    kw=$(printf '%s' "$kw" | sed 's/[^A-Za-z0-9._+@-]/+/g')
+    url="https://launchpad.net/ubuntu/+ppas?name_filter=${kw}&batch=${size}"
+    if command -v curl >/dev/null 2>&1; then
+        body=$(curl -fsSL --max-time 30 "$url" 2>>"$LOGFILE") || body=""
+    elif command -v wget >/dev/null 2>&1; then
+        body=$(wget -q -T 30 -O - "$url" 2>>"$LOGFILE") || body=""
+    else
+        return 1
+    fi
+    [ -n "$body" ] || return 1
+    printf '%s\n' "$body" | ppa_parse_listing | tee "$cache"
+}
+
+ppa_signing_fingerprint() { # <owner> <archive>
+    local json
+    command -v curl >/dev/null 2>&1 || return 1
+    json=$(curl -fsSL --max-time 20 \
+        "https://api.launchpad.net/1.0/~$1/+archive/ubuntu/$2" 2>>"$LOGFILE") || return 1
+    printf '%s\n' "$json" | sed -n 's/.*"signing_key_fingerprint": *"\([A-F0-9]*\)".*/\1/p' | head -1
+}
+
+# Add one PPA. add-apt-repository is the canonical path; when it is missing (or
+# running on Debian) the sources file and the signing key are written directly,
+# so the entry works without software-properties-common.
+ppa_add_one() { # <owner/archive>
+    local spec="$1" o a key dest fp tmp
+    o=${spec%%/*}; a=${spec##*/}
+    [ -n "$o" ] && [ -n "$a" ] || return 1
+    if command -v add-apt-repository >/dev/null 2>&1; then
+        if add-apt-repository -y "ppa:$o/$a" >>"$LOGFILE" 2>&1; then
+            log "ppa: added ppa:$o/$a via add-apt-repository"
+            return 0
+        fi
+        warn "ppa: add-apt-repository failed for $o/$a, writing the entry directly"
+    fi
+    mkdir -p /etc/apt/keyrings /etc/apt/sources.list.d
+    key="/etc/apt/keyrings/systui-ppa-${o}-${a}.gpg"
+    if [ ! -s "$key" ]; then
+        fp=$(ppa_signing_fingerprint "$o" "$a") || fp=""
+        if [ -z "$fp" ]; then
+            warn "ppa: $o/$a — Launchpad did not report a signing key"
+            return 1
+        fi
+        tmp=$(mktemp 2>/dev/null) || return 1
+        if command -v curl >/dev/null 2>&1; then
+            curl -fsSL --max-time 30 "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$fp" \
+                -o "$tmp" 2>>"$LOGFILE" || { rm -f "$tmp"; warn "ppa: key download failed for $o/$a"; return 1; }
+        else
+            wget -q -T 30 -O "$tmp" "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x$fp" 2>>"$LOGFILE" \
+                || { rm -f "$tmp"; warn "ppa: key download failed for $o/$a"; return 1; }
+        fi
+        gpg --dearmor --yes -o "$key" < "$tmp" 2>>"$LOGFILE" || { rm -f "$tmp" "$key"; return 1; }
+        rm -f "$tmp"
+    fi
+    dest="/etc/apt/sources.list.d/systui-ppa-${o}-${a}.list"
+    {
+        printf '# systui PPA: %s/%s\n' "$o" "$a"
+        printf 'deb [signed-by=%s] https://ppa.launchpadcontent.net/%s/%s/ubuntu %s main\n' \
+            "$key" "$o" "$a" "${REPO_CODENAME:?no release codename}"
+    } > "$dest" || return 1
+    log "ppa: wrote $dest"
+    return 0
+}
+
+ppa_add_selected() { # <owner/archive ...>
+    local spec added=0 failed=0
+    repo_host_vars
+    for spec in "$@"; do
+        [ -n "$spec" ] || continue
+        if ppa_add_one "$spec"; then added=$((added + 1)); else failed=$((failed + 1)); fi
+    done
+    [ "$added" -gt 0 ] && run_cmd "Refreshing APT indexes" apt-get update
+    [ "$failed" -gt 0 ] && show_warnings
+    return 0
+}
+
+# Space-select from the curated list. Already-configured PPAs are shown but
+# never re-added, so the list doubles as a status view.
+ppa_menu_catalogue() {
+    local args=() line spec desc cat pre
+    while IFS='|' read -r spec desc cat; do
+        [ -z "$spec" ] && continue
+        pre=off
+        if ppa_is_configured "$spec"; then
+            desc="$desc  [added]"
+            pre=on
+        fi
+        args+=("$spec" "[$(ppa_category_label "$cat")] $desc" "$pre")
+    done <<<"$PPA_CATALOGUE"
+    local sel
+    sel=$(tui_check "PPAs — popular list" \
+        "SPACE toggles a PPA, ENTER adds every selected one.\nAlready-configured entries are marked [added] and are skipped." \
+        "${args[@]}") || return 0
+    sel=${sel//\"/}
+    [ -n "${sel// }" ] || return 0
+    local todo=()
+    for spec in $sel; do
+        ppa_is_configured "$spec" && continue
+        todo+=("$spec")
+    done
+    if [ ${#todo[@]} -eq 0 ]; then
+        tui_msg "Nothing to add" "Every selected PPA is already configured."
+        return 0
+    fi
+    local summary="PPAs to add:" s
+    for s in "${todo[@]}"; do summary="$summary\n  • ppa:$s"; done
+    tui_yesno "Add $((${#todo[@]})) PPA(s)" "$summary" || return 0
+    ppa_add_selected "${todo[@]}"
+    tui_wait 2>/dev/null || true
+}
+
+# Search Launchpad, then space-select from the parsed result list.
+ppa_menu_search() {
+    local kw rows count=0 args=() spec name desc pkgs pre
+    kw=$(tui_input "Search Launchpad" "Keyword (owner, package or archive name):" "") || return 0
+    [ -n "$kw" ] || return 0
+    rows=$(ppa_search "$kw" 120) || { tui_msg "Launchpad" "The PPA listing could not be fetched.\nCheck the network, then try again."; return 0; }
+    [ -n "$rows" ] || { tui_msg "Launchpad" "No PPA matched '$kw'."; return 0; }
+    while IFS=$'\t' read -r spec name desc pkgs; do
+        [ -n "$spec" ] || continue
+        count=$((count + 1))
+        [ "$count" -gt 40 ] && break
+        pre=off
+        if ppa_is_configured "$spec"; then name="$name [added]"; pre=on; fi
+        args+=("$spec" "$name — ${desc:-no description}${pkgs:+ ($pkgs pkgs)}" "$pre")
+    done <<<"$rows"
+    [ ${#args[@]} -gt 0 ] || { tui_msg "Launchpad" "No usable result for '$kw'."; return 0; }
+    local sel
+    sel=$(tui_check "Launchpad PPAs — $kw" \
+        "Parsed from launchpad.net, ordered as Launchpad ranks them.\nSPACE toggles, ENTER adds the selected PPAs." "${args[@]}") || return 0
+    sel=${sel//\"/}
+    [ -n "${sel// }" ] || return 0
+    local todo=() s
+    for spec in $sel; do
+        ppa_is_configured "$spec" && continue
+        todo+=("$spec")
+    done
+    [ ${#todo[@]} -gt 0 ] || { tui_msg "Nothing to add" "Every selected PPA is already configured."; return 0; }
+    local summary="PPAs to add:" n
+    for n in "${todo[@]}"; do summary="$summary\n  • ppa:$n"; done
+    tui_yesno "Add $((${#todo[@]})) PPA(s)" "$summary" || return 0
+    ppa_add_selected "${todo[@]}"
+}
+
 menu_ppa_repos() {
     [ "$PM" = apt ] || { tui_msg "PPA repositories" "PPAs are supported only on Ubuntu-family APT systems."; return 0; }
     local host_id host_like
     host_id=$(os_id); host_like=$(awk -F= '$1=="ID_LIKE"{gsub(/\"/,"",$2); print $2}' /etc/os-release 2>/dev/null)
-    case " $host_id $host_like " in *" ubuntu "*|*" linuxmint "*|*" pop "*|*" elementary "*) :;;
-        *) tui_yesno "Compatibility warning" "Launchpad PPAs target Ubuntu releases. This system identifies as '$host_id'. Adding a PPA to Debian, Devuan, Kali, or another distribution can break dependency resolution. Continue anyway?" || return 0;;
+    case " $host_id $host_like " in *" ubuntu "*|*" linuxmint "*|*" pop "*|*" elementary "*|*" zorin "*) :;;
+        *) tui_yesno "Compatibility warning" "Launchpad PPAs are built for Ubuntu releases. This system identifies as '$host_id'. Adding a PPA to Debian, Devuan, Kali or another distribution can break dependency resolution. Continue anyway?" || return 0;;
     esac
     while true; do
-        local c ppa line files sel f tags=()
-        c=$(tui_menu "PPA Repositories" "Add, inspect, disable, enable, or remove Launchpad PPAs:" \
-            add "Add a PPA (ppa:owner/archive)" \
+        local c ppa files sel f tags=()
+        c=$(tui_menu "PPA Repositories" "Add several PPAs in one pass, or manage the ones already present:" \
+            add "Add PPAs — popular list (space-select)" \
+            search "Search Launchpad and add (space-select)" \
+            manual "Add one PPA by name (ppa:owner/archive)" \
             list "List configured PPAs" \
             disable "Disable selected PPA files" \
             enable "Enable selected disabled PPA files" \
@@ -1718,16 +2162,18 @@ menu_ppa_repos() {
             refresh "Refresh APT package indexes" \
             back "Back") || return 0
         case "$c" in
-            add)
+            add) ppa_menu_catalogue ;;
+            search) ppa_menu_search ;;
+            manual)
                 ppa=$(tui_input "Add PPA" "PPA identifier (example: ppa:deadsnakes/ppa):" "ppa:") || continue
                 [ "$ppa" != "ppa:" ] && [ -n "$ppa" ] || continue
                 ppa=$(ppa_normalize "$ppa")
                 case "$ppa" in ppa:*/*) :;; *) tui_msg "Invalid PPA" "Use ppa:owner/archive format."; continue;; esac
-                command -v add-apt-repository >/dev/null 2>&1 || {
-                    run_cmd "Installing add-apt-repository" apt-get install -y software-properties-common || continue
-                }
-                run_cmd "Adding $ppa" add-apt-repository -y "$ppa" || continue
-                run_cmd "Refreshing APT indexes" apt-get update
+                if ppa_is_configured "$(ppa_owner_archive "$ppa")"; then
+                    tui_msg "Already configured" "$ppa is already in /etc/apt/sources.list.d."
+                    continue
+                fi
+                ppa_add_selected "$(ppa_owner_archive "$ppa")"
                 ;;
             list)
                 { grep -rHEn '^[[:space:]]*deb .*ppa\.launchpad(content)?\.net|^[[:space:]]*URIs: .*ppa\.launchpad(content)?\.net' /etc/apt/sources.list /etc/apt/sources.list.d 2>/dev/null || echo '(no PPAs configured)'; } > ${SYSTUI_TMP}/ppa
@@ -1757,8 +2203,8 @@ menu_repos() {
             manage  "Manage sources (space-select enable/disable)" \
             listd   "Manage sources.list and sources.list.d" \
             distro  "Distro Repos (official distro repositories)" \
-            popular "Add popular repositories (space-select)" \
-            ppa     "Add/manage Ubuntu PPA repositories" \
+            popular "Add popular repositories (categories, space-select)" \
+            ppa     "Add/manage Ubuntu PPAs (space-select, Launchpad search)" \
             refresh "Refresh package indexes" \
             addrepo "Add a custom repository" \
             keys    "Signing keys and missing archive keyrings" \

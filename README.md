@@ -692,7 +692,35 @@ refresh responsive.
 
 System Configuration > Packages now contains Package Managers, Repos, Catalogue, Packages, and Advanced. Native install, remove, search, information, installed-package listing, hold, update, and cleanup actions are grouped under the Packages submenu.
 
-APT repository management includes both `/etc/apt/sources.list` and `/etc/apt/sources.list.d/`. The signing-key menu can install available Debian, Ubuntu, Devuan, and Kali archive keyrings using a SPACE-to-select checklist.
+APT repository management covers `/etc/apt/sources.list` and
+`/etc/apt/sources.list.d/`. Three add paths sit behind
+*Repositories* → sources:
+
+- **Distro Repos** writes official repositories for Debian, Devuan, Ubuntu and
+  Kali as isolated `systui-distro-<distro>-<release>.list` files, after a
+  SPACE-to-select pass over release, components, pockets/suites and package
+  types (`deb`, `deb-src`). Cross-distribution entries are allowed but ask
+  first. Each generated line carries `[signed-by=...]` when the matching archive
+  keyring is installed.
+- **Popular repositories** is a category-first checklist (development,
+  infrastructure, databases, browsers, desktop, media, cloud) over 35 curated
+  third-party repositories — Docker, VS Code, nginx, PostgreSQL, MariaDB/MySQL,
+  MongoDB, Redis, NodeSource, Sury PHP, Kubernetes, Grafana, Jellyfin,
+  Tailscale, ZeroTier, Steam, Wine, and more. Keys are downloaded to
+  `/etc/apt/keyrings/systui-<name>.gpg`, validated, and the entry is written to
+  `/etc/apt/sources.list.d/systui-<name>.list`; a repository whose key cannot be
+  fetched is skipped rather than written unsigned.
+- **PPAs** (Ubuntu-family) is SPACE-to-select: a curated list of 22 well-known
+  Launchpad archives, plus *Search Launchpad* which parses
+  `launchpad.net/ubuntu/+ppas?name_filter=…` (cached for a day), lists up to 40
+  matches with their descriptions and package counts, and adds every selected
+  PPA in one pass. `add-apt-repository` is used when present; otherwise the
+  sources entry and the signing key (fetched by fingerprint from
+  `keyserver.ubuntu.com`) are written directly, so PPAs also work without
+  `software-properties-common`.
+
+The signing-key menu can install available Debian, Ubuntu, Devuan and Kali
+archive keyrings using a SPACE-to-select checklist.
 
 System Configuration > Shells separates Managers from Plugins. The manager list
 contains **every shell systui knows** — Bash, Zsh, Fish, Nushell, POSIX sh
