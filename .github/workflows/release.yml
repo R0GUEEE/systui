@@ -1,0 +1,104 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)publish
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Resolve the version
+        id: version
+        run: |
+          set -euo pipefail
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version=$(head -n1 src/VERSION | tr -d '[:space:]')
+          case "$tag" in v*) ;; *) echo "tag '$tag' is not v<version>" >&2; exit 1 ;; esac
+          if [ "${tag#v}" != "$version" ]; then
+            echo "tag $tag does not match src/VERSION ($version)" >&2
+            exit 1
+          fi
+          app=$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\(.*\)"$/\1/p' project.yml | head -1)
+          if [ "$app" != "$version" ]; then
+            echo "project.yml MARKETING_VERSION ($app) does not match src/VERSION ($version)" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Extract release notes from the changelog
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          awk -v v="## $version " '
+            index($0, v) == 1 { on = 1; print; next }
+            on && /^## / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if [ ! -s notes.md ]; then
+            echo "no CHANGELOG section for $version" >&2
+            exit 1
+          fi
+          cat notes.md
+
+      - name: Build the source archive and its checksum
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          out="$RUNNER_TEMP/dist"
+          mkdir -p "$out"
+          # Archive the tag's tree, never a working copy: the checksum must
+          # describe exactly what the release points at.
+          git archive --format=tar.gz --prefix="systui-$version/" \
+            -o "$out/systui-$version.tar.gz" HEAD
+          ( cd "$out" && sha256sum "systui-$version.tar.gz" > SHA256SUMS.txt )
+          cat "$out/SHA256SUMS.txt"
+
+      - name: Prove the archive installs a working tree
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          work="$RUNNER_TEMP/verify"
+          mkdir -p "$work"
+          tar -xzf "$RUNNER_TEMP/dist/systui-$version.tar.gz" -C "$work"
+          tree="$work/systui-$version"
+          test -x "$tree/install.sh"
+          test -f "$tree/src/VERSION"
+          bash -n "$tree/install.sh"
+          for f in "$tree"/src/core/*.sh "$tree"/src/sysconfig/*.sh; do bash -n "$f"; done
+          for f in "$tree"/src/features/[0-9]*-*.sh; do bash -n "$f"; done
+          bash "$tree/tests/test-native-distro-repos.sh" >/dev/null
+          bash "$tree/tests/test-distro-keyrings.sh" >/dev/null
+          bash "$tree/tests/test-repos-alternatives-final.sh" >/dev/null
+          echo "archive verified: version $(cat "$tree/src/VERSION")"
+
+      - name: Publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="${{ steps.version.outputs.version }}"
+          tag="v$tag"
+          out="$RUNNER_TEMP/dist"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" "$out"/* --clobber
+            gh release edit "$tag" --notes-file notes.md
+          else
+            gh release create "$tag" "$out"/* \
+              --title "systui ${{ steps.version.outputs.version }}" \
+              --notes-file notes.md
+          fi

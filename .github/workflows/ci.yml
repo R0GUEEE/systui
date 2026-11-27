@@ -14,6 +14,21 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Version consistency
+        run: |
+          set -euo pipefail
+          # One version, three places: the TUI/man page read src/VERSION, the
+          # iOS app reads project.yml, and the changelog documents the release.
+          version=$(head -n1 src/VERSION | tr -d '[:space:]')
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "src/VERSION is not MAJOR.MINOR.PATCH: $version" >&2; exit 1 ;;
+          esac
+          app=$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\(.*\)"$/\1/p' project.yml | head -1)
+          test "$app" = "$version" || { echo "project.yml ($app) != src/VERSION ($version)" >&2; exit 1; }
+          grep -q "^## $version " CHANGELOG.md || { echo "CHANGELOG.md has no '$version' section" >&2; exit 1; }
+          echo "version $version consistent across src/VERSION, project.yml and CHANGELOG.md"
+
       - name: Verify ShellCheck is available
         run: command -v shellcheck >/dev/null
 
