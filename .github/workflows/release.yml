@@ -57,28 +57,28 @@ jobs:
           esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
-      - name: Check out that tag
-        if: steps.tag.outputs.skip != '1'
-        run: git checkout -f "tags/${{ steps.tag.outputs.tag }}"
-
       - name: Version consistency
         id: version
         if: steps.tag.outputs.skip != '1'
         run: |
           set -euo pipefail
           tag="${{ steps.tag.outputs.tag }}"
-          version=$(head -n1 src/VERSION | tr -d '[:space:]')
+          # Everything below is read from the tag, never from the checked-out
+          # branch: the workflow runs its own code (so it is always current)
+          # while the files it inspects belong to the release.
+          git cat-file -e "$tag^{commit}" 2>/dev/null || { echo "tag $tag is not present in this clone" >&2; exit 1; }
+          version=$(git show "$tag:src/VERSION" | head -n1 | tr -d '[:space:]')
           if [ "${tag#v}" != "$version" ]; then
             echo "tag $tag does not match src/VERSION ($version)" >&2
             exit 1
           fi
-          app=$(sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\(.*\)"$/\1/p' project.yml | head -1)
+          app=$(git show "$tag:project.yml" | sed -n 's/^[[:space:]]*MARKETING_VERSION:[[:space:]]*"\(.*\)"$/\1/p' | head -1)
           if [ "$app" != "$version" ]; then
             echo "project.yml MARKETING_VERSION ($app) does not match src/VERSION ($version)" >&2
             exit 1
           fi
-          grep -q "^## $version " CHANGELOG.md || { echo "CHANGELOG.md has no '$version' section" >&2; exit 1; }
-          build=$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*"\(.*\)"$/\1/p' project.yml | head -1)
+          git show "$tag:CHANGELOG.md" | grep -q "^## $version " || { echo "CHANGELOG.md has no '$version' section" >&2; exit 1; }
+          build=$(git show "$tag:project.yml" | sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*"\(.*\)"$/\1/p' | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
           echo "build=${build:-1}" >> "$GITHUB_OUTPUT"
 
@@ -87,11 +87,11 @@ jobs:
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
-          awk -v v="## $version " '
+          git show "${{ steps.tag.outputs.tag }}:CHANGELOG.md" | awk -v v="## $version " '
             index($0, v) == 1 { on = 1; print; next }
             on && /^## / { exit }
             on { print }
-          ' CHANGELOG.md > notes.md
+          ' > notes.md
           if [ ! -s notes.md ]; then
             echo "no CHANGELOG section for $version" >&2
             exit 1
@@ -106,8 +106,9 @@ jobs:
           mkdir -p "$out"
           # Archive the tag's tree, never a working copy: the checksum must
           # describe exactly what the release points at.
+          tag="${{ steps.tag.outputs.tag }}"
           git archive --format=tar.gz --prefix="systui-$version/" \
-            -o "$out/systui-$version.tar.gz" HEAD
+            -o "$out/systui-$version.tar.gz" "$tag"
 
       - name: Prove the archive installs a working tree
         if: steps.tag.outputs.skip != '1'
@@ -155,9 +156,10 @@ jobs:
           # Only the declared version changes; the Mach-O is copied untouched.
           python3 tools/ipa_stamp.py "$work/SystuiRootfs.ipa" "$out/$ipa" "$VERSION" "$BUILD"
 
-          if [ "$built_sha" = "$(git rev-parse HEAD)" ]; then
+          tag_sha=$(git rev-parse "${{ steps.tag.outputs.tag }}^{commit}")
+          if [ "$built_sha" = "$tag_sha" ]; then
             note="Built from this tag (\`${built_sha:0:7}\`)."
-          elif git cat-file -e "$built_sha" 2>/dev/null && git diff --quiet "$built_sha" HEAD -- Sources project.yml; then
+          elif git cat-file -e "$built_sha" 2>/dev/null && git diff --quiet "$built_sha" "$tag_sha" -- Sources project.yml; then
             note="Built at \`${built_sha:0:7}\`, where the app sources are identical to this tag; only the version metadata was re-stamped, because the macOS runner did not build the tag itself."
           else
             note="Built at \`${built_sha:0:7}\`, which differs from this tag; treat it as the last known-good build."
