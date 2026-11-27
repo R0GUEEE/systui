@@ -613,7 +613,11 @@ teamviewer|TeamViewer remote desktop|https://download.teamviewer.com/download/li
 syncthing|Syncthing (file sync)|https://syncthing.net/release-key.gpg|asc|deb [signed-by=\$K] https://apt.syncthing.net/ syncthing stable|infra
 zerotier|ZeroTier SD-WAN|https://download.zerotier.com/contact%40zerotier.com.gpg|asc|deb [signed-by=\$K] https://download.zerotier.com/debian/\$CODENAME \$CODENAME main|infra
 opera|Opera browser|https://deb.opera.com/archive.key|asc|deb [arch=amd64 signed-by=\$K] https://deb.opera.com/opera-stable/ stable non-free|browsers
-vivaldi|Vivaldi browser|https://repo.vivaldi.com/archive/linux_signing_key.pub|asc|deb [arch=amd64 signed-by=\$K] https://repo.vivaldi.com/archive/deb/ stable main|browsers"
+vivaldi|Vivaldi browser|https://repo.vivaldi.com/archive/linux_signing_key.pub|asc|deb [arch=amd64 signed-by=\$K] https://repo.vivaldi.com/archive/deb/ stable main|browsers
+adoptium|Eclipse Temurin JDK|https://packages.adoptium.net/artifactory/api/gpg/key/public|asc|deb [signed-by=\$K] https://packages.adoptium.net/artifactory/deb \$CODENAME main|dev
+gitlab-ce|GitLab CE (self-hosted)|https://packages.gitlab.com/gitlab/gitlab-ce/gpgkey|asc|deb [signed-by=\$K] https://packages.gitlab.com/gitlab/gitlab-ce/\$ID \$CODENAME main|infra
+edge|Microsoft Edge|https://packages.microsoft.com/keys/microsoft.asc|asc|deb [arch=amd64,arm64,armhf signed-by=\$K] https://packages.microsoft.com/repos/edge stable main|browsers
+librewolf|LibreWolf browser|https://deb.librewolf.net/keyring.gpg|bin|deb [signed-by=\$K] https://deb.librewolf.net \$CODENAME main|browsers"
 
 # Human labels for the categories above, in catalogue order.
 repo_popular_categories() {
@@ -803,15 +807,14 @@ distro_repo_release_menu() { # <distro>
 distro_repo_key_option() { # <distro> -> apt option or empty
     local f
     case "$1" in
-        debian) set -- /usr/share/keyrings/debian-archive-keyring.gpg ;;
-        devuan) set -- /usr/share/keyrings/devuan-archive-keyring.gpg /usr/share/keyrings/devuan-keyring.gpg ;;
-        ubuntu) set -- /usr/share/keyrings/ubuntu-archive-keyring.gpg ;;
-        kali) set -- /usr/share/keyrings/kali-archive-keyring.gpg ;;
+        debian|devuan|ubuntu|kali) : ;;
         *) return 0 ;;
     esac
-    for f in "$@"; do
-        [ -f "$f" ] && { printf '[signed-by=%s]' "$f"; return 0; }
-    done
+    # One lookup for every caller: the writer, the repair pass and the menu all
+    # have to agree on which file an entry may point at.
+    if f=$(repo_keyring_file_for "$1"); then
+        printf '[signed-by=%s]' "$f"
+    fi
 }
 
 distro_repo_components() { # <distro> <release>
@@ -884,6 +887,17 @@ distro_repo_write_apt() { # <distro> <release> <components> <pockets> <types>
         *) return 1 ;;
     esac
     opt=$(distro_repo_key_option "$distro")
+    if [ -z "$opt" ]; then
+        # An official entry without its archive keyring is not installable:
+        # apt-get update answers NO_PUBKEY. Fetch the keyring first and only
+        # write the entry once it can be verified.
+        repo_ensure_distro_keyring "$distro" || true
+        opt=$(distro_repo_key_option "$distro")
+    fi
+    if [ -z "$opt" ]; then
+        warn "repo: ${distro} archive keyring is not installed; refusing to write an unverifiable entry"
+        return 1
+    fi
     file="/etc/apt/sources.list.d/systui-distro-${distro}-${release}.list"
     mkdir -p /etc/apt/sources.list.d
     [ -f "$file" ] && cp "$file" "$file.bak.$(date +%s)"
@@ -913,11 +927,394 @@ distro_repo_write_apt() { # <distro> <release> <components> <pockets> <types>
     printf '%s\n' "$file"
 }
 
+# ---- Native (non-APT) official repositories ---------------------------------
+# Distro Repos used to stop at APT: on Alpine, Arch, Fedora, openSUSE, Void and
+# Gentoo the menu answered "not available", so the feature was dead on exactly
+# the hosts systui ships on. Each of those publishes its repositories through a
+# plain-text file, so the same checklist can write them idempotently.
+
+# Markers that delimit the block systui owns inside a native config file. The
+# block is rewritten wholesale, so re-running an option never stacks entries.
+REPO_BLOCK_BEGIN="# >>> systui distro repos >>>"
+REPO_BLOCK_END="# <<< systui distro repos <<<"
+
+repo_native_file() { # <env-var-name> <default-path>
+    printf '%s\n' "${!1:-$2}"
+}
+
+# Replace the managed block in <file> with <body>. Text outside the markers is
+# preserved byte for byte; a file that only held the block ends up identical.
+repo_write_block() { # <file> <body>
+    local file="$1" body="$2" kept
+    kept=""
+    if [ -f "$file" ]; then
+        kept=$(awk -v b="$REPO_BLOCK_BEGIN" -v e="$REPO_BLOCK_END" '
+            $0 == b { skip = 1; next }
+            $0 == e { skip = 0; next }
+            skip { next }
+            { print }
+        ' "$file" 2>/dev/null) || kept=""
+    fi
+    mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
+    [ "$(id -u)" -eq 0 ] || { warn "repo: $file needs root"; return 1; }
+    {
+        [ -n "$kept" ] && printf '%s\n\n' "$kept"
+        printf '%s\n' "$REPO_BLOCK_BEGIN"
+        printf '%s\n' "$body"
+        printf '%s\n' "$REPO_BLOCK_END"
+    } > "$file" || return 1
+    log "repo: wrote $file"
+}
+
+repo_native_refresh() {
+    case "$PM" in
+        apk)     run_cmd "apk update" apk update ;;
+        pacman)  run_cmd "pacman -Syy" pacman -Syy ;;
+        dnf|yum) run_cmd "dnf makecache" dnf makecache ;;
+        zypper)  run_cmd "zypper refresh" zypper --non-interactive refresh ;;
+        xbps)    run_cmd "xbps-install -S" xbps-install -S ;;
+        portage) run_cmd "emerge --sync" emerge --sync ;;
+    esac
+}
+
+# ---- Alpine (apk) -----------------------------------------------------------
+repo_apk_file() { repo_native_file SYSTUI_APK_REPOS_FILE /etc/apk/repositories; }
+
+repo_apk_mirror() {
+    local base
+    base=$(awk -F'/alpine/' '/\/alpine\//{print $1"/alpine"; exit}' "$(repo_apk_file)" 2>/dev/null)
+    printf '%s\n' "${base:-https://dl-cdn.alpinelinux.org/alpine}"
+}
+
+repo_apk_release() {
+    local rel="" relfile
+    relfile=$(repo_native_file SYSTUI_ALPINE_RELEASE_FILE /etc/alpine-release)
+    if [ -r "$relfile" ]; then
+        rel=$(sed -n 's/^\([0-9]\{1,\}\.[0-9]\{1,\}\).*/v\1/p' "$relfile" 2>/dev/null)
+    fi
+    if [ -z "$rel" ]; then
+        rel=$(awk -F'/alpine/' '/\/alpine\//{print $2; exit}' "$(repo_apk_file)" 2>/dev/null)
+    fi
+    case "$rel" in
+        v[0-9]*) : ;;
+        edge)    : ;;
+        *)       rel=edge ;;
+    esac
+    printf '%s\n' "$rel"
+}
+
+repo_apk_has() { # <path fragment> e.g. v3.21/community
+    awk -v f="$1" '$0 !~ /^#/ && index($0, f) { found = 1 } END { exit !found }' \
+        "$(repo_apk_file)" 2>/dev/null
+}
+
+repo_apk_write() { # <release> <component ...>
+    local rel="$1" base c body=""
+    shift
+    base=$(repo_apk_mirror)
+    for c in "$@"; do
+        case "$c" in
+            main)           body="$body$base/$rel/main
+" ;;
+            community)      body="$body$base/$rel/community
+" ;;
+            testing)        body="$body$base/edge/testing
+" ;;
+            edge-main)      body="$body$base/edge/main
+" ;;
+            edge-community) body="$body$base/edge/community
+" ;;
+        esac
+    done
+    body=${body%$'\n'}
+    [ -n "$body" ] || { warn "repo: no apk component selected"; return 1; }
+    repo_write_block "$(repo_apk_file)" "$body"
+}
+
+menu_distro_repos_apk() {
+    local rel base sel chosen=() c
+    repo_host_vars
+    rel=$(repo_apk_release)
+    base=$(repo_apk_mirror)
+    while true; do
+        sel=$(tui_check "Distro Repos — Alpine Linux" \
+            "Mirror: $base\nRelease: $rel\n\nSPACE toggles the components written to /etc/apk/repositories." \
+            main           "main — the release's core packages" \
+            "$(repo_apk_has "$rel/main" && echo on || echo off)" \
+            community      "community — the release's community packages" \
+            "$(repo_apk_has "$rel/community" && echo on || echo off)" \
+            testing        "edge/testing — newest, needs @testing pins" \
+            "$(repo_apk_has edge/testing && echo on || echo off)" \
+            edge-main      "edge/main — rolling core packages" \
+            "$(repo_apk_has edge/main && echo on || echo off)" \
+            edge-community "edge/community — rolling community packages" \
+            "$(repo_apk_has edge/community && echo on || echo off)") || return 0
+        sel=${sel//\"/}
+        [ -n "${sel// }" ] || { tui_msg "Distro Repos" "Select at least one component."; continue; }
+
+        local want_rel
+        want_rel=$(tui_input "Alpine release" \
+            "Release branch (for example v3.21, or edge).\nMirror: $base" "$rel") || return 0
+        [ -n "$want_rel" ] && rel=$want_rel
+        repo_apk_write "$rel" $sel || { tui_msg "Distro Repos" "Could not write $(repo_apk_file). See $LOGFILE."; return 1; }
+        break
+    done
+    local summary="Updated $(repo_apk_file):"
+    for c in $sel; do summary="$summary\n  • $c"; done
+    summary="$summary\n\nBase: $base/$rel"
+    tui_msg "Distro Repos — Alpine" "$summary"
+    run_cmd "apk update" apk update
+}
+
+# ---- Arch Linux (pacman) ----------------------------------------------------
+repo_pacman_conf() { repo_native_file SYSTUI_PACMAN_CONF /etc/pacman.conf; }
+
+repo_pacman_active() { # <section>
+    awk -v n="$1" '$0 == "[" n "]" { f = 1 } END { exit !f }' "$(repo_pacman_conf)" 2>/dev/null
+}
+
+# Enable/disable a section in pacman.conf. pacman rejects two sections with the
+# same name, so this edits in place (uncomment / comment) instead of appending.
+repo_pacman_set() { # <section> <on|off>
+    local name="$1" want="$2" conf tmp
+    conf=$(repo_pacman_conf)
+    [ -f "$conf" ] || { warn "repo: $conf is missing"; return 1; }
+    tmp=$(mktemp 2>/dev/null) || return 1
+    awk -v n="$name" -v want="$want" '
+        BEGIN { insec = 0 }
+        {
+            line = $0
+            if (line ~ /^#?\[[^]]+\][[:space:]]*$/) {
+                if (line == "[" n "]" || line == "#[" n "]") {
+                    insec = 1
+                    if (want == "on" && line == "#[" n "]") line = "[" n "]"
+                    if (want == "off" && line == "[" n "]") line = "#[" n "]"
+                } else {
+                    insec = 0
+                }
+                print line
+                next
+            }
+            if (insec && line ~ /^#?[[:space:]]*(Include|Server|SigLevel|CacheServer|XferCommand)[[:space:]]*=/) {
+                if (want == "on") sub(/^#[[:space:]]*/, "", line)
+                else if (line !~ /^#/) line = "#" line
+                print line
+                next
+            }
+            if (line ~ /^[[:space:]]*$/) insec = 0
+            print line
+        }
+    ' "$conf" > "$tmp" || { rm -f "$tmp"; return 1; }
+    cat "$tmp" > "$conf" && rm -f "$tmp"
+    log "repo: pacman section [$name] -> $want"
+}
+
+menu_distro_repos_pacman() {
+    local conf sel s args=()
+    conf=$(repo_pacman_conf)
+    for s in core extra multilib testing staging multilib-testing; do
+        args+=("$s" "[$s]" "$(repo_pacman_active "$s" && echo on || echo off)")
+    done
+    sel=$(tui_check "Distro Repos — Arch Linux" \
+        "Editing $conf\n\nSPACE toggles sections. Official mirrors come from\n/etc/pacman.d/mirrorlist, so no URL is written here." "${args[@]}") || return 0
+    sel=${sel//\"/}
+    local changed=0
+    for s in core extra multilib testing staging multilib-testing; do
+        case " $sel " in
+            *" $s "*) repo_pacman_set "$s" on && changed=1 ;;
+            *)        repo_pacman_set "$s" off && changed=1 ;;
+        esac
+    done
+    [ "$changed" -eq 1 ] || { tui_msg "Distro Repos" "Nothing to change."; return 0; }
+    tui_msg "Distro Repos — Arch Linux" "Updated $conf\n\nEnabled: $(printf '%s' "${sel:-none}")"
+    run_cmd "pacman -Syy" pacman -Syy
+}
+
+# ---- Fedora / RHEL family (dnf) ---------------------------------------------
+menu_distro_repos_dnf() {
+    local rows sel id state args=() changed=""
+    command -v dnf >/dev/null 2>&1 || { tui_msg "Distro Repos" "dnf is not installed."; return 0; }
+    rows=$(dnf --quiet repolist --all 2>/dev/null | awk 'NF>1 && $1 !~ /^(repo|Last|Repo)/ { st=""; for (i=2;i<=NF;i++) if ($i=="enabled"||$i=="disabled") st=$i; if (st!="") print $1" "st }')
+    [ -n "$rows" ] || { tui_msg "Distro Repos" "dnf listed no repositories."; return 0; }
+    while read -r id state; do
+        [ -n "$id" ] || continue
+        args+=("$id" "$id" "$([ "$state" = enabled ] && echo on || echo off)")
+    done <<<"$rows"
+    sel=$(tui_check "Distro Repos — dnf" \
+        "SPACE toggles official repositories; ENTER applies.\nDisabled ones are still listed by 'dnf repolist --all'." "${args[@]}") || return 0
+    sel=${sel//\"/}
+    local enable=() disable=()
+    while read -r id state; do
+        [ -n "$id" ] || continue
+        case " $sel " in
+            *" $id "*) [ "$state" = enabled ] || enable+=("$id") ;;
+            *)         [ "$state" = disabled ] || disable+=("$id") ;;
+        esac
+    done <<<"$rows"
+    if [ ${#enable[@]} -gt 0 ]; then
+        run_cmd "dnf config-manager --set-enabled" dnf config-manager --set-enabled "${enable[@]}" && changed=1
+    fi
+    if [ ${#disable[@]} -gt 0 ]; then
+        run_cmd "dnf config-manager --set-disabled" dnf config-manager --set-disabled "${disable[@]}" && changed=1
+    fi
+    [ -n "$changed" ] || { tui_msg "Distro Repos" "Nothing to change."; return 0; }
+    run_cmd "dnf makecache" dnf makecache
+}
+
+# ---- openSUSE (zypper) ------------------------------------------------------
+menu_distro_repos_zypper() {
+    local rows sel alias state args=() enable=() disable=()
+    command -v zypper >/dev/null 2>&1 || { tui_msg "Distro Repos" "zypper is not installed."; return 0; }
+    rows=$(zypper --non-interactive repos 2>/dev/null | awk -F'|' '
+        NF >= 4 && $2 !~ /Alias/ { gsub(/^[ \t]+|[ \t]+$/, "", $2); gsub(/^[ \t]+|[ \t]+$/, "", $4);
+        if ($2 != "") print $2" "$4 }')
+    [ -n "$rows" ] || { tui_msg "Distro Repos" "zypper listed no repositories."; return 0; }
+    while read -r alias state; do
+        [ -n "$alias" ] || continue
+        args+=("$alias" "$alias" "$(case "$state" in Yes|yes|on) echo on ;; *) echo off ;; esac)")
+    done <<<"$rows"
+    sel=$(tui_check "Distro Repos — openSUSE" \
+        "SPACE toggles repositories; ENTER applies.\nDisabled ones stay configured and can be re-enabled here." "${args[@]}") || return 0
+    sel=${sel//\"/}
+    while read -r alias state; do
+        [ -n "$alias" ] || continue
+        case "$state" in Yes|yes|on) on=1 ;; *) on=0 ;; esac
+        case " $sel " in
+            *" $alias "*) [ "$on" -eq 1 ] || enable+=("$alias") ;;
+            *)            [ "$on" -eq 0 ] || disable+=("$alias") ;;
+        esac
+    done <<<"$rows"
+    if [ ${#enable[@]} -gt 0 ]; then
+        run_cmd "zypper modifyrepo --enable" zypper --non-interactive modifyrepo --enable "${enable[@]}"
+    fi
+    if [ ${#disable[@]} -gt 0 ]; then
+        run_cmd "zypper modifyrepo --disable" zypper --non-interactive modifyrepo --disable "${disable[@]}"
+    fi
+    run_cmd "zypper refresh" zypper --non-interactive refresh
+}
+
+# ---- Void Linux (xbps) ------------------------------------------------------
+repo_xbps_file() {
+    printf '%s\n' "$(repo_native_file SYSTUI_XBPS_CONF_DIR /etc/xbps.d)/00-systui-distro.conf"
+}
+
+repo_xbps_libc() {
+    if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
+        printf 'musl\n'
+    else
+        printf 'glibc\n'
+    fi
+}
+
+repo_xbps_write() { # <libc> <component ...>
+    local libc="$1" base c body=""
+    shift
+    case "$libc" in musl) base=https://repo-default.voidlinux.org/current/musl ;; *) base=https://repo-default.voidlinux.org/current ;; esac
+    for c in "$@"; do
+        case "$c" in
+            base)     body="$body
+repository=$base" ;;
+            nonfree)  body="$body
+repository=$base/nonfree" ;;
+            multilib) body="$body
+repository=$base/multilib" ;;
+        esac
+    done
+    body=${body#$'\n'}
+    [ -n "$body" ] || { warn "repo: no Void component selected"; return 1; }
+    repo_write_block "$(repo_xbps_file)" "$body"
+}
+
+repo_xbps_base() {
+    case "$1" in musl) printf '%s\n' "current/musl" ;; *) printf '%s\n' "current" ;; esac
+}
+
+repo_xbps_has() { # <fragment>
+    awk -v f="$1" '$0 !~ /^#/ && index($0, f) { found = 1 } END { exit !found }' "$(repo_xbps_file)" 2>/dev/null
+}
+
+menu_distro_repos_xbps() {
+    local libc sel
+    libc=$(repo_xbps_libc)
+    sel=$(tui_check "Distro Repos — Void Linux" \
+        "libc: $libc\n\nSPACE toggles repositories; ENTER writes $(repo_xbps_file)." \
+        base     "base — $(repo_xbps_base "$libc")" \
+        "$(repo_xbps_has "$(repo_xbps_base "$libc")")" \
+        nonfree  "nonfree — redistributable closed-source packages" \
+        "$(repo_xbps_has nonfree && echo on || echo off)" \
+        multilib "multilib — 32-bit libraries (x86 only)" \
+        "$(repo_xbps_has multilib && echo on || echo off)") || return 0
+    sel=${sel//\"/}
+    repo_xbps_write "$libc" $sel || { tui_msg "Distro Repos" "Could not write $(repo_xbps_file)."; return 1; }
+    tui_msg "Distro Repos — Void" "Updated $(repo_xbps_file)"
+    run_cmd "xbps-install -S" xbps-install -S
+}
+
+# ---- Gentoo (portage) -------------------------------------------------------
+repo_portage_conf() {
+    printf '%s\n' "$(repo_native_file SYSTUI_PORTAGE_REPOS_DIR /etc/portage/repos.conf)/systui-gentoo.conf"
+}
+
+repo_portage_write() { # <rsync|git>
+    local kind="$1" file uri
+    file=$(repo_portage_conf)
+    case "$kind" in
+        git) uri="https://github.com/gentoo-mirror/gentoo.git" ;;
+        *)   uri="rsync://rsync.gentoo.org/gentoo-portage" ;;
+    esac
+    mkdir -p "$(dirname "$file")" 2>/dev/null || return 1
+    [ "$(id -u)" -eq 0 ] || { warn "repo: $file needs root"; return 1; }
+    {
+        printf '# Managed by systui — Distro Repos (Gentoo).\n'
+        printf '[gentoo]\n'
+        printf 'location = /var/db/repos/gentoo\n'
+        printf 'sync-type = %s\n' "$( [ "$kind" = git ] && echo git || echo rsync )"
+        printf 'sync-uri = %s\n' "$uri"
+        printf 'auto-sync = yes\n'
+    } > "$file" || return 1
+    log "repo: wrote $file ($kind)"
+}
+
+menu_distro_repos_portage() {
+    local kind
+    kind=$(tui_radio "Distro Repos — Gentoo" "Portage sync method for /var/db/repos/gentoo:" \
+        rsync "rsync — official Gentoo mirror network (default)" on \
+        git   "git — github.com/gentoo-mirror/gentoo" off) || return 0
+    [ -n "$kind" ] || return 0
+    repo_portage_write "$kind" || { tui_msg "Distro Repos" "Could not write $(repo_portage_conf)."; return 1; }
+    tui_msg "Distro Repos — Gentoo" "Wrote $(repo_portage_conf)\nSync type: $kind"
+    run_cmd "emerge --sync" emerge --sync
+}
+
+# Host dispatch for the native branch. A host that reports a package manager we
+# do not model gets a plain message instead of a half-written config file.
+menu_distro_repos_native() {
+    case "$PM" in
+        apk)     menu_distro_repos_apk ;;
+        pacman)  menu_distro_repos_pacman ;;
+        dnf|yum) menu_distro_repos_dnf ;;
+        zypper)  menu_distro_repos_zypper ;;
+        xbps)    menu_distro_repos_xbps ;;
+        portage) menu_distro_repos_portage ;;
+        *)
+            tui_msg "Distro Repos" \
+                "No native repository writer for the '$PM' package manager.\n\nSupported: apt, apk, pacman, dnf, zypper, xbps, portage."
+            return 0 ;;
+    esac
+}
+
+# ---- Distro Repos: entry point ----------------------------------------------
+# Every supported host gets the same checklist-driven flow; what changes is the
+# file the answer is written to. APT hosts also get the cross-distribution
+# browser, which only makes sense there.
 menu_distro_repos() {
-    [ "$PM" = apt ] || {
-        tui_msg "APT required" "Distro Repos writes APT source entries to /etc/apt/sources.list.d.\nThe current package manager is '$PM'."
-        return 0
-    }
+    case "$PM" in
+        apt) menu_distro_repos_apt ;;
+        *)   menu_distro_repos_native ;;
+    esac
+}
+
+menu_distro_repos_apt() {
 
     local host_id="unknown" host_name="Unknown distribution"
     if [ -r /etc/os-release ]; then
@@ -1329,7 +1726,9 @@ repo_popular() {
                 chaotic     "Chaotic-AUR (prebuilt AUR packages)" off \
                 blackarch   "BlackArch (security research tools)" off \
                 cachyos     "CachyOS (performance-optimised packages)" off \
-                endeavouros "EndeavourOS (EndeavourOS packages)" off) || return 0
+                endeavouros "EndeavourOS (EndeavourOS packages)" off \
+                archlinuxcn "archlinuxcn (Chinese mirror, wide prebuilt set)" off \
+                arcolinux   "ArcoLinux (ArcoLinux packages)" off) || return 0
             sel=${sel//\"/}
             local t
             for t in $sel; do
@@ -1346,6 +1745,15 @@ repo_popular() {
                              'https://cdn-mirror.chaotic.cx/chaotic-aur/chaotic-mirrorlist.pkg.tar.zst'"
                         grep -q '^\[chaotic-aur\]' /etc/pacman.conf || \
                             printf '\n[chaotic-aur]\nInclude = /etc/pacman.d/chaotic-mirrorlist\n' >> /etc/pacman.conf ;;
+                    archlinuxcn)
+                        run_cmd "archlinuxcn keyring" bash -c \
+                            'pacman-key --lsign-key "farseerfc@archlinux.org" 2>/dev/null || pacman-key --recv-keys 664C383A3566A3481B942F6614CE17E9D8D3D1C5 --keyserver keyserver.ubuntu.com
+                             pacman-key --lsign-key 664C383A3566A3481B942F6614CE17E9D8D3D1C5 2>/dev/null || true'
+                        grep -q '^\[archlinuxcn\]' /etc/pacman.conf || \
+                            printf '\n[archlinuxcn]\nServer = https://repo.archlinuxcn.org/\$arch\n' >> /etc/pacman.conf ;;
+                    arcolinux)
+                        grep -q '^\[arcolinux_repo\]' /etc/pacman.conf || \
+                            printf '\n[arcolinux_repo]\nSigLevel = Required DatabaseOptional\nServer = https://mirror.albony.xyz/arcolinux/\$arch\n' >> /etc/pacman.conf ;;
                     blackarch)
                         run_cmd "BlackArch repo" bash -c \
                             'curl -O https://blackarch.org/strap.sh
@@ -1815,41 +2223,191 @@ EOF
     printf 'Installed %s signing-key file(s).\n' "$count"
 }
 
+# ---- Archive keyrings for the distros actually in use -----------------------
+# A sources.list entry for a distribution only works when that distribution's
+# archive keyring is installed; without it every apt-get update fails with
+# NO_PUBKEY. These helpers answer three questions: which distros do the written
+# sources reference, is the keyring such an entry needs present, and how do
+# already-written entries get the [signed-by=...] they were missing.
+
+repo_sources_dir() { printf '%s\n' "${SYSTUI_APT_SOURCES_DIR:-/etc/apt}"; }
+
+# The keyring file an official entry for <distro> must point at, if installed.
+repo_keyring_dir() { printf '%s\n' "${SYSTUI_KEYRING_DIR:-/usr/share/keyrings}"; }
+
+repo_keyring_file_for() { # <distro>
+    local f dir
+    dir=$(repo_keyring_dir)
+    case "$1" in
+        debian) set -- "$dir/debian-archive-keyring.gpg" ;;
+        devuan) set -- "$dir/devuan-archive-keyring.gpg" "$dir/devuan-keyring.gpg" ;;
+        ubuntu) set -- "$dir/ubuntu-archive-keyring.gpg" ;;
+        kali)   set -- "$dir/kali-archive-keyring.gpg" ;;
+        *)      set -- "$dir/systui-$1/archive-keyring.gpg" ;;
+    esac
+    for f in "$@"; do
+        [ -s "$f" ] && { printf '%s\n' "$f"; return 0; }
+    done
+    return 1
+}
+
+# Distribution a repository URL belongs to. Used to decide which keyring an
+# existing entry needs.
+repo_distro_for_apt_url() { # <url>
+    case "$1" in
+        *deb.debian.org/*|*ftp.debian.org/*|*security.debian.org/*) printf 'debian\n' ;;
+        *deb.devuan.org/*|*pkgmaster.devuan.org/*)                  printf 'devuan\n' ;;
+        *archive.ubuntu.com/*|*security.ubuntu.com/*|*ports.ubuntu.com/*) printf 'ubuntu\n' ;;
+        *http.kali.org/*|*kali.download/*)                          printf 'kali\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# Distros referenced by the APT sources on this system, de-duplicated. Sources
+# systui wrote are named systui-*; the main sources.list counts too, because a
+# hand-written Debian entry needs the same archive keyring.
+repo_referenced_distros() {
+    local dir f line url distro seen=""
+    dir=$(repo_sources_dir)
+    local -a files=("$dir/sources.list")
+    shopt -s nullglob
+    files+=("$dir"/sources.list.d/*.list "$dir"/sources.list.d/*.sources)
+    shopt -u nullglob
+    for f in ${files[@]+"${files[@]}"}; do
+        [ -f "$f" ] || continue
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                deb\ *|deb-src\ *) : ;;
+                *) continue ;;
+            esac
+            for url in $line; do
+                case "$url" in http://*|https://*|ftp://*) : ;; *) continue ;; esac
+                distro=$(repo_distro_for_apt_url "$url") || continue
+                case " $seen " in
+                    *" $distro "*) continue ;;
+                esac
+                seen="$seen $distro"
+                printf '%s\n' "$distro"
+            done
+        done < "$f"
+    done
+}
+
+# Add [signed-by=<keyring>] to official entries that lack it. An entry already
+# carrying signed-by keeps its own keyring, and only files systui wrote are
+# rewritten, so a hand-written pin is never touched.
+repo_repair_signed_by() { # [distro ...]
+    local wanted="$*" dir f tmp line url distro key changed total=0
+    dir=$(repo_sources_dir)
+    local -a files=()
+    shopt -s nullglob
+    files=("$dir"/sources.list.d/systui-*.list "$dir"/sources.list.d/systui-*.sources)
+    shopt -u nullglob
+    [ ${#files[@]} -gt 0 ] || return 1
+    for f in "${files[@]}"; do
+        [ -f "$f" ] || continue
+        tmp=$(mktemp 2>/dev/null) || continue
+        changed=0
+        while IFS= read -r line || [ -n "$line" ]; do
+            case "$line" in
+                deb\ *|deb-src\ *) : ;;
+                *) printf '%s\n' "$line"; continue ;;
+            esac
+            case "$line" in
+                *"[signed-by="*) printf '%s\n' "$line"; continue ;;
+            esac
+            url=$(printf '%s\n' "$line" | awk '{ for (i = 1; i <= NF; i++) if ($i ~ /:\/\//) { print $i; exit } }')
+            distro=$(repo_distro_for_apt_url "$url" 2>/dev/null) || distro=""
+            [ -n "$distro" ] || { printf '%s\n' "$line"; continue; }
+            if [ -n "$wanted" ]; then
+                case " $wanted " in
+                    *" $distro "*) : ;;
+                    *) printf '%s\n' "$line"; continue ;;
+                esac
+            fi
+            if key=$(repo_keyring_file_for "$distro"); then
+                printf '%s\n' "$line" | awk -v key="$key" '
+                    /^deb(-src)?[ \t]*\[[^]]*\]/ { sub(/\]/, " signed-by=" key "]"); print; next }
+                    { sub(/^deb(-src)?[ \t]+/, "&[signed-by=" key "] "); print }
+                '
+                changed=$((changed + 1))
+            else
+                printf '%s\n' "$line"
+            fi
+        done < "$f" > "$tmp"
+        if [ "$changed" -gt 0 ]; then
+            cat "$tmp" > "$f" && log "repo: added signed-by to $changed entr(y/ies) in $f"
+            total=$((total + changed))
+        fi
+        rm -f "$tmp"
+    done
+    [ "$total" -gt 0 ]
+}
+
+# Make sure the keyring an official <distro> entry needs is installed, pulling
+# it from the distribution's own repository when it is not.
+repo_ensure_distro_keyring() { # <distro> [quiet]
+    local distro="$1"
+    repo_keyring_file_for "$distro" >/dev/null && return 0
+    [ "${2:-}" = quiet ] || log "repo: $distro archive keyring missing, installing it"
+    install_official_distro_keyring "$distro" >>"${LOGFILE:-/dev/null}" 2>&1 || true
+    repo_keyring_file_for "$distro" >/dev/null
+}
+
+# Keyrings for the distributions this system actually pulls from. The list is
+# ordered by need: distros whose repositories are configured but whose keyring
+# is missing come first, pre-selected, because those are the entries that make
+# apt-get update fail with NO_PUBKEY. After an install the existing sources are
+# rewritten with the matching [signed-by=...] when they lacked it.
 apt_missing_keyrings_menu() {
-    [ "$PM" = apt ] || return 0
+    local args=() distro label state sel selected failed="" installed="" referenced="" why
+    local distros="debian devuan ubuntu kali alpine arch fedora opensuse tumbleweed gentoo void"
 
-    local args=() distro label state sel selected failed="" installed=""
-    local distros="debian devuan ubuntu alpine arch fedora kali opensuse tumbleweed gentoo void"
+    referenced=$(repo_referenced_distros 2>/dev/null | tr '\n' ' ')
+    referenced=" $referenced "
 
+    # Required first: referenced by a configured source and not installed.
     for distro in $distros; do
-        case "$distro" in
-            debian)     label="Debian" ;;
-            devuan)     label="Devuan" ;;
-            ubuntu)     label="Ubuntu" ;;
-            alpine)     label="Alpine Linux" ;;
-            arch)       label="Arch Linux" ;;
-            fedora)     label="Fedora" ;;
-            kali)       label="Kali Linux" ;;
-            opensuse)   label="openSUSE" ;;
-            tumbleweed) label="openSUSE Tumbleweed" ;;
-            gentoo)     label="Gentoo Linux" ;;
-            void)       label="Void Linux" ;;
+        case "$referenced" in
+            *" $distro "*) repo_keyring_file_for "$distro" >/dev/null && continue ;;
+            *) continue ;;
         esac
-        if keyring_is_installed "$distro"; then
-            state=on
-            args+=("$distro" "$label — installed (official repository download)" "$state")
+        label=$(distro_repo_label "$distro")
+        args+=("$distro" "$label — REQUIRED, a configured repository cannot be verified" on)
+    done
+    # Then referenced and present, for information.
+    for distro in $distros; do
+        case "$referenced" in
+            *" $distro "*) : ;;
+            *) continue ;;
+        esac
+        repo_keyring_file_for "$distro" >/dev/null || continue
+        label=$(distro_repo_label "$distro")
+        args+=("$distro" "$label — installed, used by a configured repository" on)
+    done
+    # Then everything else, so a rootfs target can be prepared in advance.
+    for distro in $distros; do
+        case "$referenced" in
+            *" $distro "*) continue ;;
+        esac
+        label=$(distro_repo_label "$distro")
+        if repo_keyring_file_for "$distro" >/dev/null; then
+            args+=("$distro" "$label — installed (not referenced by a source)" on)
         else
-            args+=("$distro" "$label — download from official repository" off)
+            args+=("$distro" "$label — download from the official repository" off)
         fi
     done
 
-    sel=$(tui_check "Rootfs Distribution Keyrings" \
-        "SPACE selects distributions. ENTER downloads keyring artifacts directly from each distribution's official repository.\n\nAPT installation is not used. Existing selections are refreshed when selected:" \
+    sel=$(tui_check "Signing keys — archive keyrings" \
+        "Keyrings are fetched from each distribution's own repository, never from a\nmirror or a third party. Entries required by a configured source are listed\nfirst and are already selected.\n\nSPACE toggles, ENTER installs." \
         "${args[@]}") || return 0
     selected=${sel//\"/}
     [ -n "${selected// }" ] || return 0
 
     for distro in $selected; do
+        if repo_keyring_file_for "$distro" >/dev/null; then
+            continue                    # already present: nothing to download
+        fi
         if run_cmd "Downloading official $distro keyring" install_official_distro_keyring "$distro"; then
             installed="$installed $distro"
         else
@@ -1857,10 +2415,23 @@ apt_missing_keyrings_menu() {
         fi
     done
 
-    [ -n "${installed// }" ] && tui_msg "Keyrings installed" \
-        "Downloaded directly from official distribution repositories:$installed\n\nSource URL and SHA-256 metadata are stored beside each installed keyring."
-    [ -n "${failed// }" ] && tui_msg "Keyring failures" \
-        "Could not install:$failed\n\nReview the log for network, architecture, extraction-tool, or upstream repository errors."
+    # Newly available keyrings make the existing official entries verifiable.
+    if [ -n "$installed" ] && repo_repair_signed_by $installed; then
+        why=" Existing sources for $installed now carry [signed-by=...]."
+    else
+        why=""
+    fi
+
+    if [ -n "${installed// }" ]; then
+        tui_msg "Keyrings installed" \
+            "Fetched from the official distribution repositories:$installed$why\n\nSource URL and SHA-256 metadata are stored beside each installed keyring."
+    elif [ -z "${failed// }" ]; then
+        tui_msg "Keyrings" "Every selected keyring was already installed. Nothing to download."
+    fi
+    if [ -n "${failed// }" ]; then
+        tui_msg "Keyring failures" \
+            "Could not install:$failed\n\nReview the log for network, architecture, extraction-tool or upstream repository errors."
+    fi
 }
 
 
@@ -1889,7 +2460,22 @@ libreoffice/ppa|LibreOffice|desktop
 phoerious/keepassxc|KeePassXC|security
 deki/firejail|Firejail sandbox|security
 appimagelauncher-team/stable|AppImageLauncher|desktop
-danielrichter2007/grub-customizer|GRUB Customizer|desktop"
+danielrichter2007/grub-customizer|GRUB Customizer|desktop
+ondrej/nginx|nginx (current mainline, ondrej)|infra
+kicad/kicad-9.0-releases|KiCad 9 (EDA suite)|dev
+ubuntu-toolchain-r/ppa|Ubuntu toolchain (stable GCC updates)|dev
+longsleep/golang-backports|Go (backports for LTS releases)|dev
+ubuntugis/ubuntugis-unstable|GDAL, PostGIS and GIS tooling|dev
+nilarimogard/webupd8|WebUpd8 app picks|desktop
+papirus/papirus|Papirus icon theme|desktop
+numix/ppa|Numix icon and GTK themes|desktop
+system76-dev/stable|System76 drivers and firmware|desktop
+teejee2008/timeshift|Timeshift (system snapshots)|desktop
+linuxuprising/apps|CPU-X and other Linux Uprising apps|desktop
+atareao/atareao|Desktop utilities (atareao)|desktop
+nextcloud-devs/client|Nextcloud desktop client|desktop
+otto-kesselgulasch/gimp|GIMP (newer than the archive)|desktop
+ubuntu-mozilla-security/ppa|Mozilla security updates|security"
 
 ppa_normalize() {
     local p="$1"
@@ -1983,7 +2569,28 @@ ppa_parse_listing() { # <html on stdin>
             d = trim(d)
             if (d != "" && d !~ /^<\/?(table|tbody|th|tr)/) { if (desc == "") desc = d; else desc = desc " " d }
         }
-    ' | awk -F'\t' '!seen[$1]++ { printf "%s\t%s\t%s\t%s\n", $1, $2, substr($3, 1, 110), $4 }'
+    ' | awk -F'\t' '
+        {
+            # Launchpad escapes the display name and description as HTML.
+            gsub(/&amp;/, "\\&"); gsub(/&quot;/, "\""); gsub(/&#39;/, "\047")
+            gsub(/&lt;/, "<"); gsub(/&gt;/, ">"); gsub(/&nbsp;/, " ")
+            if ($1 in seen) next
+            seen[$1] = 1
+            n++
+            row[n] = sprintf("%s\t%s\t%s\t%s", $1, $2, substr($3, 1, 110), $4)
+            pop[n] = $4 + 0
+        }
+        END {
+            # The listing arrives alphabetically; the binary count is the only
+            # popularity signal Launchpad publishes, so rank on it.
+            for (i = 1; i <= n; i++)
+                for (j = i + 1; j <= n; j++)
+                    if (pop[j] > pop[i]) {
+                        t = pop[i]; pop[i] = pop[j]; pop[j] = t
+                        t = row[i]; row[i] = row[j]; row[j] = t
+                    }
+            for (i = 1; i <= n; i++) print row[i]
+        }'
 }
 
 # Search Launchpad for PPAs. Results are cached for a day: the listing is a web
@@ -2076,36 +2683,76 @@ ppa_add_selected() { # <owner/archive ...>
 
 # Space-select from the curated list. Already-configured PPAs are shown but
 # never re-added, so the list doubles as a status view.
+# Space-select from the curated list. The catalogue is grouped by category, so
+# a phone-sized terminal gets a short category list first instead of 37 rows.
+# Already-configured PPAs are shown but never re-added, so the list doubles as
+# a status view.
 ppa_menu_catalogue() {
-    local args=() line spec desc cat pre
+    local args=() line spec desc cat pre c k seen="" chosen
+    local cats=() cargs=() selected=() toadd=()
     while IFS='|' read -r spec desc cat; do
         [ -z "$spec" ] && continue
-        pre=off
-        if ppa_is_configured "$spec"; then
-            desc="$desc  [added]"
-            pre=on
-        fi
-        args+=("$spec" "[$(ppa_category_label "$cat")] $desc" "$pre")
+        case " $seen " in *" $cat "*) continue ;; esac
+        seen="$seen $cat"
+        cats+=("$cat")
     done <<<"$PPA_CATALOGUE"
-    local sel
-    sel=$(tui_check "PPAs — popular list" \
-        "SPACE toggles a PPA, ENTER adds every selected one.\nAlready-configured entries are marked [added] and are skipped." \
-        "${args[@]}") || return 0
-    sel=${sel//\"/}
-    [ -n "${sel// }" ] || return 0
-    local todo=()
-    for spec in $sel; do
-        ppa_is_configured "$spec" && continue
-        todo+=("$spec")
+    for c in "${cats[@]}"; do
+        k=0
+        while IFS='|' read -r spec _d cat; do
+            [ "$cat" = "$c" ] && k=$((k + 1))
+        done <<<"$PPA_CATALOGUE"
+        cargs+=("$c" "$(ppa_category_label "$c") — $k PPAs" off)
     done
-    if [ ${#todo[@]} -eq 0 ]; then
+    cargs+=(all "All PPAs — one flat list" off)
+
+    chosen=$(tui_check "PPAs — popular list" \
+        "SPACE picks a category, ENTER lists its PPAs.\n'All' shows the whole catalogue in one list." \
+        "${cargs[@]}") || return 0
+    chosen=${chosen//\"/}
+    [ -n "${chosen// }" ] || return 0
+
+    local groups=()
+    case " $chosen " in
+        *" all "*) groups=(all) ;;
+        *)         groups=($chosen) ;;
+    esac
+
+    local g
+    for g in "${groups[@]}"; do
+        args=()
+        while IFS='|' read -r spec desc cat; do
+            [ -z "$spec" ] && continue
+            [ "$g" = all ] || [ "$cat" = "$g" ] || continue
+            pre=off
+            if ppa_is_configured "$spec"; then
+                desc="$desc  [added]"
+                pre=on
+            fi
+            args+=("$spec" "[$(ppa_category_label "$cat")] $desc" "$pre")
+        done <<<"$PPA_CATALOGUE"
+        [ ${#args[@]} -gt 0 ] || continue
+        local sel
+        sel=$(tui_check "PPAs — $( [ "$g" = all ] && echo all categories || ppa_category_label "$g")" \
+            "SPACE toggles a PPA, ENTER adds every selected one.\nAlready-configured entries are marked [added] and are skipped." \
+            "${args[@]}") || continue
+        sel=${sel//\"/}
+        [ -n "${sel// }" ] || continue
+        for spec in $sel; do selected+=("$spec"); done
+    done
+
+    [ ${#selected[@]} -gt 0 ] || return 0
+    for spec in "${selected[@]}"; do
+        ppa_is_configured "$spec" && continue
+        toadd+=("$spec")
+    done
+    if [ ${#toadd[@]} -eq 0 ]; then
         tui_msg "Nothing to add" "Every selected PPA is already configured."
         return 0
     fi
     local summary="PPAs to add:" s
-    for s in "${todo[@]}"; do summary="$summary\n  • ppa:$s"; done
-    tui_yesno "Add $((${#todo[@]})) PPA(s)" "$summary" || return 0
-    ppa_add_selected "${todo[@]}"
+    for s in "${toadd[@]}"; do summary="$summary\n  • ppa:$s"; done
+    tui_yesno "Add $((${#toadd[@]})) PPA(s)" "$summary" || return 0
+    ppa_add_selected "${toadd[@]}"
     tui_wait 2>/dev/null || true
 }
 

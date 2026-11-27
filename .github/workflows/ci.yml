@@ -172,6 +172,9 @@ jobs:
             bash tests/test-bedrock-aok-strata-fallbacks.sh
             bash tests/test-bedrock-aok-direct-resolver.sh
             bash tests/test-homebrew-path-integration.sh
+            bash tests/test-native-distro-repos.sh
+            bash tests/test-distro-keyrings.sh
+            bash tests/test-repos-alternatives-final.sh
             [ ! -f tests/test-rootfs-final-hardening.sh ] || bash tests/test-rootfs-final-hardening.sh
           '
 

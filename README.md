@@ -696,31 +696,71 @@ APT repository management covers `/etc/apt/sources.list` and
 `/etc/apt/sources.list.d/`. Three add paths sit behind
 *Repositories* → sources:
 
-- **Distro Repos** writes official repositories for Debian, Devuan, Ubuntu and
-  Kali as isolated `systui-distro-<distro>-<release>.list` files, after a
-  SPACE-to-select pass over release, components, pockets/suites and package
-  types (`deb`, `deb-src`). Cross-distribution entries are allowed but ask
-  first. Each generated line carries `[signed-by=...]` when the matching archive
-  keyring is installed.
+- **Distro Repos** writes the *official* repositories in the format the host
+  actually uses, so it is no longer an APT-only feature:
+  - APT (Debian, Devuan, Ubuntu, Kali) — isolated
+    `systui-distro-<distro>-<release>.list` files, after a SPACE-to-select pass
+    over release, components, pockets/suites and package types (`deb`,
+    `deb-src`). Cross-distribution entries are allowed but ask first. Each line
+    carries `[signed-by=...]` when the matching archive keyring is installed.
+  - Alpine (`apk`) — a managed block in `/etc/apk/repositories` for
+    `main`/`community` on the host's own branch plus `edge/testing`,
+    `edge/main`, `edge/community` when asked for. The mirror already configured
+    is reused instead of being replaced.
+  - Arch (`pacman`) — sections in `/etc/pacman.conf` are enabled by
+    uncommenting them and disabled by commenting them, never appended: pacman
+    refuses two sections with the same name.
+  - Fedora/RHEL (`dnf`) — official repo IDs are toggled through
+    `dnf config-manager --set-enabled/--set-disabled`, so nothing is duplicated
+    in `/etc/yum.repos.d`.
+  - openSUSE (`zypper`) — repos toggled with `zypper modifyrepo --enable/--disable`.
+  - Void (`xbps`) — a drop-in `/etc/xbps.d/00-systui-distro.conf` for
+    `base`, `nonfree` and `multilib` on the libc the host runs.
+  - Gentoo (`portage`) — `/etc/portage/repos.conf/systui-gentoo.conf` with an
+    rsync or git sync-uri for `[gentoo]`.
+
+  Managed blocks are rewritten wholesale between `# >>> systui distro repos >>>`
+  markers, so re-running an option never stacks entries and hand-written lines
+  elsewhere in the file are left alone.
 - **Popular repositories** is a category-first checklist (development,
-  infrastructure, databases, browsers, desktop, media, cloud) over 35 curated
+  infrastructure, databases, browsers, desktop, media, cloud) over 40 curated
   third-party repositories — Docker, VS Code, nginx, PostgreSQL, MariaDB/MySQL,
   MongoDB, Redis, NodeSource, Sury PHP, Kubernetes, Grafana, Jellyfin,
-  Tailscale, ZeroTier, Steam, Wine, and more. Keys are downloaded to
-  `/etc/apt/keyrings/systui-<name>.gpg`, validated, and the entry is written to
-  `/etc/apt/sources.list.d/systui-<name>.list`; a repository whose key cannot be
-  fetched is skipped rather than written unsigned.
-- **PPAs** (Ubuntu-family) is SPACE-to-select: a curated list of 22 well-known
-  Launchpad archives, plus *Search Launchpad* which parses
-  `launchpad.net/ubuntu/+ppas?name_filter=…` (cached for a day), lists up to 40
-  matches with their descriptions and package counts, and adds every selected
-  PPA in one pass. `add-apt-repository` is used when present; otherwise the
-  sources entry and the signing key (fetched by fingerprint from
+  Tailscale, ZeroTier, Steam, Wine, GitLab CE, Temurin JDK, LibreWolf, Microsoft
+  Edge and more. Keys are downloaded to
+  `/etc/apt/keyrings/systui-<name>.gpg`, validated, and the entry is
+  written to `/etc/apt/sources.list.d/systui-<name>.list`; a repository whose key
+  cannot be fetched is skipped rather than written unsigned. The same menu has
+  native lists for `dnf`, `zypper`, `pacman` (multilib, Chaotic-AUR, BlackArch,
+  CachyOS, EndeavourOS, archlinuxcn, ArcoLinux) and `apk`.
+- **PPAs** (Ubuntu-family) is SPACE-to-select and grouped by category
+  (development, servers & networking, browsers, desktop & drivers, media &
+  gaming, security) over 37 well-known Launchpad archives, with an *All* entry
+  for one flat list. *Search Launchpad* parses
+  `launchpad.net/ubuntu/+ppas?name_filter=…` (cached for a day), decodes the
+  HTML entities Launchpad emits, ranks matches by their published binary count
+  (its only popularity signal), lists up to 40, and adds every selected PPA in
+  one pass. `add-apt-repository` is used when present; otherwise the sources
+  entry and the signing key (fetched by fingerprint from
   `keyserver.ubuntu.com`) are written directly, so PPAs also work without
   `software-properties-common`.
 
-The signing-key menu can install available Debian, Ubuntu, Devuan and Kali
-archive keyrings using a SPACE-to-select checklist.
+*Signing keys* is requirement-driven rather than a flat list of distros. It
+reads the sources actually configured on the machine
+(`/etc/apt/sources.list`, `/etc/apt/sources.list.d/*.list`, `*.sources`), maps
+each official URL to its distribution, and lists **REQUIRED** first,
+pre-selected — those are the entries whose missing keyring makes
+`apt-get update` fail with `NO_PUBKEY`. Everything else stays available for
+preparing a future repository. Keyrings are fetched from the distribution's own
+repository (never a mirror or third party) and their URL plus SHA-256 are
+recorded next to the keyring. After an install, existing systui-written entries
+gain the matching `[signed-by=...]`, merging into an option group they already
+have (`[arch=amd64]` becomes `[arch=amd64 signed-by=...]`) instead of adding a
+second bracket group; entries that already pin a keyring and hand-written files
+are left untouched. `Distro Repos` runs the same check before writing a file:
+if the archive keyring is missing it is installed first, and an entry is never
+written unverifiable. A *status* entry in the same menu prints, per distro,
+whether the keyring your sources need is present.
 
 System Configuration > Shells separates Managers from Plugins. The manager list
 contains **every shell systui knows** — Bash, Zsh, Fish, Nushell, POSIX sh

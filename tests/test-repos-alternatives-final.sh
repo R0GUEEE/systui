@@ -116,10 +116,16 @@ writer="$tmpdir/writer.sh"
 {
     printf '#!/usr/bin/env bash\n'
     preamble | sed "s#<TMP>#$tmpdir#g"
-    extract distro_repo_label distro_repo_key_option distro_repo_write_apt | sed "s#/etc/apt/sources.list.d#$tmpdir/apt#g"
+    extract distro_repo_label distro_repo_key_option distro_repo_write_apt \
+        repo_keyring_dir repo_keyring_file_for repo_ensure_distro_keyring \
+        | sed "s#/etc/apt/sources.list.d#$tmpdir/apt#g"
 } > "$writer"
 bash -n "$writer"
-mkdir -p "$tmpdir/apt"
+mkdir -p "$tmpdir/apt" "$tmpdir/keyrings"
+# The writer refuses to emit an official entry whose archive keyring is
+# missing; give it stub keyrings so it can write, and pin the search path.
+export SYSTUI_KEYRING_DIR="$tmpdir/keyrings"
+for k in debian devuan ubuntu kali; do printf 'PGP\n' > "$SYSTUI_KEYRING_DIR/$k-archive-keyring.gpg"; done
 
 bash -c '. "$1"; distro_repo_write_apt debian trixie "main contrib" "base updates security backports" "deb" >/dev/null' _ "$writer"
 deb_file="$tmpdir/apt/systui-distro-debian-trixie.list"
@@ -133,6 +139,12 @@ bash -c '. "$1"; distro_repo_write_apt ubuntu noble "main universe" "base update
 ub_file="$tmpdir/apt/systui-distro-ubuntu-noble.list"
 check "ubuntu repo has three pockets"      test "$(count_of "$ub_file" '^deb ')" = 3
 check "ubuntu base line is complete"       contains "$ub_file" 'noble main universe'
+
+# Without the archive keyring the entry would be unverifiable, so nothing is
+# written: apt-get update would only fail later with NO_PUBKEY.
+mkdir -p "$tmpdir/keyrings-empty"
+SYSTUI_KEYRING_DIR="$tmpdir/keyrings-empty" bash -c '. "$1"; ! distro_repo_write_apt devuan daedalus "main" "base" "deb" >/dev/null' _ "$writer"
+check "unverifiable entry is not written"  test ! -f "$tmpdir/apt/systui-distro-devuan-daedalus.list"
 
 bash -c '. "$1"; distro_repo_write_apt kali kali-rolling "main" "base" "deb deb-src" >/dev/null' _ "$writer"
 kali_file="$tmpdir/apt/systui-distro-kali-kali-rolling.list"
@@ -194,6 +206,10 @@ badshape=$(bash -c '. "$1"; printf "%s\n" "$PPA_CATALOGUE"' _ "$ppa" |
 check "PPA specs are owner/archive"          test "$badshape" = 0
 
 ppacount=$(bash -c '. "$1"; printf "%s\n" "$PPA_CATALOGUE" | grep -c .' _ "$ppa")
+check "PPA catalogue stays curated" \
+    bash -c '. "$1"; n=$(printf "%s\n" "$PPA_CATALOGUE" | wc -l); [ "$n" -ge 30 ]' _ "$ppa"
+check "PPA menu groups the catalogue by category"  contains "$SYSCONFIG" "SPACE picks a category, ENTER lists its PPAs"
+check "PPA menu keeps a flat all-entries view"     contains "$SYSCONFIG" "All PPAs — one flat list"
 check "PPA list is populated"                test "$ppacount" -ge 20
 
 check "ppa: prefix normalizes"               bash -c '. "$1"; [ "$(ppa_normalize "ppa:deadsnakes/ppa")" = "ppa:deadsnakes/ppa" ]' _ "$ppa"
@@ -226,15 +242,26 @@ Homepage: https://neo...</td>
   <td>4</td>
   <td>4</td>
 </tr>
+
+          <tr class="ppa_batch_row">
+  <td><a href="/~big-owner/+archive/ubuntu/big">Kernels &amp; Drivers</a></td>
+  <td>Popular &quot;everything&quot; archive</td>
+  <td>900</td>
+  <td>1200</td>
+</tr>
 </tbody></table>
 HTML
 parsed=$(bash -c '. "$1"; ppa_parse_listing < "$2"' _ "$ppa" "$tmpdir/listing.html")
-check "parser finds both rows"               test "$(printf '%s\n' "$parsed" | wc -l)" = 2
-check "parser extracts owner/archive"        bash -c 'printf %s "$1" | head -1 | grep -q "^neovim-ppa/stable"' _ "$parsed"
-check "parser keeps the display name"        bash -c 'printf %s "$1" | head -1 | grep -q "Neovim Stable"' _ "$parsed"
-check "parser joins a multi-line description" bash -c 'printf %s "$1" | head -1 | grep -q "Homepage"' _ "$parsed"
-check "parser records the package count"     bash -c 'printf %s "$1" | head -1 | awk -F"\t" "{exit !(\$4==98)}"' _ "$parsed"
+check "parser finds every row"               test "$(printf '%s\n' "$parsed" | wc -l)" = 3
+check "parser ranks the biggest PPA first"   bash -c 'printf %s "$1" | head -1 | grep -q "^big-owner/big"' _ "$parsed"
+check "parser decodes HTML entities"         bash -c 'printf %s "$1" | head -1 | grep -q "Kernels & Drivers"' _ "$parsed"
+check "parser decodes quoted descriptions"   bash -c 'printf %s "$1" | head -1 | grep -q "Popular \"everything\" archive"' _ "$parsed"
+check "parser extracts owner/archive"        bash -c 'printf %s "$1" | sed -n 2p | grep -q "^neovim-ppa/stable"' _ "$parsed"
+check "parser keeps the display name"        bash -c 'printf %s "$1" | sed -n 2p | grep -q "Neovim Stable"' _ "$parsed"
+check "parser joins a multi-line description" bash -c 'printf %s "$1" | sed -n 2p | grep -q "Homepage"' _ "$parsed"
+check "parser records the package count"     bash -c 'printf %s "$1" | sed -n 2p | awk -F"\t" "{exit !(\$4==98)}"' _ "$parsed"
 check "parser leaves no HTML behind"         bash -c '! printf %s "$1" | grep -q "</td>"' _ "$parsed"
+check "parser drops nothing on ties or dups"  bash -c 'printf %s "$1" | cut -f1 | sort -u | wc -l | grep -qx 3' _ "$parsed"
 
 # --- add flow ---------------------------------------------------------------
 addfns="$tmpdir/add.sh"
