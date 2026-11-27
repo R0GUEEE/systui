@@ -39,9 +39,13 @@ jobs:
           paths=glob.glob('out/rootfs.tar.*')
           assert len(paths)==1, f'expected one archive, found {paths}'
           with tarfile.open(paths[0], 'r:*') as t:
-              names={m.name.lstrip('./').split('/')[0] for m in t.getmembers() if m.name.lstrip('./')}
+              members=t.getmembers()
+              paths_in_archive={m.name.removeprefix('./').lstrip('/') for m in members}
+              names={p.split('/')[0] for p in paths_in_archive if p}
           required={'etc','bin','usr'}
           assert required <= names, f'missing root directories: {required-names}'
+          assert 'etc/systui-rootfs.json' in paths_in_archive, 'embedded recipe metadata missing'
+          assert '.dockerenv' not in paths_in_archive, 'Docker container marker leaked into rootfs'
           print(paths[0], 'entries validated:', ', '.join(sorted(names)))
           PY
       - uses: actions/upload-artifact@v4

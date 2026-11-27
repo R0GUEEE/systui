@@ -159,6 +159,7 @@ def configure_rootfs(distro, init, hostname, timezone, dns, locale, user, user_s
         'mkdir -p /etc/default; printf "%s\\n" "LANG=$SYSTUI_LOCALE" > /etc/default/locale',
         'mkdir -p /etc/profile.d; printf "export LANG=%s\\n" "$SYSTUI_LOCALE" > /etc/profile.d/90-systui-locale.sh; chmod 644 /etc/profile.d/90-systui-locale.sh',
         'printf "%s\\n" "Root filesystem built by Systui Rootfs." > /etc/motd',
+        'rm -f /.dockerenv /run/.containerenv',
         'printf "127.0.0.1\\tlocalhost\\n127.0.1.1\\t%s\\n::1\\tlocalhost ip6-localhost\\n" "$SYSTUI_HOSTNAME" > /etc/hosts',
         'if [ -e "/usr/share/zoneinfo/$SYSTUI_TZ" ]; then ln -snf "/usr/share/zoneinfo/$SYSTUI_TZ" /etc/localtime; fi',
     ]
