@@ -3382,6 +3382,38 @@ brew_path_prefix() {
     return 1
 }
 
+# Where the mirror helper remembers whether Homebrew outranks a distribution
+# command of the same name.
+brew_path_conf() { printf '%s\n' /etc/systui/brew-path.conf; }
+
+# Human-readable resolution policy: 'brew' wins, or the system keeps priority.
+brew_path_policy() {
+    local v
+    v=$(sed -n 's/^PREFER_BREW=//p' "$(brew_path_conf)" 2>/dev/null | tail -n 1)
+    case "$v" in
+        1|yes|true|on) printf 'brew\n' ;;
+        0|no|false|off) printf 'system\n' ;;
+        *) printf 'system\n' ;;
+    esac
+}
+
+# Persist the policy and re-mirror, so the change takes effect in shells that
+# are already open instead of waiting for the next login.
+brew_set_path_policy() { # <brew|system>
+    local flag=0 want=brew
+    [ "$1" = brew ] && flag=1
+    mkdir -p /etc/systui 2>/dev/null || true
+    {
+        printf '# systui — Homebrew PATH policy, read by systui-brew-path.\n'
+        printf '# PREFER_BREW=1 lets a Homebrew command win over the system one.\n'
+        printf 'PREFER_BREW=%s\n' "$flag"
+    } > "$(brew_path_conf)" 2>/dev/null || return 1
+    chmod 0644 "$(brew_path_conf)" 2>/dev/null || true
+    brew_refresh_path --quiet >/dev/null 2>&1 || true
+    [ "$want" = brew ] && printf 'Homebrew now takes priority over system commands.\n' \
+        || printf 'System commands keep priority over Homebrew.\n'
+}
+
 brew_refresh_path() { # [--quiet|--verbose|--status|--remove]
     local helper rc=0 prefix="" env_prefix=()
     helper=$(brew_path_helper)
@@ -3447,6 +3479,7 @@ _brew_complete_uninstall() {
         brew_refresh_path --remove >/dev/null 2>&1 || true
     fi
     rm -f /usr/local/bin/systui-brew-path /etc/fish/conf.d/systui-homebrew.fish 2>/dev/null || true
+    rm -f "$(brew_path_conf)" 2>/dev/null || true
     local hook
     for hook in /etc/profile /etc/bash.bashrc /etc/bash/bashrc /etc/bashrc /etc/zsh/zshrc /etc/zshrc; do
         [ -f "$hook" ] || continue
@@ -3527,19 +3560,22 @@ brew_run_as() { # <description> <brew-args...>
 # PATH integration submenu: mirror installed formulae, inspect the mirrors,
 # or drop them again.
 menu_brew_path() {
-    local c helper status
+    local c helper status policy
     while true; do
         helper=$(brew_path_helper)
+        policy=$(brew_path_policy)
         if [ -x "$helper" ]; then
             status="Helper: $helper"
         else
             status="Helper not installed — run the root-compatibility install."
         fi
         c=$(tui_menu "Homebrew — PATH integration" \
-            "$status\n\nInstalled formulae are mirrored into /usr/local/bin and\n/usr/local/sbin so they work without a re-login." \
-            refresh "Refresh mirrors now (link formulae installed elsewhere)" \
+            "$status\nResolution: $policy priority\n\nEvery installed formula — including keg-only ones\n(openjdk, sqlite, node, postgresql@16) — is mirrored into\n/usr/local/bin and /usr/local/sbin, so it works without a re-login." \
+            refresh "Refresh mirrors now (pick up formulae installed elsewhere)" \
             verbose "Refresh verbosely — show every skipped entry" \
-            status  "Show current mirrors" \
+            status  "Show current mirrors and policy" \
+            prefer  "Let Homebrew win when it and the system share a name" \
+            system  "Give system commands priority again (default)" \
             remove  "Remove mirrors (keep Homebrew)" \
             back    "Back") || return 0
         case "$c" in
@@ -3548,6 +3584,13 @@ menu_brew_path() {
             status)
                 run_cmd "Homebrew PATH mirrors" brew_refresh_path --status
                 tui_wait
+                ;;
+            prefer)
+                tui_yesno "Homebrew priority" "When a formula and the distribution provide the same command\n(git, curl, python3), put Homebrew's copy first?\n\nShells, apk and init tooling are never shadowed." || continue
+                run_cmd "Prefer Homebrew over system commands" brew_set_path_policy brew
+                ;;
+            system)
+                run_cmd "Give system commands priority" brew_set_path_policy system
                 ;;
             remove)
                 tui_yesno "Remove PATH mirrors" "Delete every /usr/local link that points into Homebrew?\n\nHomebrew and the installed formulae stay installed; they just stop\nbeing on the default PATH." || continue

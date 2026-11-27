@@ -35,11 +35,23 @@ mkbin "$prefix/sbin/brew-fake-daemon"
 # A name the host already provides system-wide: must never be mirrored over
 # the distribution's binary.
 mkbin "$prefix/bin/sh"
+mkbin "$prefix/bin/sort"
+# Keg-only formulae: never linked into bin/, they exist only under opt/.
+mkdir -p "$prefix/opt/openjdk/bin" "$prefix/opt/sqlite/bin" "$prefix/opt/curl/bin" \
+         "$prefix/opt/openjdk/sbin" "$prefix/opt/never/bin"
+mkbin "$prefix/opt/openjdk/bin/keg-java"
+mkbin "$prefix/opt/openjdk/bin/keg-javac"
+mkbin "$prefix/opt/openjdk/sbin/keg-jshell"
+mkbin "$prefix/opt/sqlite/bin/keg-sqlite3"
+mkbin "$prefix/opt/curl/bin/curl"
+mkbin "$prefix/opt/never/bin/sh"
+conf="$tmpdir/brew-path.conf"
 
 run_helper() {
     SYSTUI_BREW_PREFIX="$prefix" \
     SYSTUI_BREW_PATH_LINK_DIR="$lbin" \
     SYSTUI_BREW_PATH_SBIN_DIR="$lsbin" \
+    SYSTUI_BREW_PATH_CONF="$conf" \
         bash "$HELPER" "$@"
 }
 
@@ -70,11 +82,44 @@ check "sbin formula goes to the sbin mirror"       test -L "$lsbin/brew-fake-dae
 check "mirror points at the formula binary" \
     test "$(readlink "$lbin/brew-fake-tool")" = "$prefix/bin/brew-fake-tool"
 check "system-owned name is not mirrored over"     test ! -e "$lbin/sh"
+check "protected names are never mirrored"          test ! -e "$lbin/sh"
+check "non-protected system name stays with system" test ! -e "$lbin/sort"
 check "mirrored binary is executable"              test -x "$lbin/brew-fake-tool"
 
+# --- keg-only coverage ------------------------------------------------------
+check "keg-only formula reaches the bin mirror"     test -L "$lbin/keg-java"
+check "keg-only formula bin target is correct" \
+    test "$(readlink "$lbin/keg-java")" = "$prefix/opt/openjdk/bin/keg-java"
+check "keg-only sbin formula reaches sbin mirror"   test -L "$lsbin/keg-jshell"
+check "second keg-only formula also mirrored"       test -L "$lbin/keg-sqlite3"
+check "keg-only name the system provides is skipped" test ! -e "$lbin/curl"
+check "keg-only formula does not ship sh"            test ! -e "$lbin/sh"
+
+mkdir -p "$prefix/opt/fresh/bin"
+mkbin "$prefix/opt/fresh/bin/fresh-tool"
+run_helper --no-keg --quiet >/dev/null
+check "--no-keg skips a new keg-only formula"       test ! -L "$lbin/fresh-tool"
+run_helper --quiet >/dev/null
+check "next refresh picks the formula up"           test -L "$lbin/fresh-tool"
+check "opt mirrors are kept, not churned"           test -L "$lbin/keg-java"
+
+# --- resolution policy ------------------------------------------------------
 SYSTUI_BREW_PREFIX="$prefix" SYSTUI_BREW_PATH_LINK_DIR="$lbin" SYSTUI_BREW_PATH_SBIN_DIR="$lsbin" \
-    SYSTUI_BREW_PATH_SHADOW=1 bash "$HELPER" --quiet >/dev/null
-check "shadow opt-in mirrors the system name"      test -L "$lbin/sh"
+    SYSTUI_BREW_PATH_CONF="$conf" SYSTUI_BREW_PATH_SHADOW=1 bash "$HELPER" --quiet >/dev/null
+check "shadow opt-in mirrors the system name"      test -L "$lbin/sort"
+check "shadow opt-in mirrors keg-only over system" test -L "$lbin/curl"
+check "protected names survive shadow opt-in"      test ! -L "$lbin/sh"
+
+# The policy file drives resolution when no env override is present.
+run_helper --prefer-brew >/dev/null
+check "--prefer-brew persists the policy"           grep -qx 'PREFER_BREW=1' "$conf"
+check "policy file is honoured without the env"     test -L "$lbin/curl"
+policy_status=$(run_helper --status)
+check "status reports the policy"                   bash -c 'printf %s "$1" | grep -q "brew wins over system"' _ "$policy_status"
+run_helper --prefer-system >/dev/null
+check "--prefer-system persists the policy"         grep -qx 'PREFER_BREW=0' "$conf"
+check "system priority removes the shadowed link"   test ! -L "$lbin/curl"
+check "new formula names still get mirrored"        test -L "$lbin/keg-java"
 
 # A formula version bump re-points the existing link instead of failing.
 mkdir -p "$prefix/bin/nested"

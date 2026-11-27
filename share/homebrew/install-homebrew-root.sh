@@ -27,6 +27,7 @@ readonly ROOT_ENV_FILE="${ROOT_ENV_DIR}/homebrew.env"
 readonly PROFILE_FILE="/etc/profile.d/homebrew.sh"
 readonly PATH_HELPER="/usr/local/bin/systui-brew-path"
 readonly PATH_HELPER_SOURCE="${SCRIPT_DIR}/systui-brew-path.sh"
+readonly PATH_POLICY_FILE="${ROOT_ENV_DIR}/brew-path.conf"
 readonly HOOK_BEGIN="# >>> systui homebrew >>>"
 readonly HOOK_END="# <<< systui homebrew <<<"
 
@@ -186,6 +187,17 @@ if [ -z "\${SYSTUI_HOMEBREW_ENV:-}" ]; then
         *":$BREW_PREFIX/bin:"*) ;;
         *) PATH="/usr/local/bin:$BREW_PREFIX/bin:$BREW_PREFIX/sbin:\$PATH" ;;
     esac
+    # Keg-only formulae are never linked into bin/; their executables live
+    # under opt/<formula>. A login shell adds them after the system dirs, so
+    # a distribution command still wins by default.
+    for _systui_brew_opt in "$BREW_PREFIX"/opt/*/bin; do
+        [ -d "\$_systui_brew_opt" ] || continue
+        case ":\$PATH:" in
+            *":\$_systui_brew_opt:"*) ;;
+            *) PATH="\$PATH:\$_systui_brew_opt" ;;
+        esac
+    done
+    unset _systui_brew_opt
     export PATH
     MANPATH="$BREW_PREFIX/share/man\${MANPATH+:\$MANPATH}"
     INFOPATH="$BREW_PREFIX/share/info\${INFOPATH+:\$INFOPATH}"
@@ -208,6 +220,7 @@ EOF_PROFILE
 
     if [[ -d /etc/fish ]]; then
         install -d -m 0755 /etc/fish/conf.d
+        # shellcheck disable=SC2154 # fish syntax, parsed as a heredoc body
         cat > /etc/fish/conf.d/systui-homebrew.fish <<EOF_FISH
 # systui-managed Homebrew environment.
 set -gx HOMEBREW_PREFIX "$BREW_PREFIX"
@@ -216,8 +229,23 @@ set -gx HOMEBREW_REPOSITORY "$BREW_REPOSITORY"
 set -gx MANPATH "$BREW_PREFIX/share/man" \$MANPATH
 set -gx INFOPATH "$BREW_PREFIX/share/info" \$INFOPATH
 fish_add_path --global --move-to-front /usr/local/bin "$BREW_PREFIX/bin" "$BREW_PREFIX/sbin"
+for _systui_opt in "$BREW_PREFIX"/opt/*/bin
+    test -d "$_systui_opt"; and fish_add_path --global --append "$_systui_opt"
+end
 EOF_FISH
         chmod 0644 /etc/fish/conf.d/systui-homebrew.fish
+    fi
+
+    # Resolution policy for names Homebrew and the distribution both provide.
+    # Kept in a plain file so the helper reads it without executing anything.
+    if [[ ! -r "$PATH_POLICY_FILE" ]]; then
+        install -d -m 0755 "$ROOT_ENV_DIR"
+        {
+            printf '# systui — Homebrew PATH policy, read by systui-brew-path.\n'
+            printf '# PREFER_BREW=1 lets a Homebrew command win over the system one.\n'
+            printf 'PREFER_BREW=0\n'
+        } > "$PATH_POLICY_FILE"
+        chmod 0644 "$PATH_POLICY_FILE"
     fi
 
     if [[ -x "$PATH_HELPER" ]]; then
@@ -294,10 +322,16 @@ Homebrew installation completed.
 The brew command may be invoked from a root shell, but systui will always
 execute Homebrew itself as the unprivileged '$BREW_USER' account.
 
-Installed formulae are mirrored into /usr/local/bin and /usr/local/sbin, so
-they are on PATH for root and every user the moment they are installed --
-no re-login, no shell profile edit. Run 'systui-brew-path --status' to see
-the mirrors, or 'systui-brew-path --remove' to drop them.
+Every installed formula is mirrored into /usr/local/bin and /usr/local/sbin
+the moment it finishes installing -- including keg-only formulae (openjdk,
+sqlite, node, postgresql@16, ...) whose executables never reach bin/ in the
+first place. No re-login, no shell profile edit, no PATH export: the command
+works in the shell that installed it and in every child process.
+
+  systui-brew-path --status        mirrors and resolution policy
+  systui-brew-path --verbose       show what was linked and what was skipped
+  systui-brew-path --prefer-brew   let Homebrew win over a system command
+  systui-brew-path --remove        drop the mirrors, keep Homebrew
 
   source $PROFILE_FILE
   brew --version

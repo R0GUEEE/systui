@@ -66,7 +66,8 @@ systui/
 ├── share/                    # Non-code resources
 │   └── homebrew/             # Root-compatible Homebrew compatibility layer
 │       ├── install-homebrew-root.sh
-│       └── systui-brew-path.sh   # Mirrors formulae into /usr/local/bin
+│       └── systui-brew-path.sh   # Mirrors every formula (incl. keg-only)
+│                                 #   into /usr/local/bin
 │
 └── tests/                    # Test suite
     └── test-*.sh             # Test files
@@ -1009,24 +1010,43 @@ Debian arm64: a shared installer under `share/homebrew/`, a system wrapper at
 `/usr/local/bin/brew`, and a managed environment file at
 `/etc/systui/homebrew.env`.
 
-Installed formulae are also wired onto the default PATH. Homebrew links a
+Every installed formula is wired onto the default PATH. Homebrew links a
 formula's executables into `$BREW_PREFIX/bin`, which a shell only reaches
 through the profile snippet the installer writes — so a formula installed
 inside a running session, a non-login shell, or a cron/TUI child process used
-to stay invisible until the next login. `systui-brew-path` mirrors those links
-into `/usr/local/bin` and `/usr/local/sbin` (already on PATH everywhere), and
-the `brew` wrapper re-runs it after every command that changes what is
-installed. Consequences worth knowing:
+to stay invisible until the next login. Keg-only formulae are worse: Homebrew
+never links them at all, their commands exist only under
+`$BREW_PREFIX/opt/<formula>/`, and nothing on PATH points there.
 
-- A command is runnable in the shell that installed it; no re-login, no PATH
-  edit, no `eval "$(brew shellenv)"`.
-- Mirroring is skipped for a name the system already provides (`git`, `curl`,
-  `python3`), so system and init scripts keep running the distribution's
-  binary. Set `SYSTUI_BREW_PATH_SHADOW=1` to override.
+`systui-brew-path` covers both cases. It walks `$BREW_PREFIX/bin`,
+`$BREW_PREFIX/sbin` and every `$BREW_PREFIX/opt/<formula>/{bin,sbin}` and
+mirrors what it finds into `/usr/local/bin` and `/usr/local/sbin`, which are
+already on PATH for root, for normal accounts and for non-login shells. The
+`brew` wrapper re-runs it after every command that changes what is installed,
+and the logon profile plus the bash/zsh/fish rc files append the keg-only
+`opt/*/bin` directories so an interactive shell sees them directly too.
+Consequences worth knowing:
+
+- A command is runnable in the shell that installed it, and in anything it
+  spawns; no re-login, no PATH edit, no `eval "$(brew shellenv)"`.
+- This includes keg-only packages — `openjdk`, `sqlite`, `node`,
+  `postgresql@16`, `python@3.12` — whose binaries never reach `bin/`.
+- Resolution order is stable: linked `bin` first, then `opt/<formula>` in
+  alphabetical order. A name offered by two formulae keeps the first owner, so
+  the winner does not change on every refresh.
+- By default a name the distribution already provides (`git`, `curl`,
+  `python3`) stays with the system, so init scripts and package-manager hooks
+  keep running the binary they were written for. `systui-brew-path
+  --prefer-brew` flips that (persisted in `/etc/systui/brew-path.conf`, also a
+  toggle in the menu); `--prefer-system` restores the default and removes the
+  mirrors that were shadowing. Shells, `apk`, `su`, `env`, `mount` and the
+  other load-bearing names are never shadowed in either mode.
 - Removing a formula removes its mirror; `systui-brew-path --status` lists the
-  mirrors and `--remove` drops all of them while leaving Homebrew installed.
+  policy and the mirrors, `--verbose` reports every skipped entry, `--no-keg`
+  skips the `opt/*` scan, and `--remove` drops all mirrors while leaving
+  Homebrew installed.
 - The System Configuration menu has a matching Homebrew → *PATH integration*
-  entry for refreshing or removing the mirrors by hand.
+  entry for refreshing, preferring, restoring or removing the mirrors by hand.
 
 ## Notes on behaviour
 
