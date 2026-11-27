@@ -21,26 +21,24 @@ check() {
 
 command -v python3 >/dev/null 2>&1 || { echo '1..0 # SKIP python3 missing'; exit 0; }
 
-# Build a miniature IPA: Payload/App.app/{Info.plist,binary}
+# Build a miniature IPA: Payload/App.app/{Info.plist,App,PkgInfo}.
+# Python's zipfile rather than the zip binary: the Alpine CI image has no zip.
 make_ipa() { # <path> [with-plist]
-    local ipa="$1" with="${2:-yes}" root
-    root=$(mktemp -d "$tmpdir/app.XXXXXX")
-    mkdir -p "$root/Payload/App.app"
-    printf 'MACHO-BINARY-CONTENT\n' > "$root/Payload/App.app/App"
-    chmod 0755 "$root/Payload/App.app/App"
-    printf 'APPL????' > "$root/Payload/App.app/PkgInfo"
-    if [ "$with" = yes ]; then
-        python3 - "$root/Payload/App.app/Info.plist" <<'PY'
-import plistlib, sys
-info = {"CFBundleIdentifier": "com.example.app",
-        "CFBundleShortVersionString": "0.1.0",
-        "CFBundleVersion": "1",
-        "MinimumOSVersion": "16.0"}
-with open(sys.argv[1], "wb") as fh:
-    plistlib.dump(info, fh, fmt=plistlib.FMT_BINARY)
-PY
-    fi
-    ( cd "$root" && zip -qr "$ipa" Payload )
+    python3 - "$1" "${2:-yes}" <<'PY_FIXTURE'
+import plistlib, sys, zipfile
+path, with_plist = sys.argv[1], sys.argv[2] == "yes"
+with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
+    z.writestr(zipfile.ZipInfo("Payload/"), b"")
+    z.writestr(zipfile.ZipInfo("Payload/App.app/"), b"")
+    z.writestr("Payload/App.app/App", b"MACHO-BINARY-CONTENT\n")
+    z.writestr("Payload/App.app/PkgInfo", b"APPL????")
+    if with_plist:
+        info = {"CFBundleIdentifier": "com.example.app",
+                "CFBundleShortVersionString": "0.1.0",
+                "CFBundleVersion": "1",
+                "MinimumOSVersion": "16.0"}
+        z.writestr("Payload/App.app/Info.plist", plistlib.dumps(info, fmt=plistlib.FMT_BINARY))
+PY_FIXTURE
 }
 
 plist_field() { # <ipa> <field>
