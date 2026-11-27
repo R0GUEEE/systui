@@ -1116,6 +1116,29 @@ Consequences worth knowing:
 - The System Configuration menu has a matching Homebrew → *PATH integration*
   entry for refreshing, preferring, restoring or removing the mirrors by hand.
 
+## Releases
+
+`src/VERSION` is the single version source: the TUI backtitle, `install.sh
+--version`, the man page and the release tag all read it, and `project.yml`
+carries the same value for the iOS app (`MARKETING_VERSION`) plus its build
+number (`CURRENT_PROJECT_VERSION`). `CHANGELOG.md` holds the per-version notes.
+CI fails when the three carriers disagree.
+
+Tagging `v<version>` runs `.github/workflows/release.yml`, which:
+
+- refuses to publish unless the tag, `src/VERSION`, `project.yml` and a
+  changelog section agree;
+- archives the tag's tree with `git archive`, then unpacks it and runs the
+  repository test suites from the unpacked copy, so a broken tarball cannot
+  become an asset;
+- attaches the unsigned IPA. The macOS runner that compiles the app is often
+  unavailable, so the release takes the newest successful IPA artifact and
+  stamps the release version into its `Info.plist` with
+  `tools/ipa_stamp.py` — the Mach-O is copied byte for byte and the release
+  note says plainly whether the IPA was built from the tag or re-stamped from
+  an earlier commit. When the iOS build does finish after a release exists,
+  the `workflow_run` trigger re-runs this workflow and attaches the fresh IPA.
+
 ## Notes on behaviour
 
 ### Error handling

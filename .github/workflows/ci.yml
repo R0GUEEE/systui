@@ -173,7 +173,7 @@ jobs:
         run: |
           set -euo pipefail
           docker run --rm -v "$PWD:/repo" -w /repo alpine:3.22 sh -ec '
-            apk add --no-cache bash coreutils ncurses shellcheck >/dev/null
+            apk add --no-cache bash coreutils ncurses shellcheck python3 >/dev/null
             for f in src/core/*.sh src/rootfs/*.sh src/sysconfig/*.sh src/features/[0-9]*-*.sh; do
               bash -n "$f"
             done
@@ -189,6 +189,7 @@ jobs:
             bash tests/test-homebrew-path-integration.sh
             bash tests/test-native-distro-repos.sh
             bash tests/test-distro-keyrings.sh
+            bash tests/test-ipa-stamp.sh
             bash tests/test-repos-alternatives-final.sh
             [ ! -f tests/test-rootfs-final-hardening.sh ] || bash tests/test-rootfs-final-hardening.sh
           '

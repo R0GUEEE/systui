@@ -13,6 +13,10 @@ targets:
       path: Sources/SystuiRootfs/Info.plist
       properties:
         CFBundleDisplayName: Systui Rootfs
+        # XcodeGen otherwise falls back to Xcode's defaults (1.0), which is how
+        # the first IPA ended up claiming 1.0 while the project said 0.1.0.
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
         UISupportsDocumentBrowser: false
     settings:
