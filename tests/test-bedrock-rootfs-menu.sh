@@ -17,7 +17,7 @@ tui_menu_no_tags() {
 menu_bedrock_aok() { echo invoked > "$tmp/opened"; }
 menu_rootfs
 [ -f "$tmp/opened" ] || { echo 'Bedrock not dispatched' >&2; exit 1; }
-for tag in bedrock aot guestroots build download manage workbench bootstrap distros back; do
+for tag in bedrock aot guestroots build download workbench bootstrap distros containers back; do
     grep -qx "$tag" "$tmp/rootfs-args" || { echo "Missing rootfs entry: $tag" >&2; exit 1; }
 done
 # Dispatch is in the caller, not the command-substitution widget process.

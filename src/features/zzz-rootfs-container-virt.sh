@@ -1092,32 +1092,6 @@ Generated files stay on disk until the configuration is applied again." || retur
 # Docker
 # ---------------------------------------------------------------------------
 
-cn_docker_config_registry() {
-    local c
-    while true; do
-        c=$(tui_menu_no_tags "Docker — registry" \
-"Mirrors are tried in order before Docker Hub. A mirror must serve the
-same content over HTTPS; it is not a private registry." \
-            mirrors  "Registry mirrors      : $(cn_conf_get docker_registry_mirrors none)" \
-            insecure "Insecure registries   : $(cn_conf_get docker_insecure_registries none)" \
-            login    "Log in to a registry (docker login)" \
-            back     "Back") || return 0
-        case "$c" in
-            mirrors) cn_setting_list docker_registry_mirrors "Registry mirrors" \
-                        "Comma or space separated mirror URLs:" "" ;;
-            insecure) cn_setting_list docker_insecure_registries "Insecure registries" \
-                        "Registries allowed over plain HTTP or with untrusted TLS (host:port):" "" ;;
-            login)
-                local server
-                server=$(tui_input "docker login" "Registry server (blank = Docker Hub):" "") || continue
-                clear
-                if [ -n "$server" ]; then run_cmd "docker login $server" docker login "$server" || true
-                else run_cmd "docker login" docker login || true; fi
-                read -rp "(press Enter)" _ || true ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 cn_docker_config_storage() {
     local c
@@ -1176,38 +1150,6 @@ Start it again from Configuration > Service."
 The old tree at $new is untouched; delete it once the new one is verified."
 }
 
-cn_docker_config_network() {
-    local c
-    while true; do
-        c=$(tui_menu_no_tags "Docker — network" \
-"Default address pool: $(cn_conf_get docker_pool_base none)/$(cn_conf_get docker_pool_size 24)
-DNS servers         : $(cn_conf_get docker_dns none)
-iptables            : $(cn_conf_get docker_iptables true)
-userland-proxy      : $(cn_conf_get docker_userland_proxy true)" \
-            pool     "Default address pool" \
-            dns      "Container DNS servers" \
-            iptables "iptables management: $(cn_conf_get docker_iptables true)" \
-            ip6tables "IPv6 iptables: $(cn_conf_get docker_ip6tables false)" \
-            proxy    "userland-proxy: $(cn_conf_get docker_userland_proxy true)" \
-            back     "Back") || return 0
-        case "$c" in
-            pool)
-                cn_setting_input docker_pool_base "Address pool base" \
-                    "Base CIDR for automatically created bridge networks (e.g. 172.31.0.0/16):" "" cn_valid_cidr || continue
-                cn_setting_input docker_pool_size "Address pool size" \
-                    "Subnet size allocated per network (8-30):" "24" || true ;;
-            dns) cn_setting_list docker_dns "Container DNS" \
-                    "DNS servers written into daemon.json:" "" ;;
-            iptables) cn_setting_bool docker_iptables "iptables" \
-                    "Let Docker manage iptables rules? Disable only when another firewall owns them." true ;;
-            ip6tables) cn_setting_bool docker_ip6tables "ip6tables" \
-                    "Let Docker manage IPv6 firewall rules?" false ;;
-            proxy) cn_setting_bool docker_userland_proxy "userland-proxy" \
-                    "Keep the userland proxy for published ports? Disabling needs hairpin NAT to work." true ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 cn_docker_config_security() {
     local c
@@ -1232,34 +1174,6 @@ experimental  : $(cn_conf_get docker_experimental false)" \
     done
 }
 
-cn_docker_config_menu() {
-    local c
-    while true; do
-        c=$(tui_menu_no_tags "Docker configuration" \
-"$(cn_config_summary)
-File: $(cn_docker_daemon_file)" \
-            registry "Registry & authentication" \
-            storage  "Storage, data root & builder cache" \
-            network  "Networking, address pools & DNS" \
-            security "Security & runtime behaviour" \
-            apply    "Write the configuration and restart Docker" \
-            show     "Show the generated daemon.json" \
-            raw      "Edit daemon.json directly" \
-            reset    "Reset every saved Docker setting" \
-            back     "Back") || return 0
-        case "$c" in
-            registry) cn_docker_config_registry ;;
-            storage) cn_docker_config_storage ;;
-            network) cn_docker_config_network ;;
-            security) cn_docker_config_security ;;
-            apply) cn_apply_and_restart docker ;;
-            show) cn_show_generated_config "daemon.json" "$(cn_docker_daemon_file)" ;;
-            raw) cn_edit_raw_file "daemon.json" "$(cn_docker_daemon_file)" ;;
-            reset) cn_reset_settings docker_ ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 cn_container_run_prompt() { # <engine> <title>
     local engine="$1" title="$2" image name extra args
@@ -1303,57 +1217,6 @@ cn_engine_prune_menu() { # <engine>
     done
 }
 
-cn_docker_menu() {
-    local c d
-    while true; do
-        c=$(tui_menu_no_tags "Docker" \
-"State: $(cn_engine_state docker)
-$(cn_tool_version docker)
-Compose: $(docker compose version 2>/dev/null | head -1 || echo 'not installed')" \
-            status    "Status and daemon information" \
-            install   "Install or update Docker Engine + compose + buildx" \
-            configure "Configuration (daemon.json)" \
-            service   "Service control (start/stop/enable)" \
-            containers "List containers" \
-            images    "List images" \
-            run       "Run a container from an image" \
-            exec      "Open a shell in a running container" \
-            logs      "Show container logs" \
-            compose   "Compose project actions" \
-            prune     "Prune images, containers, volumes, cache" \
-            rootless  "Rootless containers" \
-            uninstall "Uninstall Docker" \
-            help      "Show docker help" \
-            back      "Back") || return 0
-        case "$c" in
-            status) { docker version; echo; docker info; } > "$(rootfs_report_file)" 2>&1 || true
-                    tui_text "Docker status" "$(rootfs_report_file)" ;;
-            install) cn_install_tool docker ;;
-            configure) cn_docker_config_menu ;;
-            service) cn_service_menu "Docker service" docker ;;
-            containers) rootfs_dm_show_command docker "docker ps" ps -a ;;
-            images) rootfs_dm_show_command docker "docker images" images ;;
-            run) cn_container_run_prompt docker "Run a container" ;;
-            exec)
-                d=$(tui_input "docker exec" "Running container name/id:" "") || continue
-                [ -n "$d" ] || continue
-                clear
-                run_cmd "Shell in $d" docker exec -it "$d" /bin/sh || run_cmd "Shell in $d" docker exec -it "$d" bash || true
-                read -rp "(press Enter)" _ || true ;;
-            logs)
-                d=$(tui_input "docker logs" "Container name/id:" "") || continue
-                [ -n "$d" ] || continue
-                docker logs --tail 200 "$d" > "$(rootfs_report_file)" 2>&1 || true
-                tui_text "docker logs $d" "$(rootfs_report_file)" ;;
-            compose) cn_compose_menu docker ;;
-            prune) cn_engine_prune_menu docker ;;
-            rootless) cn_rootless_setup_menu ;;
-            uninstall) cn_remove_tool docker ;;
-            help) rootfs_dm_show_command docker "docker help" --help ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 cn_compose_menu() { # <engine>
     local engine="$1" c dir
@@ -1400,33 +1263,6 @@ compose.yaml / docker-compose.yml in the project directory." \
 # Podman
 # ---------------------------------------------------------------------------
 
-cn_podman_config_registry() {
-    local c
-    while true; do
-        c=$(tui_menu_no_tags "Podman — registries" \
-"Search registries : $(cn_conf_get podman_search_registries "docker.io quay.io ghcr.io")
-Mirrors           : $(cn_conf_get podman_registry_mirrors none)
-Insecure          : $(cn_conf_get podman_insecure_registries none)
-File              : $(cn_registries_file)" \
-            search   "Short-name search registries" \
-            mirrors  "docker.io mirrors" \
-            insecure "Insecure registries" \
-            apply    "Write /etc/containers/registries.conf" \
-            show     "Show the generated file" \
-            back     "Back") || return 0
-        case "$c" in
-            search) cn_setting_list podman_search_registries "Search registries" \
-                        "Registries consulted for unqualified names, in order:" "docker.io quay.io ghcr.io" ;;
-            mirrors) cn_setting_list podman_registry_mirrors "Registry mirrors" \
-                        "Mirror URLs for docker.io:" "" ;;
-            insecure) cn_setting_list podman_insecure_registries "Insecure registries" \
-                        "host:port entries allowed over plain HTTP:" "" ;;
-            apply) cn_write_registries_conf && tui_msg "Written" "$(cn_registries_file) updated." ;;
-            show) cn_show_generated_config "registries.conf" "$(cn_registries_file)" ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 cn_podman_config_storage() {
     local c
@@ -1511,87 +1347,7 @@ cgroup v1 hosts must use cgroupfs instead of systemd." \
     done
 }
 
-cn_podman_config_menu() {
-    local c
-    while true; do
-        c=$(tui_menu_no_tags "Podman configuration" \
-"Rootless: $(cn_conf_get rootless_enabled off)  user: $(cn_rootless_user_default)
-graphroot: $(cn_conf_get podman_graphroot /var/lib/containers/storage)
-registries: $(cn_registries_file)" \
-            registry "Registries, mirrors & insecure endpoints" \
-            storage  "Storage layout and driver" \
-            engine   "Engine runtime, cgroups, socket" \
-            rootless "Rootless containers (subuid/subgid, linger)" \
-            apply    "Write every configuration file" \
-            show     "Show the generated files" \
-            reset    "Reset every saved Podman setting" \
-            back     "Back") || return 0
-        case "$c" in
-            registry) cn_podman_config_registry ;;
-            storage) cn_podman_config_storage ;;
-            engine) cn_podman_config_engine ;;
-            rootless) cn_rootless_setup_menu ;;
-            apply) cn_apply_engine_config podman && tui_msg "Applied" "Podman configuration written." ;;
-            show) cn_show_generated_config "Podman configuration" \
-                    "$(cn_registries_file)" "$(cn_containers_conf_file)" "$(cn_storage_conf_file)" ;;
-            reset) cn_reset_settings podman_ ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
-cn_podman_menu() {
-    local c d user
-    while true; do
-        user=$(cn_rootless_user_default)
-        c=$(tui_menu_no_tags "Podman" \
-"State: $(cn_engine_state podman)
-$(cn_tool_version podman)
-Rootless: $(su - "$user" -c 'podman info --format "{{.Host.Security.Rootless}}"' 2>/dev/null || echo unknown)" \
-            status    "Status and storage information" \
-            install   "Install or update Podman + compose + rootless helpers" \
-            configure "Configuration (registries, storage, engine)" \
-            service   "Service control (podman.socket)" \
-            containers "List containers" \
-            images    "List images" \
-            run       "Run a container from an image" \
-            exec      "Open a shell in a running container" \
-            logs      "Show container logs" \
-            compose   "Compose project actions" \
-            prune     "Prune images, containers, volumes, cache" \
-            rootless  "Rootless containers" \
-            uninstall "Uninstall Podman" \
-            help      "Show podman help" \
-            back      "Back") || return 0
-        case "$c" in
-            status) { podman info; echo; podman system df; } > "$(rootfs_report_file)" 2>&1 || true
-                    tui_text "Podman status" "$(rootfs_report_file)" ;;
-            install) cn_install_tool podman ;;
-            configure) cn_podman_config_menu ;;
-            service) cn_service_menu "Podman socket" podman.socket ;;
-            containers) rootfs_dm_show_command podman "podman ps" ps -a ;;
-            images) rootfs_dm_show_command podman "podman images" images ;;
-            run) cn_container_run_prompt podman "Run a container" ;;
-            exec)
-                d=$(tui_input "podman exec" "Running container name/id:" "") || continue
-                [ -n "$d" ] || continue
-                clear
-                run_cmd "Shell in $d" podman exec -it "$d" /bin/sh || run_cmd "Shell in $d" podman exec -it "$d" bash || true
-                read -rp "(press Enter)" _ || true ;;
-            logs)
-                d=$(tui_input "podman logs" "Container name/id:" "") || continue
-                [ -n "$d" ] || continue
-                podman logs --tail 200 "$d" > "$(rootfs_report_file)" 2>&1 || true
-                tui_text "podman logs $d" "$(rootfs_report_file)" ;;
-            compose) cn_compose_menu podman ;;
-            prune) cn_engine_prune_menu podman ;;
-            rootless) cn_rootless_setup_menu ;;
-            uninstall) cn_remove_tool podman ;;
-            help) rootfs_dm_show_command podman "podman help" --help ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 # ---------------------------------------------------------------------------
 # containerd / nerdctl
@@ -2070,25 +1826,6 @@ Multi-window : $(cn_conf_get waydroid_multi_windows off)" \
 # Sandboxes: apptainer, bubblewrap, systemd-nspawn
 # ---------------------------------------------------------------------------
 
-cn_sandbox_menu() {
-    local c
-    while true; do
-        c=$(tui_menu_no_tags "Sandbox runtimes" \
-"apptainer : $(cn_tool_version apptainer)
-bubblewrap: $(cn_tool_version bwrap)
-nspawn    : $(cn_tool_version nspawn)" \
-            apptainer "Apptainer/Singularity — HPC container images" \
-            bwrap     "bubblewrap — unprivileged sandbox" \
-            nspawn    "systemd-nspawn / machinectl images" \
-            back      "Back") || return 0
-        case "$c" in
-            apptainer) cn_apptainer_menu ;;
-            bwrap) cn_bwrap_menu ;;
-            nspawn) cn_nspawn_menu ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 cn_apptainer_menu() {
     local c image
@@ -2245,6 +1982,206 @@ Machine images: $(cn_conf_get nspawn_images /var/lib/machines)" \
 }
 
 # ---------------------------------------------------------------------------
+# Engine operations — one implementation for Docker and Podman
+#
+# The two CLIs are command-compatible for everything systui exposes, so the
+# per-engine menus differ only in their service unit and configuration file.
+# Keeping one menu avoids two copies drifting apart.
+# ---------------------------------------------------------------------------
+
+cn_engine_title() { # <docker|podman>
+    case "$1" in
+        docker) printf 'Docker\n' ;;
+        podman) printf 'Podman\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+cn_engine_service_unit() { # <docker|podman>
+    case "$1" in
+        docker) printf 'docker.service\n' ;;
+        podman) printf 'podman.socket\n' ;;
+    esac
+}
+
+cn_engine_config_menu() { # <docker|podman>
+    case "$1" in
+        docker) cn_docker_config_menu ;;
+        podman) cn_podman_config_menu ;;
+        *) return 1 ;;
+    esac
+}
+
+# Create a runnable container from a distribution image using the shared
+# distro-manager workflow, so there is one image chooser, not two.
+cn_engine_distro_image() { # <docker|podman>
+    local engine="$1"
+    if ! declare -F rootfs_dm_browse_install >/dev/null 2>&1; then
+        tui_msg "Image workflow unavailable" \
+"The distro-manager module is not loaded, so the distribution image
+catalogue cannot be used here."
+        return 0
+    fi
+    rootfs_dm_browse_install "$engine"
+}
+
+cn_engine_menu() { # <docker|podman>
+    local engine="$1" c d title
+    title=$(cn_engine_title "$engine") || return 1
+    while true; do
+        c=$(tui_menu_no_tags "$title" \
+"State: $(cn_engine_state "$engine")
+$(cn_tool_version "$engine")
+Compose: $("$engine" compose version 2>/dev/null | head -1 || echo 'not installed')
+
+Engine settings are under Configuration; pruning is under
+'Reclaim disk space' on the previous menu." \
+            status     "Status and engine information" \
+            install    "Install or update $title" \
+            configure  "Configuration (files, drivers, registry login)" \
+            service    "Service control" \
+            distro     "Create a container from a distribution image" \
+            containers "List containers" \
+            images     "List images" \
+            run        "Run a container from an image" \
+            exec       "Open a shell in a running container" \
+            logs       "Show container logs" \
+            compose    "Compose project actions" \
+            uninstall  "Uninstall $title" \
+            help       "Show $engine help" \
+            back       "Back") || return 0
+        case "$c" in
+            status) { "$engine" version; echo; "$engine" info; } > "$(rootfs_report_file)" 2>&1 || true
+                    tui_text "$engine status" "$(rootfs_report_file)" ;;
+            install) cn_install_tool "$engine" ;;
+            configure) cn_engine_config_menu "$engine" ;;
+            service) cn_service_menu "$title service" "$(cn_engine_service_unit "$engine")" ;;
+            distro) cn_engine_distro_image "$engine" ;;
+            containers) cn_show_command "$engine" "$engine ps" ps -a ;;
+            images) cn_show_command "$engine" "$engine images" images ;;
+            run) cn_container_run_prompt "$engine" "Run a container" ;;
+            exec)
+                d=$(tui_input "$engine exec" "Running container name/id:" "") || continue
+                [ -n "$d" ] || continue
+                clear
+                run_cmd "Shell in $d" "$engine" exec -it "$d" /bin/sh ||
+                    run_cmd "Shell in $d" "$engine" exec -it "$d" bash || true
+                read -rp "(press Enter)" _ || true ;;
+            logs)
+                d=$(tui_input "$engine logs" "Container name/id:" "") || continue
+                [ -n "$d" ] || continue
+                "$engine" logs --tail 200 "$d" > "$(rootfs_report_file)" 2>&1 || true
+                tui_text "$engine logs $d" "$(rootfs_report_file)" ;;
+            compose) cn_compose_menu "$engine" ;;
+            uninstall) cn_remove_tool "$engine" ;;
+            help) cn_show_command "$engine" "$engine help" --help ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+cn_docker_menu() { cn_engine_menu docker; }
+cn_podman_menu() { cn_engine_menu podman; }
+
+# Registry authentication is engine-specific only in where credentials land,
+# but the command is the same; one prompt serves both.
+cn_registry_login() { # <docker|podman>
+    local engine="$1" server
+    server=$(tui_input "$engine login" \
+        "Registry server (blank = Docker Hub):" "") || return 0
+    clear
+    if [ -n "$server" ]; then
+        run_cmd "$engine login $server" "$engine" login "$server" || true
+    else
+        run_cmd "$engine login" "$engine" login || true
+    fi
+    read -rp "(press Enter)" _ || true
+}
+cn_docker_config_menu() {
+    local c
+    while true; do
+        c=$(tui_menu_no_tags "Docker configuration" \
+"data-root : $(cn_conf_get docker_data_root /var/lib/docker)
+driver    : $(cn_conf_get docker_storage_driver overlay2)
+file      : $(cn_docker_daemon_file)
+
+Mirrors, DNS and the address pool are shared with Podman and live
+under Configuration on the Containers & virtualization menu." \
+            auth     "Registry authentication (docker login)" \
+            storage  "Storage, data root, logging & builder cache" \
+            network  "Firewall & userland proxy" \
+            security "User namespaces and runtime behaviour" \
+            apply    "Write the configuration and restart Docker" \
+            show     "Show the generated daemon.json" \
+            raw      "Edit daemon.json directly" \
+            reset    "Reset every saved Docker setting" \
+            back     "Back") || return 0
+        case "$c" in
+            auth) cn_registry_login docker ;;
+            storage) cn_docker_config_storage ;;
+            network) cn_docker_config_network ;;
+            security) cn_docker_config_security ;;
+            apply) cn_apply_and_restart docker ;;
+            show) cn_show_generated_config "daemon.json" "$(cn_docker_daemon_file)" ;;
+            raw) cn_edit_raw_file "daemon.json" "$(cn_docker_daemon_file)" ;;
+            reset) cn_reset_settings docker_ ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+cn_docker_config_network() {
+    local c
+    while true; do
+        c=$(tui_menu_no_tags "Docker — firewall & proxy" \
+"iptables       : $(cn_conf_get docker_iptables true)
+ip6tables      : $(cn_conf_get docker_ip6tables false)
+userland-proxy : $(cn_conf_get docker_userland_proxy true)" \
+            iptables  "iptables management: $(cn_conf_get docker_iptables true)" \
+            ip6tables "IPv6 iptables: $(cn_conf_get docker_ip6tables false)" \
+            proxy     "userland-proxy: $(cn_conf_get docker_userland_proxy true)" \
+            back      "Back") || return 0
+        case "$c" in
+            iptables) cn_setting_bool docker_iptables "iptables" \
+                    "Let Docker manage iptables rules? Disable only when another firewall owns them." true ;;
+            ip6tables) cn_setting_bool docker_ip6tables "ip6tables" \
+                    "Let Docker manage IPv6 firewall rules?" false ;;
+            proxy) cn_setting_bool docker_userland_proxy "userland-proxy" \
+                    "Keep the userland proxy for published ports? Disabling needs hairpin NAT to work." true ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+cn_podman_config_menu() {
+    local c
+    while true; do
+        c=$(tui_menu_no_tags "Podman configuration" \
+"graphroot : $(cn_conf_get podman_graphroot /var/lib/containers/storage)
+driver    : $(cn_conf_get podman_storage_driver overlay)
+runtime   : $(cn_conf_get podman_runtime crun)
+files     : $(cn_registries_file)
+
+Registries, mirrors, DNS and the default network subnet are shared
+with Docker and live under Configuration on the previous menu." \
+            storage "Storage layout and driver" \
+            engine  "OCI runtime, cgroups, socket & docker shim" \
+            apply   "Write the configuration files" \
+            show    "Show the generated files" \
+            reset   "Reset every saved Podman setting" \
+            back    "Back") || return 0
+        case "$c" in
+            storage) cn_podman_config_storage ;;
+            engine) cn_podman_config_engine ;;
+            apply) cn_apply_engine_config podman && tui_msg "Applied" "Podman configuration written." ;;
+            show) cn_show_generated_config "Podman configuration" \
+                    "$(cn_registries_file)" "$(cn_containers_conf_file)" "$(cn_storage_conf_file)" ;;
+            reset) cn_reset_settings podman_ ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
 # Shared configuration, status and the front door
 # ---------------------------------------------------------------------------
 
@@ -2352,6 +2289,103 @@ cn_cleanup_menu() {
     done
 }
 
+
+# ---------------------------------------------------------------------------
+# Grouped front doors
+#
+# The top menu groups tools by what they do instead of listing twelve peers:
+# engines, machines, sandboxes. Each submenu owns the tool menus.
+# ---------------------------------------------------------------------------
+
+cn_engines_menu() {
+    local c
+    while true; do
+        c=$(tui_menu_no_tags "Container engines" \
+"docker    : $(cn_engine_state docker)
+podman    : $(cn_engine_state podman)
+containerd: $(cn_engine_state containerd)
+
+An engine runs OCI images. Docker and Podman share the same menus;
+containerd is what Kubernetes and nerdctl use." \
+            docker     "Docker Engine" \
+            podman     "Podman (rootless by default)" \
+            containerd "containerd + nerdctl" \
+            install    "Install multiple engines" \
+            back       "Back") || return 0
+        case "$c" in
+            docker) cn_engine_menu docker ;;
+            podman) cn_engine_menu podman ;;
+            containerd) cn_containerd_menu ;;
+            install) cn_install_engines_menu ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+cn_install_engines_menu() {
+    local sel
+    sel=$(tui_check "Install container engines" \
+"SPACE selects engines; ENTER installs every selected one." \
+        docker   "Docker Engine — $(cn_engine_state docker)" off \
+        podman   "Podman — $(cn_engine_state podman)" off \
+        containerd "containerd + nerdctl — $(cn_engine_state containerd)" off) || return 0
+    sel=${sel//\"/}
+    [ -n "${sel//[[:space:]]/}" ] || return 0
+    local e
+    for e in $sel; do cn_install_tool "$e" || true; done
+}
+
+cn_machines_menu() {
+    local c
+    while true; do
+        c=$(tui_menu_no_tags "System containers & virtual machines" \
+"lxc    : $(cn_engine_state lxc)
+lxd    : $(cn_engine_state lxd)
+incus  : $(cn_engine_state incus)
+libvirt: $(cn_engine_state libvirt)
+waydroid: $(cn_engine_state waydroid)
+
+System containers share the host kernel and boot a full init;
+libvirt runs real virtual machines with their own kernel." \
+            lxc      "LXC — system containers" \
+            lxd      "LXD — LXC with an API daemon" \
+            incus    "Incus — LXD-compatible" \
+            libvirt  "libvirt + QEMU/KVM — virtual machines" \
+            nspawn   "systemd-nspawn — namespace machines" \
+            waydroid "Waydroid — Android in a container" \
+            back     "Back") || return 0
+        case "$c" in
+            lxc) cn_lxc_menu ;;
+            lxd) cn_lxd_incus_menu lxd ;;
+            incus) cn_lxd_incus_menu incus ;;
+            libvirt) cn_libvirt_menu ;;
+            nspawn) cn_nspawn_menu ;;
+            waydroid) cn_waydroid_menu ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
+cn_sandbox_menu() {
+    local c
+    while true; do
+        c=$(tui_menu_no_tags "Sandbox runtimes" \
+"apptainer : $(cn_tool_version apptainer)
+bubblewrap: $(cn_tool_version bwrap)
+
+These run a command or an image inside a jailed filesystem; they are
+not container engines and need no daemon." \
+            apptainer "Apptainer/Singularity — single-file images" \
+            bwrap     "bubblewrap — unprivileged sandbox" \
+            back      "Back") || return 0
+        case "$c" in
+            apptainer) cn_apptainer_menu ;;
+            bwrap) cn_bwrap_menu ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
 menu_rootfs_containers() {
     local c
     while true; do
@@ -2359,33 +2393,20 @@ menu_rootfs_containers() {
 "Engines: $(cn_engine_binaries | tr '\n' ' ')
 Init: $(cn_init_kind)   Rootless: $(cn_conf_get rootless_enabled off)
 
-Install, configure and operate container runtimes and machine
-virtualization. Distro managers that need an engine call into the
-same settings, so configuration is never duplicated." \
+Tools are grouped by what they do. Configuration here is shared by
+every engine, including the Rootfs > Distro managers image flows." \
             status   "Status dashboard (every tool, version, state)" \
-            docker   "Docker Engine — install, daemon.json, compose, prune" \
-            podman   "Podman — install, rootless, registries, storage" \
-            containerd "containerd + nerdctl — namespaces and images" \
-            lxc      "LXC — system containers from templates" \
-            lxd      "LXD — LXC with an API daemon" \
-            incus    "Incus — LXD-compatible, community maintained" \
-            libvirt  "libvirt + QEMU/KVM — full virtual machines" \
-            waydroid "Waydroid — Android in a container" \
-            sandbox  "Sandbox runtimes — apptainer, bubblewrap, nspawn" \
-            config   "Shared configuration — mirrors, DNS, storage, rootless" \
+            engines  "Container engines — Docker, Podman, containerd" \
+            machines "System containers & VMs — LXC, LXD, Incus, libvirt, nspawn, Waydroid" \
+            sandbox  "Sandbox runtimes — Apptainer, bubblewrap" \
+            config   "Shared configuration — mirrors, DNS, network, rootless" \
             cleanup  "Reclaim disk space" \
             about    "How these tools differ" \
             back     "Back") || return 0
         case "$c" in
             status) cn_status_report ;;
-            docker) cn_docker_menu ;;
-            podman) cn_podman_menu ;;
-            containerd) cn_containerd_menu ;;
-            lxc) cn_lxc_menu ;;
-            lxd) cn_lxd_incus_menu lxd ;;
-            incus) cn_lxd_incus_menu incus ;;
-            libvirt) cn_libvirt_menu ;;
-            waydroid) cn_waydroid_menu ;;
+            engines) cn_engines_menu ;;
+            machines) cn_machines_menu ;;
             sandbox) cn_sandbox_menu ;;
             config) cn_shared_config_menu ;;
             cleanup) cn_cleanup_menu ;;
@@ -2396,13 +2417,13 @@ podman      daemonless, rootless by default, docker-compatible CLI.
 containerd  the runtime Docker itself uses; nerdctl is its CLI.
 lxc/lxd/incus system containers: a full init, no image layering.
 libvirt     real virtual machines with their own kernel (KVM).
+nspawn      systemd's own namespace machine runner.
 waydroid   Android userspace in an LXC container (needs binder).
 apptainer   single-file images for HPC; no daemon.
 bubblewrap  namespace sandbox around one command.
 
-Distrobox, Toolbx and the Rootfs > Distro managers image workflows
-use docker or podman underneath; pick the engine here and those
-menus reuse it." ;;
+Distrobox, Toolbx and the distro-manager image workflows use docker
+or podman underneath; pick the engine here and they reuse it." ;;
             back|"") return 0 ;;
         esac
     done

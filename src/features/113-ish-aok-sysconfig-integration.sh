@@ -130,7 +130,6 @@ menu_rootfs() {
             guestroots "AOK app roots — catalog, install, mount or enter" \
             build     "Build a new local rootfs (guided; not an app install)" \
             download  "Download a prebuilt rootfs (always tar.gz)" \
-            manage    "Manage existing rootfs (chroot, inspect, pack, delete)" \
             workbench "Chroot workbench (manage rootfs)" \
             bootstrap "Bootstrap tools" \
             distros   "Distro managers" \
@@ -142,7 +141,6 @@ menu_rootfs() {
             guestroots) tui_call_menu systui_aok_roots_menu "AOK app roots" ;;
             build)     rootfs_builder || true ;;
             download)  rootfs_download || true ;;
-            manage)    rootfs_manage || true ;;
             workbench) menu_rootfs_workbench || true ;;
             bootstrap) menu_rootfs_bootstrap_tools || true ;;
             distros)   menu_rootfs_distro_managers || true ;;

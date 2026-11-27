@@ -35,6 +35,8 @@ systui_dm_save_fn rootfs_dm_catalog_for_install _systui_dm_catalog_prev
 systui_dm_save_fn rootfs_dm_menu_one          _systui_dm_menu_one_prev
 systui_dm_save_fn rootfs_dm_installed_names   _systui_dm_names_prev
 systui_dm_save_fn rootfs_dm_store_default     _systui_dm_store_prev
+systui_dm_save_fn rootfs_dm_browse_install _systui_dm_browse_prev
+
 
 # ---------------------------------------------------------------------------
 # Catalogue
@@ -42,20 +44,23 @@ systui_dm_save_fn rootfs_dm_store_default     _systui_dm_store_prev
 
 rootfs_dm_managers() {
     _systui_dm_managers_prev
-    printf '%s\n' \
-        'podman|podman|podman — run distribution images as rootless containers' \
-        'docker|docker|docker — run distribution images as containers' \
-        'lxc|lxc-create|LXC — system containers from distribution templates' \
-        'incus|incus|Incus — LXD-compatible system containers'
+}
+
+# Docker, Podman, LXC and Incus are managed by Containers & virtualization,
+# where their daemon, storage and network settings live. The distro-manager
+# menu links there instead of offering a second, thinner copy of each menu.
+rootfs_dm_container_tools() {
+    printf '%s\n' podman docker lxc incus
+}
+
+rootfs_dm_is_container_tool() { # <tag>
+    case "$1" in podman|docker|lxc|incus) return 0 ;; *) return 1 ;; esac
 }
 
 rootfs_dm_engine_tags() { # managers that cannot work without an external engine
     printf '%s\n' distrobox toolbx
 }
 
-rootfs_dm_runtime_tags() { # managers that have their own runtime settings
-    printf '%s\n' podman docker lxc incus
-}
 
 rootfs_dm_needs_engine() { # <tag>
     local t
@@ -287,7 +292,7 @@ rootfs_dm_install_image() { # <tag> <image> [name]
         podman|docker)
             [ -n "$name" ] || name=$(printf '%s' "$image" | sed 's|.*/||; s/:.*//; s/[^A-Za-z0-9_.-]/-/g')
             [ -n "$name" ] || name="systui-${tag}"
-            policy=$(cn_conf_get "dm_${tag}_pull" always)
+            policy=$(cn_conf_get "dm_${tag}_pull" "$(cn_conf_get dm_pull always)")
             if [ "$policy" = always ]; then
                 rootfs_dm_run "$tag" "Pull $image" pull "$image" || return 1
             fi
@@ -317,276 +322,34 @@ rootfs_dm_install_image() { # <tag> <image> [name]
 # Per-manager menus for the new engines
 # ---------------------------------------------------------------------------
 
-rootfs_dm_menu_podman() {
-    local c d
-    while true; do
-        c=$(tui_menu_no_tags "Podman (distributions)" \
-"State: $(cn_engine_state podman)
-Rootless user: $(cn_rootless_user_default)
-Store: $(cn_conf_get podman_graphroot /var/lib/containers/storage)" \
-            browse    "Browse/select distribution images and create containers" \
-            installed "List containers created from images" \
-            images    "List pulled images" \
-            enter     "Open a shell in a container" \
-            start     "Start a container" \
-            stop      "Stop a container" \
-            remove    "Remove a container" \
-            engine    "Open the full Podman manager (config, prune, rootless)" \
-            configure "Configure this manager" \
-            uninstall "Uninstall Podman" \
-            help      "Show podman help" \
-            back      "Back") || return 0
-        case "$c" in
-            browse) rootfs_dm_browse_install podman ;;
-            installed) rootfs_dm_show_command podman "podman ps" ps -a ;;
-            images) rootfs_dm_show_command podman "podman images" images ;;
-            enter|start|stop|remove)
-                d=$(rootfs_dm_pick_installed podman) || continue
-                [ -n "$d" ] || continue
-                case "$c" in
-                    enter) clear
-                           rootfs_dm_run podman "Shell in $d" exec -it "$d" /bin/sh || true
-                           read -rp "(press Enter)" _ || true ;;
-                    start) rootfs_dm_run podman "Start $d" start "$d" ;;
-                    stop) rootfs_dm_run podman "Stop $d" stop "$d" ;;
-                    remove) tui_yesno "Remove" "Delete container '$d'?" &&
-                            rootfs_dm_run podman "Remove $d" rm -f "$d" ;;
-                esac ;;
-            engine) cn_podman_menu ;;
-            configure) rootfs_dm_config_menu podman ;;
-            uninstall) rootfs_dm_remove podman ;;
-            help) rootfs_dm_show_command podman "podman help" --help ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
-rootfs_dm_menu_docker() {
-    local c d
-    while true; do
-        c=$(tui_menu_no_tags "Docker (distributions)" \
-"State: $(cn_engine_state docker)
-Data root: $(cn_conf_get docker_data_root /var/lib/docker)" \
-            browse    "Browse/select distribution images and create containers" \
-            installed "List containers created from images" \
-            images    "List pulled images" \
-            enter     "Open a shell in a container" \
-            start     "Start a container" \
-            stop      "Stop a container" \
-            remove    "Remove a container" \
-            engine    "Open the full Docker manager (daemon.json, compose, prune)" \
-            configure "Configure this manager" \
-            uninstall "Uninstall Docker" \
-            help      "Show docker help" \
-            back      "Back") || return 0
-        case "$c" in
-            browse) rootfs_dm_browse_install docker ;;
-            installed) rootfs_dm_show_command docker "docker ps" ps -a ;;
-            images) rootfs_dm_show_command docker "docker images" images ;;
-            enter|start|stop|remove)
-                d=$(rootfs_dm_pick_installed docker) || continue
-                [ -n "$d" ] || continue
-                case "$c" in
-                    enter) clear
-                           rootfs_dm_run docker "Shell in $d" exec -it "$d" /bin/sh || true
-                           read -rp "(press Enter)" _ || true ;;
-                    start) rootfs_dm_run docker "Start $d" start "$d" ;;
-                    stop) rootfs_dm_run docker "Stop $d" stop "$d" ;;
-                    remove) tui_yesno "Remove" "Delete container '$d'?" &&
-                            rootfs_dm_run docker "Remove $d" rm -f "$d" ;;
-                esac ;;
-            engine) cn_docker_menu ;;
-            configure) rootfs_dm_config_menu docker ;;
-            uninstall) rootfs_dm_remove docker ;;
-            help) rootfs_dm_show_command docker "docker help" --help ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
-rootfs_dm_menu_lxc() {
-    local c d
-    while true; do
-        c=$(tui_menu_no_tags "LXC (distributions)" \
-"Store: $(rootfs_dm_store lxc 2>/dev/null || echo /var/lib/lxc)
-Templates: $(ls /usr/share/lxc/templates 2>/dev/null | wc -l | tr -d ' ')" \
-            browse    "Create a container from the image catalogue" \
-            installed "List containers" \
-            enter     "Open a shell in a container" \
-            start     "Start a container" \
-            stop      "Stop a container" \
-            remove    "Destroy a container" \
-            adopt     "Open a container rootfs in the chroot workbench" \
-            engine    "Open the full LXC manager (network profile, config)" \
-            configure "Configure this manager" \
-            uninstall "Uninstall LXC" \
-            help      "Show lxc help" \
-            back      "Back") || return 0
-        case "$c" in
-            browse) rootfs_dm_browse_install lxc ;;
-            installed) rootfs_dm_show_command lxc "lxc-ls" ls --fancy ;;
-            enter|start|stop|remove)
-                d=$(rootfs_dm_pick_installed lxc) || continue
-                [ -n "$d" ] || continue
-                case "$c" in
-                    enter) clear
-                           rootfs_dm_run lxc "Attach to $d" attach -n "$d" || true
-                           read -rp "(press Enter)" _ || true ;;
-                    start) rootfs_dm_run lxc "Start $d" start -n "$d" -d ;;
-                    stop) rootfs_dm_run lxc "Stop $d" stop -n "$d" ;;
-                    remove) tui_yesno "Destroy" "Delete container '$d' and its filesystem?" &&
-                            rootfs_dm_run lxc "Destroy $d" destroy -n "$d" ;;
-                esac ;;
-            adopt) rootfs_dm_adopt lxc ;;
-            engine) cn_lxc_menu ;;
-            configure) rootfs_dm_config_menu lxc ;;
-            uninstall) rootfs_dm_remove lxc ;;
-            help) rootfs_dm_show_command lxc "lxc-start help" --help ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
-rootfs_dm_menu_incus() {
-    local c d
-    while true; do
-        c=$(tui_menu_no_tags "Incus (distributions)" \
-"State: $(cn_engine_state incus)
-Images: images: (images.linuxcontainers.org)" \
-            browse    "Launch an instance from the image catalogue" \
-            installed "List instances" \
-            enter     "Open a shell in an instance" \
-            start     "Start an instance" \
-            stop      "Stop an instance" \
-            remove    "Delete an instance" \
-            engine    "Open the full Incus manager (remotes, service)" \
-            configure "Configure this manager" \
-            uninstall "Uninstall Incus" \
-            help      "Show incus help" \
-            back      "Back") || return 0
-        case "$c" in
-            browse) rootfs_dm_browse_install incus ;;
-            installed) rootfs_dm_show_command incus "incus list" list ;;
-            enter|start|stop|remove)
-                d=$(rootfs_dm_pick_installed incus) || continue
-                [ -n "$d" ] || continue
-                case "$c" in
-                    enter) clear
-                           rootfs_dm_run incus "Shell in $d" exec "$d" -- /bin/sh || true
-                           read -rp "(press Enter)" _ || true ;;
-                    start) rootfs_dm_run incus "Start $d" start "$d" ;;
-                    stop) rootfs_dm_run incus "Stop $d" stop "$d" ;;
-                    remove) tui_yesno "Delete" "Delete instance '$d' and its storage?" &&
-                            rootfs_dm_run incus "Delete $d" delete "$d" ;;
-                esac ;;
-            engine) cn_lxd_incus_menu incus ;;
-            configure) rootfs_dm_config_menu incus ;;
-            uninstall) rootfs_dm_remove incus ;;
-            help) rootfs_dm_show_command incus "incus help" --help ;;
-            back|"") return 0 ;;
-        esac
-    done
-}
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
-rootfs_dm_runtime_config_menu() { # <tag>
-    local tag="$1" c
-    while true; do
-        case "$tag" in
-            podman|docker)
-                c=$(tui_menu_no_tags "Image & container defaults — $tag" \
-"Pull policy : $(cn_conf_get "dm_${tag}_pull" always)
-Create args : $(cn_conf_get "dm_${tag}_args" none)
-
-These arguments are reused for every container this menu creates
-from an image." \
-                    pull "Pull policy: $(cn_conf_get "dm_${tag}_pull" always)" \
-                    args "Extra create arguments" \
-                    engine "Open the engine configuration" \
-                    back "Back") || return 0
-                case "$c" in
-                    pull) cn_setting_choice "dm_${tag}_pull" "Pull policy" \
-                              "always re-pulls the image; missing only pulls what is absent." \
-                              "$(cn_conf_get "dm_${tag}_pull" always)" always missing never ;;
-                    args) cn_setting_input "dm_${tag}_args" "Create arguments" \
-                              "Arguments inserted before the image name (e.g. --network host -v /:/host):" "" ;;
-                    engine) case "$tag" in podman) cn_podman_config_menu ;; docker) cn_docker_config_menu ;; esac ;;
-                    back|"") return 0 ;;
-                esac
-                ;;
-            lxc|incus)
-                c=$(tui_menu_no_tags "Container defaults — $tag" \
-"Network bridge: $(cn_conf_get "dm_${tag}_network" lxcbr0)
-Autostart     : $(cn_conf_get "dm_${tag}_autostart" off)" \
-                    network "Network bridge: $(cn_conf_get "dm_${tag}_network" lxcbr0)" \
-                    autostart "Autostart new containers: $(cn_conf_get "dm_${tag}_autostart" off)" \
-                    engine "Open the engine configuration" \
-                    back "Back") || return 0
-                case "$c" in
-                    network) cn_setting_input "dm_${tag}_network" "Network bridge" \
-                                 "Bridge new containers attach to:" "lxcbr0" ;;
-                    autostart) cn_setting_bool "dm_${tag}_autostart" "Autostart" \
-                                   "Start new containers with the host?" off ;;
-                    engine) case "$tag" in lxc) cn_lxc_menu ;; incus) cn_lxd_incus_menu incus ;; esac ;;
-                    back|"") return 0 ;;
-                esac
-                ;;
-            distrobox|toolbx)
-                c=$(tui_menu_no_tags "Container engine — $tag" \
-"Manager preference: $(cn_conf_get dm_engine auto)
-Detected engine   : $(cn_engine_binaries | tr '\n' ' ')" \
-                    prefer "Preferred engine: $(cn_conf_get dm_engine auto)" \
-                    engine "Open the engine configuration" \
-                    check  "Verify the engine works now" \
-                    back   "Back") || return 0
-                case "$c" in
-                    prefer) cn_setting_choice dm_engine "Preferred engine" \
-                                "podman is rootless and needs no daemon; docker is the compatibility baseline." \
-                                "$(cn_conf_get dm_engine auto)" auto podman docker ;;
-                    engine) case "$(rootfs_dm_engine_preference "$tag")" in
-                                docker) cn_docker_config_menu ;;
-                                *) cn_podman_config_menu ;;
-                            esac ;;
-                    check) rootfs_dm_require_engine "$tag" &&
-                               tui_msg "Engine ready" "$(cn_engine_binaries | tr '\n' ' ') is usable." ||
-                               tui_msg "Engine unavailable" "No container engine is usable yet.
-
-Install one with Rootfs > Containers & virtualization." ;;
-                    back|"") return 0 ;;
-                esac
-                ;;
-            *) return 1 ;;
-        esac
-    done
-}
 
 rootfs_dm_config_menu() { # <tag>
     local tag="$1" c value store detected
     while true; do
         store=$(get_config "dm_store_$tag" "")
         detected=$(rootfs_dm_store_default "$tag" 2>/dev/null || echo "none detected")
-        local -a extra=()
-        case "$tag" in
-            podman|docker|lxc|incus) extra+=(runtime "Container runtime: images, pull policy, network") ;;
-            distrobox|toolbx) extra+=(runtime "Container runtime: engine preference and configuration") ;;
-        esac
         c=$(tui_menu_no_tags "Configure $(rootfs_dm_label "$tag")" \
 "Rootfs store: ${store:-auto ($detected)}
-Runs as: $(rootfs_dm_target_user "$tag")
-Engine: $(rootfs_dm_engine_preference "$tag" 2>/dev/null || echo n/a)" \
-            "${extra[@]}" \
-            store   "Rootfs location: ${store:-automatic}" \
-            detect  "Re-detect the rootfs location" \
-            user    "Run as user: $(rootfs_dm_target_user "$tag")" \
-            prefix  "Upstream install prefix: $(get_config dm_install_prefix /usr/local)" \
+Runs as     : $(rootfs_dm_target_user "$tag")
+Engine      : $(rootfs_dm_engine_preference "$tag" 2>/dev/null || echo n/a)
+
+Install prefix, engine preference and pull policy are shared by
+every manager — see 'Defaults' on the Distro managers menu." \
+            store    "Rootfs location: ${store:-automatic}" \
+            detect   "Re-detect the rootfs location" \
+            user     "Run as user: $(rootfs_dm_target_user "$tag")" \
             settings "Show every saved setting for $tag" \
-            reset   "Clear saved settings for $tag" \
-            back    "Back") || return 0
+            reset    "Clear saved settings for $tag" \
+            back     "Back") || return 0
         case "$c" in
-            runtime) rootfs_dm_runtime_config_menu "$tag" || true ;;
             store)
                 value=$(tui_input "Rootfs location" \
                     "Directory where $tag keeps installed distributions:" "${store:-$detected}") || continue
@@ -627,16 +390,11 @@ trees inside a container engine rather than as directories."
                 getent passwd "$value" >/dev/null 2>&1 || { tui_msg "Unknown user" "$value is not a user on this system."; continue; }
                 set_config "dm_user_$tag" "$value"
                 tui_msg "Saved" "$tag will run as $value." ;;
-            prefix)
-                value=$(tui_input "Install prefix" \
-                    "Prefix used when installing managers from upstream:" "$(get_config dm_install_prefix /usr/local)") || continue
-                case "$value" in /*) set_config dm_install_prefix "$value" ;;
-                    *) tui_msg "Invalid path" "Enter an absolute path." ;; esac ;;
             settings)
                 {
                     echo "SAVED SETTINGS — $tag"
                     echo
-                    grep -E "^(dm_|cn_dm_engine)" "$(systui_config_file)" 2>/dev/null | sort || echo '(none)'
+                    grep -E "^(dm_|cn_dm_)" "$(systui_config_file)" 2>/dev/null | sort || echo '(none)'
                     echo
                     echo "Detected store : $(rootfs_dm_store_default "$tag" 2>/dev/null || echo none)"
                     echo "Effective store: $(rootfs_dm_store "$tag" 2>/dev/null || echo none)"
@@ -647,8 +405,6 @@ trees inside a container engine rather than as directories."
             reset)
                 tui_yesno "Reset" "Clear systui's saved settings for $tag?" || continue
                 set_config "dm_store_$tag" ""; set_config "dm_user_$tag" ""
-                set_config "dm_${tag}_pull" ""; set_config "dm_${tag}_args" ""
-                set_config "dm_${tag}_network" ""; set_config "dm_${tag}_autostart" ""
                 tui_msg "Reset" "Saved settings for $tag were cleared." ;;
             back|"") return 0 ;;
         esac
@@ -660,29 +416,29 @@ trees inside a container engine rather than as directories."
 # ---------------------------------------------------------------------------
 
 rootfs_dm_menu_one() { # <tag>
-    case "$1" in
-        podman) rootfs_dm_menu_podman ;;
-        docker) rootfs_dm_menu_docker ;;
-        lxc) rootfs_dm_menu_lxc ;;
-        incus) rootfs_dm_menu_incus ;;
-        *)
-            # Engine-backed managers from the earlier layers get the engine
-            # check first so their menus are never entered half-working.
-            if rootfs_dm_needs_engine "$1" && rootfs_dm_available "$1"; then
-                rootfs_dm_require_engine "$1" || return 0
-            fi
-            _systui_dm_menu_one_prev "$1" ;;
-    esac
+    if rootfs_dm_is_container_tool "$1"; then
+        # Defence in depth: a stale tag from an older menu still lands on the
+        # real engine menu instead of "unsupported manager".
+        menu_rootfs_containers
+        return 0
+    fi
+    # Engine-backed managers get the engine check first so their menus are
+    # never entered half-working.
+    if rootfs_dm_needs_engine "$1" && rootfs_dm_available "$1"; then
+        rootfs_dm_require_engine "$1" || return 0
+    fi
+    _systui_dm_menu_one_prev "$1"
 }
 
 # Bulk installers iterate rootfs_dm_managers, so the new tools are picked up
 # automatically; this override only adds engine readiness to the front door.
 menu_rootfs_distro_managers() {
-    local c tag _bin label status engine_line
+    local c tag _bin label status
     while true; do
         local -a args=(
             multi-install "Install multiple managers (SPACE to select)"
-            engines       "Container runtimes & virtualization (engines, config)"
+            defaults      "Defaults — install prefix, engine, pull policy"
+            engines       "Container engines & virtualization"
         )
         while IFS='|' read -r tag _bin label; do
             [ -n "$tag" ] || continue
@@ -691,14 +447,15 @@ menu_rootfs_distro_managers() {
         done <<< "$(rootfs_dm_managers)"
         args+=(about "How these differ from bootstrap backends")
         args+=(back "Back")
-        engine_line=$(cn_engine_binaries 2>/dev/null | tr '\n' ' ')
         c=$(tui_menu_no_tags "Distro Managers" \
-"Engines: ${engine_line:-none installed}
+"Engines: $(cn_engine_binaries 2>/dev/null | tr '\n' ' ' || true)
 
-Select a manager, install several with SPACE, or configure the
-container runtimes they depend on." "${args[@]}") || return 0
+These install a ready-made distribution into their own store.
+Docker, Podman, LXC and Incus live under Containers & virtualization." \
+            "${args[@]}") || return 0
         case "$c" in
             multi-install) rootfs_dm_install_multiple_managers ;;
+            defaults) rootfs_dm_settings_menu ;;
             engines) menu_rootfs_containers ;;
             about)
                 tui_msg "Distro managers vs bootstrap backends" \
@@ -710,9 +467,10 @@ Distro managers ship one pinned version per distribution into
 their own store and choose their own mirrors, so those options
 do not apply. Some also refuse to run as root.
 
-Container-backed managers (podman, docker, lxc, incus) live in
-Containers & virtualization where their daemon, storage and
-network settings are shared with the rest of systui." ;;
+Install with a manager, then open the tree in the workbench.
+
+Container engines (docker, podman) and system containers (lxc,
+incus) have their own front door: Containers & virtualization." ;;
             back|"") return 0 ;;
             *)
                 if rootfs_dm_available "$c"; then
@@ -726,6 +484,102 @@ Install it now?"; then
                     rootfs_dm_install "$c"
                     rootfs_dm_available "$c" && rootfs_dm_menu_one "$c"
                 fi ;;
+        esac
+    done
+}
+
+
+
+# ---------------------------------------------------------------------------
+# Image browsing for the container-backed managers
+#
+# The earlier browse workflow only understood proot-distro, chroot-distro,
+# distrobox, toolbx and udocker, so choosing "browse" for podman/docker/lxc/
+# incus did nothing at all. One implementation now covers them.
+# ---------------------------------------------------------------------------
+
+rootfs_dm_browse_install() { # <tag>
+    local tag="$1" query="" selected="" image name failed=""
+    case "$tag" in
+        podman|docker|lxc|incus) : ;;
+        *) _systui_dm_browse_prev "$tag"; return $? ;;
+    esac
+
+    case "$tag" in
+        podman|docker)
+            query=$(tui_input "Create from an image" \
+                "Search Docker Hub (blank = curated distribution list):" "") || return 0
+            ;;
+        *)
+            query=""
+            ;;
+    esac
+
+    local select_rc=0
+    selected=$(rootfs_dm_select_catalog_entries "$tag" "$query") || select_rc=$?
+    case "$select_rc" in
+        0) ;;
+        2) return 0 ;;
+        *)
+            selected=$(tui_input "Create with $tag" \
+                "No catalogue entries were returned. Enter an image reference (blank cancels):" "") || return 0
+            [ -n "$selected" ] || return 0
+            ;;
+    esac
+
+    while IFS= read -r image; do
+        [ -n "$image" ] || continue
+        name=$(printf '%s' "$image" | sed 's|.*/||; s/:.*//; s/[^A-Za-z0-9_.-]/-/g')
+        name=$(tui_input "$(rootfs_dm_label "$tag")" \
+            "Name for the container created from $image:" "$name") || continue
+        [ -n "$name" ] || continue
+        rootfs_dm_install_image "$tag" "$image" "$name" || failed="$failed $image"
+    done <<< "$selected"
+
+    [ -z "$failed" ] || tui_msg "Some containers failed" \
+"Failed:$failed
+
+See $LOGFILE for the command output."
+}
+
+# ---------------------------------------------------------------------------
+# Global distro-manager defaults
+#
+# Settings that are not per manager live here instead of being repeated in
+# every manager's configuration menu.
+# ---------------------------------------------------------------------------
+
+rootfs_dm_settings_menu() {
+    local c value
+    while true; do
+        c=$(tui_menu_no_tags "Distro manager defaults" \
+"Upstream install prefix : $(get_config dm_install_prefix /usr/local)
+Preferred engine        : $(cn_conf_get dm_engine auto)
+Image pull policy       : $(cn_conf_get dm_pull always)
+Detected engines        : $(cn_engine_binaries | tr '\n' ' ')" \
+            prefix "Upstream install prefix: $(get_config dm_install_prefix /usr/local)" \
+            engine "Preferred engine: $(cn_conf_get dm_engine auto)" \
+            pull   "Image pull policy: $(cn_conf_get dm_pull always)" \
+            reset  "Reset these defaults" \
+            back   "Back") || return 0
+        case "$c" in
+            prefix)
+                value=$(tui_input "Install prefix" \
+                    "Prefix used when installing managers from upstream:" \
+                    "$(get_config dm_install_prefix /usr/local)") || continue
+                case "$value" in /*) set_config dm_install_prefix "$value" ;;
+                    *) tui_msg "Invalid path" "Enter an absolute path." ;; esac ;;
+            engine) cn_setting_choice dm_engine "Preferred engine" \
+                        "Distrobox and Toolbx use this engine when both are installed." \
+                        "$(cn_conf_get dm_engine auto)" auto podman docker ;;
+            pull) cn_setting_choice dm_pull "Image pull policy" \
+                        "always downloads on every create, missing only what is absent, never skips pulls entirely." \
+                        "$(cn_conf_get dm_pull always)" always missing never ;;
+            reset)
+                tui_yesno "Reset defaults" "Clear the shared distro-manager defaults?" || continue
+                set_config dm_install_prefix ""; set_config dm_engine ""; set_config dm_pull ""
+                tui_msg "Reset" "Shared defaults cleared." ;;
+            back|"") return 0 ;;
         esac
     done
 }

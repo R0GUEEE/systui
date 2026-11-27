@@ -51,9 +51,34 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 - The Distro managers menu shows the detected engines and links to the new
   Containers & virtualization utility; bulk install still uses SPACE.
 
+### Menu cleanup
+
+- **Containers & virtualization** lists eight grouped entries instead of
+  twelve peers: engines (Docker/Podman/containerd), machines (LXC/LXD/Incus/
+  libvirt/nspawn/Waydroid), sandboxes (Apptainer/bubblewrap), shared
+  configuration, status, cleanup and about.
+- **One engine menu** now serves Docker and Podman (they differ only in the
+  service unit and configuration file); the duplicate copies had started to
+  drift. Registry mirrors, insecure registries, DNS and the address pool live
+  once, in the shared configuration; each engine menu keeps its own storage,
+  firewall and security settings plus registry login.
+- **Distro managers no longer duplicate the engines**: podman, docker, LXC and
+  Incus were removed from that catalogue and its four thin per-engine menus
+  were deleted — `Containers & virtualization` owns them, and the Distro
+  managers menu links there. Fixes a real bug in the process: "browse images"
+  was a silent no-op for those four, because the browse workflow only knew
+  proot-distro/chroot-distro/distrobox/toolbx/udocker.
+- **Shared distro-manager defaults** (install prefix, preferred engine, image
+  pull policy) moved out of every manager's configuration menu into one
+  `Defaults` entry.
+- **Rootfs menu**: the separate `Manage existing rootfs` entry is gone. The
+  Workbench already covered it; the actions only Manage had (backend
+  reconfiguration, chroot entry options, Bedrock strata, build manifest,
+  clone, rename) now live under `More` in the per-rootfs Workbench menu.
+
 ### Tests
 
-- `tests/test-container-virt.sh` (75 checks): catalogue integrity, per-PM
+- `tests/test-container-virt.sh` (86 checks): catalogue integrity, per-PM
   package names, daemon.json/registries/storage/containers/LXC rendering
   (including empty configurations), validation helpers, the new managers'
   exact commands and the Rootfs menu wiring.

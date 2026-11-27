@@ -4176,7 +4176,6 @@ menu_rootfs() {
         # Safely capture menu result and handle cancellation (ESC/Cancel)
         if ! c=$(tui_menu "Rootfs" "Mini root filesystems:" \
             build      "Build a new rootfs (guided, 13 stages)" \
-            manage     "Manage existing rootfs (chroot, inspect, delete...)" \
             workbench  "Chroot workbench (mount, modify, pack any rootfs)" \
             bootstrap  "Bootstrap tools  (debootstrap, mmdebstrap, pacstrap...)" \
             distros    "Distro managers  (proot-distro, chroot-distro...)" \
@@ -4191,7 +4190,6 @@ menu_rootfs() {
         
         case "$c" in
             build)      rootfs_builder || true ;;
-            manage)     rootfs_manage || true ;;
             workbench)  menu_rootfs_workbench || true ;;
             bootstrap)  menu_rootfs_bootstrap_tools || true ;;
             distros)    menu_rootfs_distro_managers || true ;;

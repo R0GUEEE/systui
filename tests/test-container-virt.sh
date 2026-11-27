@@ -52,6 +52,8 @@ log() { :; }
 . "$ROOT/src/features/60-rootfs-docker-image-normalization.sh"
 # shellcheck source=../src/features/99-distro-manager-distrobox-final.sh
 . "$ROOT/src/features/99-distro-manager-distrobox-final.sh"
+# shellcheck source=../src/features/zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
+. "$ROOT/src/features/zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh"
 # shellcheck source=../src/features/zzz-rootfs-container-virt.sh
 . "$ROOT/src/features/zzz-rootfs-container-virt.sh"
 # shellcheck source=../src/features/zzz-rootfs-distro-managers-extended.sh
@@ -71,6 +73,7 @@ check() {
 }
 equals() { [ "$1" = "$2" ] || { printf '    expected: %s\n    actual  : %s\n' "$2" "$1"; return 1; }; }
 contains() { grep -Fq -- "$2" "$1" || { printf '    missing in %s: %s\n' "$1" "$2"; return 1; }; }
+has_container_tools() { local t; for t in "$@"; do rootfs_dm_container_tools | grep -qx "$t" || return 1; done; }
 not_contains() { ! grep -Fq -- "$2" "$1"; }
 
 # ---------------------------------------------------------------------------
@@ -203,12 +206,16 @@ check "list split de-duplicates" equals "$(cn_split_list 'a, b a;c' | tr '\n' ' 
 # ---------------------------------------------------------------------------
 has_managers() { local t; for t in "$@"; do rootfs_dm_managers | cut -d'|' -f1 | grep -qx "$t" || return 1; done; }
 lxc_not_engine_backed() { ! rootfs_dm_needs_engine lxc; }
-check "new managers are in the catalogue" has_managers podman docker lxc incus
-check "original managers are still listed" has_managers proot-distro chroot-distro distrobox toolbx schroot udocker machinectl arch-chroot
+check "distro-manager catalogue keeps only systui-owned managers" has_managers \
+    proot-distro chroot-distro distrobox toolbx schroot udocker machinectl arch-chroot
+container_tool_not_duplicated() { ! rootfs_dm_managers | cut -d'|' -f1 | grep -qx "$1"; }
+check "podman is not duplicated in the distro-manager catalogue" container_tool_not_duplicated podman
+check "docker is not duplicated in the distro-manager catalogue" container_tool_not_duplicated docker
+check "lxc is not duplicated in the distro-manager catalogue" container_tool_not_duplicated lxc
+check "incus is not duplicated in the distro-manager catalogue" container_tool_not_duplicated incus
+check "container tools are still addressable" has_container_tools podman docker lxc incus
 check "distrobox is treated as engine-backed" rootfs_dm_needs_engine distrobox
 check "lxc is not engine-backed" lxc_not_engine_backed
-podman_has_runtime_section() { rootfs_dm_runtime_tags | grep -qx podman; }
-check "podman has a runtime config section" podman_has_runtime_section
 
 CALLS=""
 rootfs_dm_run() {
@@ -246,10 +253,23 @@ check "existing managers still use the earlier command map" equals "$CALLS" \
 rootfs_menu_has_entry() { declare -f menu_rootfs | grep -Fq 'containers'; }
 rootfs_menu_dispatches() { declare -f menu_rootfs | grep -Fq 'menu_rootfs_containers'; }
 dm_menu_links_engines() { declare -f menu_rootfs_distro_managers | grep -Fq 'menu_rootfs_containers'; }
+dm_menu_has_defaults() { declare -f menu_rootfs_distro_managers | grep -Fq 'rootfs_dm_settings_menu'; }
+dm_menu_has_bulk() { declare -f menu_rootfs_distro_managers | grep -Fq 'rootfs_dm_install_multiple_managers'; }
+dm_config_has_no_prefix() { ! declare -f rootfs_dm_config_menu | grep -Fq 'dm_install_prefix'; }
+rootfs_menu_has_no_manage() { ! declare -f menu_rootfs | grep -Eq '^\s+manage\)'; }
+workbench_has_more() { declare -f rootfs_wb_menu_for | grep -Fq 'rootfs_wb_more_menu'; }
+engine_menus_share_impl() { declare -f cn_docker_menu | grep -Fq 'cn_engine_menu docker' &&
+                            declare -f cn_podman_menu | grep -Fq 'cn_engine_menu podman'; }
 fn_defined() { declare -F "$1" >/dev/null 2>&1; }
 check "Rootfs menu defines the container entry" rootfs_menu_has_entry
 check "Rootfs menu dispatches to the container utility" rootfs_menu_dispatches
 check "distro-manager menu links the engine front door" dm_menu_links_engines
+check "distro-manager menu offers shared defaults" dm_menu_has_defaults
+check "distro-manager menu offers bulk install" dm_menu_has_bulk
+check "distro-manager config no longer repeats the install prefix" dm_config_has_no_prefix
+check "rootfs menu no longer offers the duplicate manage entry" rootfs_menu_has_no_manage
+check "workbench exposes the merged 'more' actions" workbench_has_more
+check "engine menu is shared by docker and podman" engine_menus_share_impl
 check "container menu is defined" fn_defined menu_rootfs_containers
 check "docker menu is defined" fn_defined cn_docker_menu
 check "podman menu is defined" fn_defined cn_podman_menu
@@ -267,6 +287,20 @@ loads_after_distrobox() {
     [ -n "$a" ] && [ -n "$b" ] && [ "$a" -gt "$b" ]
 }
 check "extension loads after the distrobox final layer" loads_after_distrobox
+
+# The image browser must reach the container-backed managers (it used to be a
+# silent no-op for them).
+tui_input() { printf '%s\n' "${3:-}"; }
+rootfs_dm_select_catalog_entries() { printf '%s\n' "docker.io/library/debian:stable-slim"; }
+CALLS=""
+rootfs_dm_browse_install docker >/dev/null 2>&1
+check "browse creates a container for docker" equals "$CALLS" 'docker|pull docker.io/library/debian:stable-slim
+docker|create --name debian -it docker.io/library/debian:stable-slim
+'
+CALLS=""
+rootfs_dm_browse_install lxc >/dev/null 2>&1
+check "browse launches an LXC container" equals "$CALLS" 'lxc|launch docker.io/library/debian:stable-slim debian
+'
 
 printf '%s checks, %s failures\n' "$checks" "$failures"
 [ "$failures" -eq 0 ]

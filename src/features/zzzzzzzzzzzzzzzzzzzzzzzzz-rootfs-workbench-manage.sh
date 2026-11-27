@@ -309,6 +309,70 @@ rootfs_wb_delete() { # <target>
     return 1
 }
 
+# Actions that used to live in the separate Rootfs > Manage menu. They are
+# rare enough to sit one level down instead of lengthening the main list.
+rootfs_wb_more_menu() { # <target>
+    local t="$1" c value dst
+    while true; do
+        c=$(tui_menu_no_tags "More: $(basename "$t")" \
+"Backend, maintenance and metadata actions for this rootfs." \
+            backend  "Configure the recorded bootstrap backend" \
+            entrycfg "Chroot entry options (shell, mounts, environment)" \
+            strata   "Bedrock strata (list/fetch/enable/remove)" \
+            manifest "Show the build manifest" \
+            clone    "Clone this rootfs to a new directory" \
+            rename   "Rename this rootfs" \
+            back     "Back") || return 0
+        case "$c" in
+            backend)
+                if declare -F rootfs_backend_reconfigure >/dev/null 2>&1; then
+                    rootfs_backend_reconfigure "$t"
+                else
+                    tui_msg "Unavailable" "Backend reconfiguration is not loaded."
+                fi ;;
+            entrycfg)
+                if declare -F rootfs_chroot_options_menu >/dev/null 2>&1; then
+                    rootfs_chroot_options_menu "$t"
+                else
+                    tui_msg "Unavailable" "Chroot options are not loaded."
+                fi ;;
+            strata)
+                if declare -F rootfs_bedrock_strata_manager >/dev/null 2>&1; then
+                    rootfs_bedrock_strata_manager "$t"
+                else
+                    tui_msg "Not a Bedrock rootfs" \
+"The Bedrock strata manager only applies to Bedrock-AOK roots."
+                fi ;;
+            manifest)
+                if [ -f "$t/etc/systui-build.conf" ]; then
+                    cp -- "$t/etc/systui-build.conf" "$(rootfs_report_file)" 2>/dev/null || true
+                else
+                    printf 'No build manifest at %s\n' "$t/etc/systui-build.conf" > "$(rootfs_report_file)"
+                fi
+                tui_text "Build manifest: $(basename "$t")" "$(rootfs_report_file)" ;;
+            clone)
+                value=$(tui_input "Clone rootfs" "New directory for the copy:" "${t}-copy") || continue
+                [ -n "$value" ] || continue
+                if [ -e "$value" ]; then tui_msg "Exists" "$value already exists."; continue; fi
+                run_cmd "Clone $t to $value" cp -a "$t" "$value" ;;
+            rename)
+                dst=$(tui_input "Rename rootfs" \
+                    "New name (a directory name, not a path):" "$(basename "$t")") || continue
+                [ -n "$dst" ] || continue
+                [ "$dst" = "$(basename "$t")" ] && continue
+                case "$dst" in
+                    */*|.|..) tui_msg "Invalid name" "Enter a directory name, not a path."; continue ;;
+                esac
+                if [ -e "$(dirname "$t")/$dst" ]; then
+                    tui_msg "Exists" "$(dirname "$t")/$dst already exists."
+                    continue
+                fi
+                mv -- "$t" "$(dirname "$t")/$dst" && tui_msg "Renamed" "Now at $(dirname "$t")/$dst" ;;
+            back|"") return 0 ;;
+        esac
+    done
+}
+
 rootfs_wb_menu_for() { # <target>
     local t="$1" c engine mounts
     # Diagnose and offer to repair a broken shell entry instead of quoting a
@@ -340,6 +404,7 @@ You can still inspect, mount, pack, or delete it, but entering it will fail."
             pack     "Pack/compress into a tarball" \
             pkg      "Package management inside the rootfs" \
             config   "In-rootfs configuration" \
+            more     "More — backend, clone, rename, manifest, strata" \
             delete   "Delete this rootfs" \
             other    "Work on a different rootfs" \
             back     "Back") || return 0
@@ -369,6 +434,7 @@ You can still inspect, mount, pack, or delete it, but entering it will fail."
             status)  rootfs_wb_mount_report "$t" ;;
             pack)    rootfs_wb_pack "$t" ;;
             pkg)     rootfs_pkg_menu "$t" ;;
+            more)    rootfs_wb_more_menu "$t" ;;
             config)  rootfs_cfg_menu "$t" ;;
             delete)
                 if rootfs_wb_delete "$t"; then
