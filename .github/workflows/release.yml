@@ -168,11 +168,15 @@ jobs:
 
           tag_sha=$(git rev-parse "${{ steps.tag.outputs.tag }}^{commit}")
           if [ "$built_sha" = "$tag_sha" ]; then
-            note="Built from this tag (\`${built_sha:0:7}\`)."
+            note="Compiled from this tag (\`${built_sha:0:7}\`)."
           elif git cat-file -e "$built_sha" 2>/dev/null && git diff --quiet "$built_sha" "$tag_sha" -- Sources project.yml; then
-            note="Built at \`${built_sha:0:7}\`, where the app sources are identical to this tag; only the version metadata was re-stamped, because the macOS runner did not build the tag itself."
+            note="Compiled at \`${built_sha:0:7}\`, where the app sources are identical to this tag; only the version metadata was re-stamped, because the macOS runner did not build the tag itself."
+          elif git cat-file -e "$built_sha" 2>/dev/null \
+               && git diff --quiet "$built_sha" "$tag_sha" -- Sources \
+               && [ "$(git show "$built_sha:project.yml" | grep -vE '^[[:space:]]*(MARKETING_VERSION|CURRENT_PROJECT_VERSION):')" = "$(git show "$tag_sha:project.yml" | grep -vE '^[[:space:]]*(MARKETING_VERSION|CURRENT_PROJECT_VERSION):')" ]; then
+            note="Compiled at \`${built_sha:0:7}\`: the Swift sources are identical to this tag and project.yml differs only in MARKETING_VERSION/CURRENT_PROJECT_VERSION, so only the version metadata was re-stamped. The macOS runner did not build the tag itself."
           else
-            note="Built at \`${built_sha:0:7}\`, which differs from this tag; treat it as the last known-good build."
+            note="Compiled at \`${built_sha:0:7}\`, whose sources differ from this tag; treat it as the last known-good build."
           fi
           printf '%s\n' "$note" > ipa-note.txt
           echo "IPA: $ipa — $note"
