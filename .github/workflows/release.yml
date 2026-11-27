@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_run:
+    # The iOS build lives in its own workflow and runs on a macOS runner that
+    # is often unavailable. When it does complete, attach its IPA to the
+    # matching release instead of leaving it in an artifact store nobody reads.
+    workflows: ['Build iOS app']
+    types: [completed]
   workflow_dispatch:
     inputs:
       tag:
@@ -11,23 +17,57 @@ on:
 
 permissions:
   contents: write
+  actions: read
 
 jobs:
   release:
+    # A workflow_run event carries no tag; only a successful iOS build is useful.
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-          ref: ${{ github.event.inputs.tag || github.ref }}
 
-      - name: Resolve the version
-        id: version
+      - name: Resolve the release tag
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          if [ "$EVENT" = workflow_run ]; then
+            tag=$(gh api "repos/${{ github.repository }}/releases" \
+                    --jq '[.[]|select(.tag_name|startswith("v"))][0].tag_name' 2>/dev/null || true)
+            if [ -z "$tag" ]; then
+              echo 'no published release to update; nothing to do'
+              echo 'skip=1' >> "$GITHUB_OUTPUT"
+              exit 0
+            fi
+          elif [ "$EVENT" = workflow_dispatch ]; then
+            tag="$INPUT_TAG"
+          else
+            tag="$REF_NAME"
+          fi
+          case "$tag" in
+            v*) ;;
+            *) echo "tag '$tag' does not start with v" >&2; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Check out that tag
+        if: steps.tag.outputs.skip != '1'
+        run: git checkout -f "tags/${{ steps.tag.outputs.tag }}"
+
+      - name: Version consistency
+        id: version
+        if: steps.tag.outputs.skip != '1'
+        run: |
+          set -euo pipefail
+          tag="${{ steps.tag.outputs.tag }}"
           version=$(head -n1 src/VERSION | tr -d '[:space:]')
-          case "$tag" in v*) ;; *) echo "tag '$tag' is not v<version>" >&2; exit 1 ;; esac
           if [ "${tag#v}" != "$version" ]; then
             echo "tag $tag does not match src/VERSION ($version)" >&2
             exit 1
@@ -37,10 +77,13 @@ jobs:
             echo "project.yml MARKETING_VERSION ($app) does not match src/VERSION ($version)" >&2
             exit 1
           fi
+          grep -q "^## $version " CHANGELOG.md || { echo "CHANGELOG.md has no '$version' section" >&2; exit 1; }
+          build=$(sed -n 's/^[[:space:]]*CURRENT_PROJECT_VERSION:[[:space:]]*"\(.*\)"$/\1/p' project.yml | head -1)
           echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "build=${build:-1}" >> "$GITHUB_OUTPUT"
 
       - name: Extract release notes from the changelog
+        if: steps.tag.outputs.skip != '1'
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
@@ -53,9 +96,9 @@ jobs:
             echo "no CHANGELOG section for $version" >&2
             exit 1
           fi
-          cat notes.md
 
-      - name: Build the source archive and its checksum
+      - name: Build the source archive
+        if: steps.tag.outputs.skip != '1'
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
@@ -65,10 +108,9 @@ jobs:
           # describe exactly what the release points at.
           git archive --format=tar.gz --prefix="systui-$version/" \
             -o "$out/systui-$version.tar.gz" HEAD
-          ( cd "$out" && sha256sum "systui-$version.tar.gz" > SHA256SUMS.txt )
-          cat "$out/SHA256SUMS.txt"
 
       - name: Prove the archive installs a working tree
+        if: steps.tag.outputs.skip != '1'
         run: |
           set -euo pipefail
           version="${{ steps.version.outputs.version }}"
@@ -86,14 +128,62 @@ jobs:
           bash "$tree/tests/test-repos-alternatives-final.sh" >/dev/null
           echo "archive verified: version $(cat "$tree/src/VERSION")"
 
+      - name: Attach the unsigned IPA when CI has one
+        if: steps.tag.outputs.skip != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD: ${{ steps.version.outputs.build }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/dist"
+          ipa="SystuiRootfs-$VERSION-unsigned.ipa"
+          # Newest non-expired IPA artifact, whatever produced it. The macOS
+          # runner is unreliable here, so a release takes the last good build
+          # rather than shipping without an installable bundle.
+          id=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
+                 --jq '[.artifacts[]|select(.name=="SystuiRootfs-unsigned-IPA" and .expired==false)][0].id' 2>/dev/null || true)
+          if [ -z "${id:-}" ] || [ "$id" = null ]; then
+            echo "no IPA artifact available; publishing without one"
+            exit 0
+          fi
+          built_sha=$(gh api "repos/${{ github.repository }}/actions/artifacts/$id" --jq '.workflow_run.head_sha')
+          work="$RUNNER_TEMP/ipa"
+          mkdir -p "$work"
+          gh api "repos/${{ github.repository }}/actions/artifacts/$id/zip" > "$work/a.zip"
+          ( cd "$work" && unzip -qo a.zip && rm -f a.zip )
+          # Only the declared version changes; the Mach-O is copied untouched.
+          python3 tools/ipa_stamp.py "$work/SystuiRootfs.ipa" "$out/$ipa" "$VERSION" "$BUILD"
+
+          if [ "$built_sha" = "$(git rev-parse HEAD)" ]; then
+            note="Built from this tag (\`${built_sha:0:7}\`)."
+          elif git cat-file -e "$built_sha" 2>/dev/null && git diff --quiet "$built_sha" HEAD -- Sources project.yml; then
+            note="Built at \`${built_sha:0:7}\`, where the app sources are identical to this tag; only the version metadata was re-stamped, because the macOS runner did not build the tag itself."
+          else
+            note="Built at \`${built_sha:0:7}\`, which differs from this tag; treat it as the last known-good build."
+          fi
+          printf '%s\n' "$note" > ipa-note.txt
+          echo "IPA: $ipa — $note"
+
+      - name: Checksums
+        if: steps.tag.outputs.skip != '1'
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/dist"
+          ( cd "$out" && sha256sum ./* > SHA256SUMS.txt && cat SHA256SUMS.txt )
+
       - name: Publish the release
+        if: steps.tag.outputs.skip != '1'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          tag="${{ steps.version.outputs.version }}"
-          tag="v$tag"
+          tag="${{ steps.tag.outputs.tag }}"
           out="$RUNNER_TEMP/dist"
+          if [ -f ipa-note.txt ]; then
+            printf '\n### Unsigned IPA\n\n' >> notes.md
+            printf '%s\n' "$(cat ipa-note.txt)" >> notes.md
+          fi
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "$out"/* --clobber
             gh release edit "$tag" --notes-file notes.md
