@@ -94,6 +94,21 @@ if [ "$(id -u)" -eq 0 ]; then
         SYSTUI_PM_OVERRIDE=apt bash "$1" --deps-only --dry-run 2>/dev/null | grep -q "\[dry-run\] core (apt):"' _ "$INSTALL"
     check "install.sh --deps-only --dry-run exits successfully" bash -c '
         SYSTUI_PM_OVERRIDE=apt bash "$1" --deps-only --dry-run >/dev/null 2>&1' _ "$INSTALL"
+    # Regression: the dependency planner used mktemp before installing
+    # anything, so a minimal host without coreutils died with
+    # "install.sh: 424: mktemp: not found" before it could install coreutils.
+    check "install.sh plans dependencies without mktemp on the host" bash -c '
+        mkdir -p "$2/stub"
+        printf "#!/bin/sh\necho \"mktemp: not found\" >&2\nexit 127\n" > "$2/stub/mktemp"
+        chmod +x "$2/stub/mktemp"
+        out=$(PATH="$2/stub:$PATH" SYSTUI_PM_OVERRIDE=apt bash "$1" --deps-only --dry-run 2>&1)
+        printf "%s\n" "$out" | grep -q "\[dry-run\] core (apt):"' _ "$INSTALL" "$tmp"
+    check "install.sh never calls mktemp for dependency planning" bash -c '
+        mkdir -p "$2/stub2"
+        printf "#!/bin/sh\nprintf \"mktemp-was-called\\n\" >> \"$2/calls\"\nexit 127\n" > "$2/stub2/mktemp"
+        chmod +x "$2/stub2/mktemp"
+        PATH="$2/stub2:$PATH" SYSTUI_PM_OVERRIDE=apt bash "$1" --deps-only --dry-run >/dev/null 2>&1
+        [ ! -s "$2/calls" ]' _ "$INSTALL" "$tmp"
     check "the dependency plan contains only core packages" bash -c '
         out=$(SYSTUI_PM_OVERRIDE=apk bash "$1" --deps-only --dry-run 2>/dev/null)
         printf "%s\n" "$out" | grep -q "\[dry-run\] core (apk):"

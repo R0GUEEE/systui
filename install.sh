@@ -400,7 +400,7 @@ install_dependencies() {
         info "Skipping dependency installation (SYSTUI_SKIP_DEPS=1)"
         return 0
     fi
-    local pm col tiers manifest row_file tier pkg
+    local pm col tiers manifest tier pkg
     pm="${SYSTUI_PM_OVERRIDE:-$(detect_pm)}"
     [ -n "$pm" ] || error "Could not detect a package manager. Install dependencies manually or set SYSTUI_PM_OVERRIDE=<apt|apk|pacman|dnf|zypper|xbps|emerge>."
     col=$(deps_family_column "$pm") || error "Unsupported package manager: $pm"
@@ -421,22 +421,24 @@ install_dependencies() {
     info "Detected package manager: $pm"
     info "Dependency tiers: $tiers"
 
-    row_file=$(mktemp) || error "Could not create a temporary file for the dependency manifest."
-    deps_rows "$col" "$tiers" > "$row_file" || true
-    if [ ! -s "$row_file" ]; then
-        rm -f "$row_file"
-        error "The dependency manifest produced no packages for $pm (tiers: $tiers)."
-    fi
-
-    local core_pkgs="" toolkit_pkgs=""
+    # No temporary file: mktemp is not guaranteed on a minimal host, and the
+    # whole point of this step is to install the tools it would need. A
+    # here-document feeds the loop in the current shell, so the package lists
+    # survive it (a pipe would run the loop in a subshell).
+    local core_pkgs="" toolkit_pkgs="" tier pkg
     while IFS=$TAB read -r tier pkg; do
         [ -n "$pkg" ] || continue
         case "$tier" in
             core) core_pkgs="$core_pkgs $pkg" ;;
             *)    toolkit_pkgs="$toolkit_pkgs $pkg" ;;
         esac
-    done < "$row_file"
-    rm -f "$row_file"
+    done <<EOF
+$(deps_rows "$col" "$tiers" 2>/dev/null || true)
+EOF
+
+    if [ -z "$core_pkgs$toolkit_pkgs" ]; then
+        error "The dependency manifest produced no packages for $pm (tiers: $tiers)."
+    fi
 
     # shellcheck disable=SC2086  # package names never contain whitespace
     deps_install_tier "$pm" core $core_pkgs
@@ -450,25 +452,24 @@ check_command() { command -v "$1" >/dev/null 2>&1; }
 
 verify_dependencies() {
     info "Verifying dependencies..."
-    local tiers manifest entry tier cmd missing_commands="" cmd_list
+    local tiers manifest entry tier cmd missing_commands=""
     tiers=$(deps_tiers)
     if manifest=$(deps_manifest_path); then
-        cmd_list=$(mktemp) || cmd_list=""
-        if [ -n "$cmd_list" ]; then
-            deps_missing_commands "$tiers" > "$cmd_list" 2>/dev/null || true
-            while IFS= read -r entry; do
-                [ -n "$entry" ] || continue
-                case "$entry" in
-                    soft:*)
-                        entry=${entry#soft:}
-                        warn "Optional ${entry%%:*} command not available: ${entry#*:}"
-                        ;;
-                    core:*) missing_commands="$missing_commands${entry#core:} " ;;
-                    *) warn "Optional ${entry%%:*} command not available: ${entry#*:}" ;;
-                esac
-            done < "$cmd_list"
-            rm -f "$cmd_list"
-        fi
+        # Same reason as above: no mktemp, and no pipe (which would put the
+        # loop in a subshell and discard missing_commands).
+        while IFS= read -r entry; do
+            [ -n "$entry" ] || continue
+            case "$entry" in
+                soft:*)
+                    entry=${entry#soft:}
+                    warn "Optional ${entry%%:*} command not available: ${entry#*:}"
+                    ;;
+                core:*) missing_commands="$missing_commands${entry#core:} " ;;
+                *) warn "Optional ${entry%%:*} command not available: ${entry#*:}" ;;
+            esac
+        done <<EOF
+$(deps_missing_commands "$tiers" 2>/dev/null || true)
+EOF
     else
         for cmd in bash dialog sed awk grep cut tr head sort find; do check_command "$cmd" || missing_commands="$missing_commands$cmd "; done
     fi

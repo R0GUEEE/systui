@@ -25,6 +25,13 @@ All notable changes to systui. The version shown in the TUI, `install.sh
   exits 99 is first on PATH for every run, the dependency plan must be
   byte-identical across all shells, and the installer is exercised end to end
   from `dash` and `zsh` into a throw-away prefix.
+- **Fixed: `install.sh: mktemp: not found` on a minimal host.** The dependency
+  planner wrote its row list through `mktemp` before installing anything, so a
+  system without coreutils died in the very step that was supposed to install
+  coreutils. Both planner loops now read a here-document from the manifest
+  command directly — no temporary file, no subshell, so the package lists
+  survive the loop. `tests/test-install-dependencies.sh` covers it with a
+  failing `mktemp` first on PATH.
 
 ### Containers & virtualization (new Rootfs utility)
 
