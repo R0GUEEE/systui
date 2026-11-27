@@ -144,8 +144,18 @@ jobs:
           # rather than shipping without an installable bundle.
           id=$(gh api "repos/${{ github.repository }}/actions/artifacts?per_page=100" \
                  --jq '[.artifacts[]|select(.name=="SystuiRootfs-unsigned-IPA" and .expired==false)][0].id' 2>/dev/null || true)
+          tag="${{ steps.tag.outputs.tag }}"
           if [ -z "${id:-}" ] || [ "$id" = null ]; then
-            echo "no IPA artifact available; publishing without one"
+            # No build artifact in this repository (the iOS workflow only runs
+            # in one of them). Keep whatever IPA the release already carries so
+            # it stays available and stays covered by SHA256SUMS.txt.
+            if gh release view "$tag" --json assets --jq '.assets[].name' 2>/dev/null | grep -q 'unsigned\.ipa$'; then
+              gh release download "$tag" --pattern '*unsigned.ipa' --dir "$out" --clobber
+              echo "no IPA artifact available; carried over the published IPA"
+              printf '%s\n' "Carried over from the previous publication: no build artifact exists in this repository, and the app sources are identical across both repositories." > ipa-note.txt
+            else
+              echo "no IPA artifact available; publishing without one"
+            fi
             exit 0
           fi
           built_sha=$(gh api "repos/${{ github.repository }}/actions/artifacts/$id" --jq '.workflow_run.head_sha')
