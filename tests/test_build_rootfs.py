@@ -36,7 +36,21 @@ class BuilderMatrixTests(unittest.TestCase):
         inits = {"Alpine":"OpenRC", "Devuan":"SysVinit", "Void Linux":"runit", "Gentoo":"OpenRC", "Arch Linux ARM":"systemd"}
         for distro, marker in cases.items():
             init = inits.get(distro, "systemd")
-            self.assertIn(marker, builder.package_command(distro, ["curl"], False, init))
+            self.assertIn(marker, builder.package_command(distro, ["curl"], [], False, [], init, "/bin/sh", "nano", False, "C.UTF-8"))
+
+    def test_profiles_expand_to_native_names_for_every_distro(self):
+        for distro in builder.DISTRO_ALIASES:
+            for profile in builder.PROFILE_KEYS:
+                names = builder.expand_packages(distro, [], [profile], "/bin/sh", "none")
+                self.assertTrue(names, (distro, profile))
+                self.assertTrue(all(builder.PACKAGE.fullmatch(name) for name in names), (distro, profile, names))
+
+    def test_generated_configuration_shell_is_valid_for_every_init_adapter(self):
+        cases = [("Debian", "systemd"), ("Devuan", "SysVinit"), ("Alpine", "OpenRC"), ("Void Linux", "runit")]
+        for distro, init in cases:
+            shell = builder.configure_rootfs(distro, init, "ish-aok", "UTC", ["1.1.1.1", "8.8.8.8"], "C.UTF-8", "builder", "/bin/bash", True, "nano", ["sshd", "cron", "nginx"], 2200)
+            result = __import__("subprocess").run(["sh", "-n"], input=shell, text=True, capture_output=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_package_parser_rejects_shell_metacharacters(self):
         self.assertIsNone(builder.PACKAGE.fullmatch("curl; touch /tmp/oops"))

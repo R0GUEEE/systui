@@ -1,10 +1,10 @@
 # Systui Rootfs iOS app
 
-Systui Rootfs is a native iOS recipe editor and GitHub Actions rootfs builder. It currently offers ARM64/aarch64 recipes for Debian, Devuan, Ubuntu, Alpine, Arch Linux ARM, Fedora, Kali, openSUSE Leap, openSUSE Tumbleweed, Gentoo and Void Linux. Choose the distro and release, init system, package list, SSH option, hostname, timezone, DNS resolver and tar compression in the app.
+Systui Rootfs is a native SwiftUI recipe editor and GitHub Actions rootfs builder. It offers ARM64/aarch64 presets for Debian, Devuan, Ubuntu, Alpine, Arch Linux ARM, Fedora, Kali, openSUSE Leap/Tumbleweed, Gentoo and Void Linux. The app carries over Systui’s portable rootfs options: distro-native package profiles and manual packages, init selection, SSH/cron/nginx services, user and shell creation, sudo/wheel membership, editor, hostname, DNS, timezone, locale, and tar compression. Recipes can be imported/exported and drafts persist locally. See [FEATURE-MAP.md](FEATURE-MAP.md) for the boundary between app features and Systui host-only features.
 
-The Linux runner builds native ARM64 roots, validates the resulting archive layout, and publishes the tarball as a workflow artifact. Base roots come from multi-architecture OCI images or upstream Linux Containers snapshots (Devuan); the Arch Linux ARM OCI image is community maintained. Package installation runs through each distro’s own manager. Build outputs are intended for iSH-AOK import.
+The ARM64 Linux runner builds, applies configuration, embeds the recipe under `/etc/systui-rootfs.json`, validates the archive layout and publishes a workflow artifact. Package installation uses the distro’s native manager. Devuan snapshots are SHA-256 verified; the Arch Linux ARM OCI source is community-maintained.
 
-Bedrock Linux is intentionally excluded as a standalone recipe: it is a meta-distribution that hijacks a base root and needs FUSE. This builder does not perform that operation. Rootfs output targets aarch64; other architectures are not enabled in this workflow.
+Bedrock Linux is intentionally excluded as a standalone recipe: it hijacks a base root and requires FUSE. Other architectures are not enabled in this workflow.
 
 ## Build a rootfs
 

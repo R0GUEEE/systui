@@ -10,5 +10,17 @@
   "hostname": "ish-aok",
   "timezone": "UTC",
   "dns": "1.1.1.1",
-  "compression": "gzip"
+  "compression": "gzip",
+  "packageProfiles": [
+    "core",
+    "editors"
+  ],
+  "sshPort": 22,
+  "locale": "C.UTF-8",
+  "username": "",
+  "userShell": "/bin/sh",
+  "userSudo": false,
+  "defaultEditor": "nano",
+  "enableCron": false,
+  "enableNginx": false
 }

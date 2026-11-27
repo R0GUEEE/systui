@@ -172,3 +172,16 @@ jobs:
             bash tests/test-bedrock-aok-direct-resolver.sh
             [ ! -f tests/test-rootfs-final-hardening.sh ] || bash tests/test-rootfs-final-hardening.sh
           '
+
+  rootfs-builder-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate multi-distro builder
+        run: |
+          python -m py_compile scripts/build_rootfs.py
+          python -m unittest discover -s tests -p 'test_build_rootfs.py' -v
