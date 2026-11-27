@@ -49,7 +49,8 @@ jobs:
             src/features/zz-rootfs-distro-managers.sh \
             src/features/*platform-final.sh \
             src/features/*argmax-cleanup.sh \
-            share/homebrew/install-homebrew-root.sh
+            share/homebrew/install-homebrew-root.sh \
+            share/homebrew/systui-brew-path.sh
           shellcheck -S warning -e SC1090 -x src/provision/runtime.sh
           # These were only syntax-checked before. tests/*.sh is deliberately
           # excluded: dynamic `source "$VAR"` is intentional there (SC1090).
@@ -170,6 +171,7 @@ jobs:
             bash tests/test-bedrock-aok-safe-update.sh
             bash tests/test-bedrock-aok-strata-fallbacks.sh
             bash tests/test-bedrock-aok-direct-resolver.sh
+            bash tests/test-homebrew-path-integration.sh
             [ ! -f tests/test-rootfs-final-hardening.sh ] || bash tests/test-rootfs-final-hardening.sh
           '
 

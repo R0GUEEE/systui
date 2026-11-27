@@ -3352,6 +3352,55 @@ brew_root_compat_env_file() {
     fi
 }
 
+# PATH integration helper installed by the root-compat installer. It mirrors
+# every installed formula's executables into /usr/local/bin and
+# /usr/local/sbin -- directories that are already on PATH for root, for normal
+# accounts, and for logged-out shells -- so a formula is runnable the moment
+# it finishes installing instead of after the next login.
+brew_path_helper() { printf '%s\n' /usr/local/bin/systui-brew-path; }
+
+# Install the mirror helper from the systui tree when the Homebrew instance was
+# set up by the official script instead of the root-compat installer.
+brew_ensure_path_helper() {
+    local helper src
+    helper=$(brew_path_helper)
+    [ -x "$helper" ] && return 0
+    [ "$(id -u)" -eq 0 ] || return 1
+    src="${SYSTUI_LIBDIR:-}/share/homebrew/systui-brew-path.sh"
+    [ -n "${SYSTUI_LIBDIR:-}" ] && [ -r "$src" ] || return 1
+    install -m 0755 -o root -g root "$src" "$helper" 2>/dev/null || return 1
+}
+
+# The prefix Homebrew actually lives in: HOMEBREW_PREFIX when exported, the
+# system-wide Linux prefix, or a per-user ~/.linuxbrew from the official
+# installer. The helper mirrors whichever one exists.
+brew_path_prefix() {
+    local p
+    for p in "${HOMEBREW_PREFIX:-}" /home/linuxbrew/.linuxbrew "${HOME:-/root}/.linuxbrew"; do
+        [ -n "$p" ] && [ -d "$p/bin" ] && { printf '%s\n' "$p"; return 0; }
+    done
+    return 1
+}
+
+brew_refresh_path() { # [--quiet|--verbose|--status|--remove]
+    local helper rc=0 prefix="" env_prefix=()
+    helper=$(brew_path_helper)
+    if [ "${1:-}" != "--remove" ]; then
+        brew_ensure_path_helper || true
+        prefix=$(brew_path_prefix || true)
+        [ -n "$prefix" ] && env_prefix=(env "SYSTUI_BREW_PREFIX=$prefix")
+    fi
+    [ -x "$helper" ] || return 0
+    if [ "$(id -u)" -eq 0 ]; then
+        ${env_prefix[@]+"${env_prefix[@]}"} "$helper" "$@" || rc=$?
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo -n ${env_prefix[@]+"${env_prefix[@]}"} "$helper" "$@" 2>/dev/null || rc=$?
+    else
+        ${env_prefix[@]+"${env_prefix[@]}"} "$helper" "$@" 2>/dev/null || rc=$?
+    fi
+    return "$rc"
+}
+
 # Returns 1 when root bypass is permanently enabled (HOMEBREW_ALLOW_ROOT=1 in
 # /etc/systui/homebrew.env), 0 otherwise.
 brew_root_bypass_enabled() {
@@ -3390,6 +3439,24 @@ _brew_complete_uninstall() {
     # Remove all systui-managed configs
     rm -f /etc/systui/homebrew.env 2>/dev/null || true
     rm -f /etc/profile.d/homebrew.sh 2>/dev/null || true
+
+    # Drop the PATH mirrors and the hooks that re-create them before the
+    # helper itself disappears, otherwise /usr/local/bin fills with dangling
+    # links to a prefix that no longer exists.
+    if [ -x "$(brew_path_helper)" ]; then
+        brew_refresh_path --remove >/dev/null 2>&1 || true
+    fi
+    rm -f /usr/local/bin/systui-brew-path /etc/fish/conf.d/systui-homebrew.fish 2>/dev/null || true
+    local hook
+    for hook in /etc/profile /etc/bash.bashrc /etc/bash/bashrc /etc/bashrc /etc/zsh/zshrc /etc/zshrc; do
+        [ -f "$hook" ] || continue
+        awk '/^# >>> systui homebrew >>>$/{s=1;next} s&&/^# <<< systui homebrew <<<$/{s=0;next} !s' \
+            "$hook" > "${hook}.systui-uninstall" 2>/dev/null || continue
+        if ! cmp -s "${hook}.systui-uninstall" "$hook" 2>/dev/null; then
+            cat "${hook}.systui-uninstall" > "$hook" 2>/dev/null || true
+        fi
+        rm -f "${hook}.systui-uninstall" 2>/dev/null || true
+    done
     
     # Remove root-compat layer (shim, wrapper, etc.)
     rm -rf /usr/local/lib/homebrew-root 2>/dev/null || true
@@ -3440,12 +3507,55 @@ brew_target_user() {
 # Run a brew command as the appropriate user (or directly when bypass is on).
 brew_run_as() { # <description> <brew-args...>
     local desc="$1"; shift
-    local buser; buser=$(brew_target_user)
+    local buser rc=0
+    buser=$(brew_target_user)
     if [ -z "$buser" ] || [ "$buser" = root ] || [ "$(id -u)" -ne 0 ]; then
-        run_cmd "$desc" brew "$@"
+        run_cmd "$desc" brew "$@" || rc=$?
     else
-        run_cmd "$desc (as $buser)" sudo -u "$buser" -H brew "$@"
+        run_cmd "$desc (as $buser)" sudo -u "$buser" -H brew "$@" || rc=$?
     fi
+    # Every command that changes the set of installed formulae changes what
+    # belongs on PATH; re-mirror right away so the new binary resolves in the
+    # shell that installed it.
+    case "${1:-}" in
+        install|uninstall|remove|upgrade|reinstall|link|unlink|pin|unpin|tap|untap|cleanup|update)
+            brew_refresh_path --quiet >/dev/null 2>&1 || true ;;
+    esac
+    return "$rc"
+}
+
+# PATH integration submenu: mirror installed formulae, inspect the mirrors,
+# or drop them again.
+menu_brew_path() {
+    local c helper status
+    while true; do
+        helper=$(brew_path_helper)
+        if [ -x "$helper" ]; then
+            status="Helper: $helper"
+        else
+            status="Helper not installed — run the root-compatibility install."
+        fi
+        c=$(tui_menu "Homebrew — PATH integration" \
+            "$status\n\nInstalled formulae are mirrored into /usr/local/bin and\n/usr/local/sbin so they work without a re-login." \
+            refresh "Refresh mirrors now (link formulae installed elsewhere)" \
+            verbose "Refresh verbosely — show every skipped entry" \
+            status  "Show current mirrors" \
+            remove  "Remove mirrors (keep Homebrew)" \
+            back    "Back") || return 0
+        case "$c" in
+            refresh) run_cmd "Refresh Homebrew PATH mirrors" brew_refresh_path ;;
+            verbose) run_cmd "Refresh Homebrew PATH mirrors (verbose)" brew_refresh_path --verbose ;;
+            status)
+                run_cmd "Homebrew PATH mirrors" brew_refresh_path --status
+                tui_wait
+                ;;
+            remove)
+                tui_yesno "Remove PATH mirrors" "Delete every /usr/local link that points into Homebrew?\n\nHomebrew and the installed formulae stay installed; they just stop\nbeing on the default PATH." || continue
+                run_cmd "Remove Homebrew PATH mirrors" brew_refresh_path --remove
+                ;;
+            back|"") return 0 ;;
+        esac
+    done
 }
 
 menu_brew_install() {
@@ -3462,6 +3572,7 @@ menu_brew_install() {
             reinstall  "Force reinstall — uninstall then reinstall" \
             rootconfig "Root configuration — user delegation, wrapper, permissions" \
             pkgops     "Formula operations — install / reinstall / remove" \
+            pathenv    "PATH integration — mirror installed formulae into /usr/local/bin" \
             config     "Full configuration setup" \
             repair     "Repair / re-link existing Homebrew installation" \
             uninstall  "Uninstall Homebrew" \
@@ -3526,6 +3637,7 @@ menu_brew_install() {
                 ;;
             rootconfig) menu_brew_root_config ;;
             pkgops)     menu_brew_pkgops ;;
+            pathenv)    menu_brew_path ;;
             config)     menu_brew_config ;;
             repair)
                 brew_run_as "Homebrew repair" cleanup --prune=all

@@ -65,7 +65,8 @@ systui/
 │
 ├── share/                    # Non-code resources
 │   └── homebrew/             # Root-compatible Homebrew compatibility layer
-│       └── install-homebrew-root.sh
+│       ├── install-homebrew-root.sh
+│       └── systui-brew-path.sh   # Mirrors formulae into /usr/local/bin
 │
 └── tests/                    # Test suite
     └── test-*.sh             # Test files
@@ -1005,8 +1006,27 @@ makes the tool exit non-zero when a selected manager could not be installed.
 
 Homebrew is managed through a permanent root-compatibility layer for iSH-AOK /
 Debian arm64: a shared installer under `share/homebrew/`, a system wrapper at
-`/usr/local/bin/brew`, a UID shim at `/usr/local/lib/homebrew-root/`, and a
-managed environment file at `/etc/systui/homebrew.env`.
+`/usr/local/bin/brew`, and a managed environment file at
+`/etc/systui/homebrew.env`.
+
+Installed formulae are also wired onto the default PATH. Homebrew links a
+formula's executables into `$BREW_PREFIX/bin`, which a shell only reaches
+through the profile snippet the installer writes — so a formula installed
+inside a running session, a non-login shell, or a cron/TUI child process used
+to stay invisible until the next login. `systui-brew-path` mirrors those links
+into `/usr/local/bin` and `/usr/local/sbin` (already on PATH everywhere), and
+the `brew` wrapper re-runs it after every command that changes what is
+installed. Consequences worth knowing:
+
+- A command is runnable in the shell that installed it; no re-login, no PATH
+  edit, no `eval "$(brew shellenv)"`.
+- Mirroring is skipped for a name the system already provides (`git`, `curl`,
+  `python3`), so system and init scripts keep running the distribution's
+  binary. Set `SYSTUI_BREW_PATH_SHADOW=1` to override.
+- Removing a formula removes its mirror; `systui-brew-path --status` lists the
+  mirrors and `--remove` drops all of them while leaving Homebrew installed.
+- The System Configuration menu has a matching Homebrew → *PATH integration*
+  entry for refreshing or removing the mirrors by hand.
 
 ## Notes on behaviour
 
