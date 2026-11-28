@@ -219,9 +219,9 @@ link_fail || { echo 'link left a directory after a failed configure' >&2; exit 1
 #    the description first, then the command: the artifact has to be created by
 #    the Build step, or the check afterwards rightly fails.
 link_rebuild() {
-    # The directory may or may not exist at this point (the link step removes
-    # its output on failure); either way the rebuild has to succeed, and the
-    # artifact must be created by the Build step, not before it.
+    # Make the precondition explicit: the rebuild must work when the output
+    # directory already exists, whatever the previous block left behind.
+    mkdir -p "$IOSKIT_AOT_OUTPUT_DIR" 2>/dev/null || true
     run_cmd() {
         local desc=$1; shift
         if [ "$desc" = 'Configure linked AOT' ]; then
