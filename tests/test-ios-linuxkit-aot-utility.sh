@@ -237,7 +237,17 @@ link_rebuild() {
     ios_aot_link || return 1
     [ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ]
 }
-link_rebuild || { echo 'rebuild over an existing directory was refused' >&2; exit 1; }
+if ! link_rebuild; then
+    {
+        echo 'rebuild over an existing directory was refused' >&2
+        echo "  out=$IOSKIT_AOT_OUTPUT_DIR exists=$([ -d "$IOSKIT_AOT_OUTPUT_DIR" ] && echo yes || echo no)" >&2
+        ls -la "${IOSKIT_AOT_OUTPUT_DIR%/*}" 2>&1 | head -10 >&2
+        echo "  ios_aot_link source:" >&2
+        declare -f ios_aot_link >&2
+        echo "  tui_yesno stub: $(declare -f tui_yesno)" >&2
+    } 2>&1
+    exit 1
+fi
 
 # 3. A failed recording keeps the previous set and leaves no staging directory.
 record_fail() {
