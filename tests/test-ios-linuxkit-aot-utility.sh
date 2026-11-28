@@ -180,7 +180,6 @@ echo 'AOT artifact adoption tests passed'
 # Loaded fresh in a child so the stubs above cannot interfere.
 cat > "$T/harden-probe.sh" <<'PROBE'
 set -eu
-trap 'echo "FAIL at line $LINENO: $BASH_COMMAND" >&2' ERR
 . "$REPO/src/features/117-ios-linuxkit-aot-utility.sh"
 T=$1
 export SYSTUI_TMP="$T/tmp" IOSKIT_SRC_DIR="$T/src"
@@ -281,5 +280,10 @@ ios_aot_prepare_guest >/dev/null 2>&1 && { echo 'broken zlib accepted' >&2; exit
 guest_probe 'exit 0'
 ios_aot_prepare_guest || { echo 'healthy guest rejected' >&2; exit 1; }
 PROBE
-REPO=$(pwd) bash "$T/harden-probe.sh" "$T" || fail 'AOT hardening regressions'
+if ! REPO=$(pwd) bash "$T/harden-probe.sh" "$T" 2>"$T/harden.err"; then
+    # Show what the child said: a bare "failed" is useless in CI.
+    printf 'harden probe failed:\n' >&2
+    sed -n '1,20p' "$T/harden.err" >&2 2>/dev/null || true
+    fail 'AOT hardening regressions'
+fi
 echo 'AOT hardening regressions passed'
