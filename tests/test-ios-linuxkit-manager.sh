@@ -109,6 +109,24 @@ pass 'settings round trip'
 # --- root filesystem pin precedence ------------------------------------------
 [ "$(systui_ioskit_rootfs_pin_source)" = 'built-in release pin' ] \
     || fail 'built-in pin is not the last resort'
+
+# The built-in pin must be a complete, self-consistent aarch64 pair: a version
+# in the URL, a 64-character checksum, and the release name in one place so the
+# version is not spelled out twice.
+pin_url=$(systui_ioskit_rootfs_pin | cut -d' ' -f1)
+pin_sha=$(systui_ioskit_rootfs_pin | cut -d' ' -f2)
+case "$pin_url" in
+    *alpine-minirootfs-[0-9]*-aarch64.tar.gz) ;;
+    *) fail "built-in pin is not an aarch64 minirootfs: $pin_url" ;;
+esac
+case "$pin_sha" in
+    ????????????????????????????????????????????????????????????????) ;;
+    *) fail "built-in pin checksum is not a sha256: $pin_sha" ;;
+esac
+pin_version=${pin_url##*minirootfs-}
+pin_version=${pin_version%-aarch64.tar.gz}
+[ "$pin_version" = "$SYSTUI_IOSKIT_FALLBACK_ROOTFS_RELEASE" ] \
+    || fail "pin URL ($pin_version) and release constant ($SYSTUI_IOSKIT_FALLBACK_ROOTFS_RELEASE) disagree"
 pin=$(systui_ioskit_rootfs_pin)
 case "$pin" in
     https://*' '*[0-9a-f]*) ;;

@@ -41,8 +41,14 @@ fi
 # The release pin this module ships with, used when the source tree (and thus
 # its own app/GuestARM64.xcconfig) is not available yet. Keep these in step with
 # the upstream xcconfig; the source tree always wins when it is present.
-SYSTUI_IOSKIT_FALLBACK_ROOTFS_URL="dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.2-aarch64.tar.gz"
-SYSTUI_IOSKIT_FALLBACK_ROOTFS_SHA256="9bf70a7f18ea44094cbb5f70c58f9af129c8214745743db0e68e5502cc2ce773"
+#
+# Alpine keeps every patch release in the tree, so a pin does not expire, but
+# it does go stale: 3.24.2 was replaced by 3.24.3 and 3.24.4 while this was in
+# use. The download is checksum-verified either way, so the failure mode of an
+# old pin is a slightly older guest, never a corrupt one.
+SYSTUI_IOSKIT_FALLBACK_ROOTFS_RELEASE="3.24.4"
+SYSTUI_IOSKIT_FALLBACK_ROOTFS_URL="dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-${SYSTUI_IOSKIT_FALLBACK_ROOTFS_RELEASE}-aarch64.tar.gz"
+SYSTUI_IOSKIT_FALLBACK_ROOTFS_SHA256="4b14c18f7e90a063b61462ea1462a5732c154bf6adad594974fe6487cd98a8de"
 
 systui_ioskit_conf_file() {
     printf '%s\n' "${SYSTUI_IOSKIT_CONF:-${SYSTUI_STATE_DIR:-/etc/systui}/ios-linuxkit.conf}"
@@ -839,6 +845,30 @@ systui_ioskit_rootfs_pin() {
     printf '%s %s %s\n' "$url" "$sha" "$name"
 }
 
+# Is the pinned image the newest in its release directory? Prints "latest",
+# "outdated <newest-name>" or "unknown" (offline, or a custom pin).
+systui_ioskit_rootfs_pin_state() {
+    local pin url dir base newest
+    pin=$(systui_ioskit_rootfs_pin)
+    url=${pin%% *}
+    case "$url" in
+        http*://dl-cdn.alpinelinux.org/alpine/*) ;;
+        *) printf 'unknown\n'; return 0 ;;
+    esac
+    dir=${url%/*}
+    base=${url##*/}
+    base=${base%.tar.gz}
+    newest=$(curl -fsSL --connect-timeout "$SYSTUI_IOSKIT_CONNECT_TIMEOUT" "$dir/" 2>/dev/null |
+        grep -oE 'alpine-minirootfs-[0-9][0-9A-Za-z._-]*-aarch64\.tar\.gz' |
+        LC_ALL=C sort -Vu | tail -n1) || newest=""
+    [ -n "$newest" ] || { printf 'unknown\n'; return 0; }
+    if [ "${newest%.tar.gz}" = "$base" ]; then
+        printf 'latest\n'
+    else
+        printf 'outdated %s\n' "$newest"
+    fi
+}
+
 systui_ioskit_rootfs_pin_source() {
     if [ -n "${IOSKIT_ROOTFS_URL:-}" ]; then
         printf '%s\n' 'settings override'
@@ -1083,11 +1113,17 @@ systui_ioskit_images_menu() {
 }
 
 systui_ioskit_image_add_menu() {
-    local c pin
+    local c pin state note=""
     pin=$(systui_ioskit_rootfs_pin)
+    # A pin several patch releases behind the mirror is worth flagging here,
+    # where the choice is actually made, rather than only in the docs.
+    state=$(systui_ioskit_rootfs_pin_state)
+    case "$state" in
+        outdated*) note="\nUpdate available: ${state#outdated }" ;;
+    esac
     while true; do
         tui_capture_menu c tui_menu_no_tags "Add an image" \
-            "Pinned Alpine rootfs (from $(systui_ioskit_rootfs_pin_source)):\n${pin%% *}" \
+            "Pinned Alpine rootfs (from $(systui_ioskit_rootfs_pin_source)):\n${pin%% *}$note" \
             pinned "Download and import the pinned Alpine rootfs" \
             local  "Import a local rootfs tarball" \
             url    "Import from a URL (with optional SHA-256 check)" \

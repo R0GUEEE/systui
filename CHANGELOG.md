@@ -43,6 +43,19 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 - A transfer that reports success without adding a byte (a server closing
   cleanly mid-file) counts as a failure and is retried.
 
+### Guest rootfs image pin
+
+- **The pinned Alpine image moves to `alpine-minirootfs-3.24.4-aarch64`**
+  (was 3.24.2), verified against the published `.sha256`
+  (`4b14c18f…`). The version now lives in one constant
+  (`SYSTUI_IOSKIT_FALLBACK_ROOTFS_RELEASE`) instead of being spelled out
+  twice in the URL, so the next bump is a one-line change.
+- **The add-image screen says when the pin is behind the mirror**
+  (`Update available: alpine-minirootfs-….tar.gz`), so a stale pin is visible
+  where the choice is made rather than only in the changelog. A pin that has
+  fallen behind still downloads and verifies — the failure mode of an old pin
+  is an older guest, never a corrupt one.
+
 ### Guest rootfs import (Rootfs → iSH-AOK → iOS-linuxkit → Guest root filesystems)
 
 - **"Download and import the pinned Alpine rootfs" no longer hangs at 100%.**
