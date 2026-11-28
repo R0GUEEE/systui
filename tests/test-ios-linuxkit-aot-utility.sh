@@ -220,10 +220,8 @@ link_fail || { echo 'link left a directory after a failed configure' >&2; exit 1
 #    the Build step, or the check afterwards rightly fails.
 link_rebuild() {
     # The directory may or may not exist at this point (the link step removes
-    # its output on failure). Either way the rebuild has to succeed, and the
+    # its output on failure); either way the rebuild has to succeed, and the
     # artifact must be created by the Build step, not before it.
-    local existed=no
-    [ -d "$IOSKIT_AOT_OUTPUT_DIR" ] && existed=yes
     run_cmd() {
         local desc=$1; shift
         if [ "$desc" = 'Configure linked AOT' ]; then
@@ -237,12 +235,11 @@ link_rebuild() {
         return 0
     }
     ios_aot_link || return 1
-    [ "$existed" = no ] || [ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ]
+    [ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ]
 }
 link_rebuild || { echo 'rebuild over an existing directory was refused' >&2; exit 1; }
 
 # 3. A failed recording keeps the previous set and leaves no staging directory.
-record_stub() { :; }
 record_fail() {
     run_cmd() {
         local d=$1; shift
