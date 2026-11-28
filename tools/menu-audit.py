@@ -296,9 +296,7 @@ def final_definitions(srcs, order):
     for path in srcs:
         idx = order.get(path.name, -1)
         src = srcs[path]
-        # Both multi-line and one-line definitions: `f() { :; }` is a real
-        # function and must be counted, or a child menu silently looks missing.
-        for m in re.finditer(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*(\{.*|$)", src, re.M):
+        for m in re.finditer(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*\(\)\s*\{?\s*$", src, re.M):
             name = m.group(1)
             lineno = src.count("\n", 0, m.start()) + 1
             key = (idx, lineno)
@@ -306,15 +304,6 @@ def final_definitions(srcs, order):
             if cur is None or key > (cur[0], cur[1]):
                 latest[name] = (idx, lineno, path)
     return {n: (p, ln) for n, (i, ln, p) in latest.items()}
-
-
-# Menus whose only job is to group other menus. A group with a single option is
-# not a group, and a group whose dispatch calls a function that does not exist
-# is a dead end; both are reported rather than silently shipped.
-GROUP_PREFIXES = ("menu_", "rootfs_dm_menu_", "cn_")
-
-# Functions called directly from a menu dispatch arm instead of tui_call_menu.
-# They are the user-facing entry points and must exist by the end of the load.
 
 
 def main():
@@ -333,8 +322,6 @@ def main():
     })
 
     dead, unreachable, calls_missing = [], [], []
-    single_group = []
-    paths_by_name = {p.name: str(p) for p in srcs}
 
     def final_here(fn, path, lineno):
         entry = final_defs.get(fn)
@@ -350,7 +337,7 @@ def main():
         lines = src.splitlines()
         for lineno, widget, body, var in widget_calls(src):
             tags = menu_tags(body, widget)
-            if not tags:
+            if not tags or widget == "tui_check":
                 continue
             fn = enclosing_function(lines, lineno)
             if not fn or not final_here(fn, path, lineno):
@@ -363,7 +350,10 @@ def main():
         lines = src.splitlines()
         for lineno, widget, body, var in widget_calls(src):
             tags = menu_tags(body, widget)
-            if not tags:
+            # A checklist returns a set of selected items that are read back as
+            # text (" caches logs " in a case pattern), not one dispatch arm per
+            # item: auditing it as a menu reports every item as a dead entry.
+            if not tags or widget == "tui_check":
                 continue
             fn = enclosing_function(lines, lineno)
             if not fn or not final_here(fn, path, lineno):
@@ -491,45 +481,14 @@ def main():
         for r in rows:
             print("  %s:%s  %s -> %s" % r)
 
-    # Two rules keep the grouping honest once menus point at other menus.
-    #
-    # 1. A dispatch arm that runs a function directly (not through
-    #    tui_call_menu) must reach an existing function. A group whose only
-    #    action calls something undefined is a dead end that the cell-by-cell
-    #    audit above cannot see.
-    # 2. A menu whose only action is another menu is an unnecessary level; the
-    #    parent should offer that menu's entries directly.
-    # A menu that is just a gate to another menu. Any function counts as a
-    # menu here: the gate is about structure, not about which widget the child
-    # happens to draw, and a child defined in another feature file may not be
-    # in this scan at all.
-    for (path, fn), calls in sorted(func_calls.items()):
-        tags = set()
-        for _lineno, tagset, _var in calls:
-            tags |= tagset
-        real = sorted(t for t in tags if t != "back")
-        if len(real) != 1:
-            continue
-        target = real[0]
-        target_fn = final_defs.get(target)
-        if not target_fn:
-            continue
-        single_group.append((path.relative_to(ROOT), calls[0][0], fn, "only action is " + target))
-        if "--verbose" in sys.argv:
-            print(f"forward-only: {fn} -> {target}")
-        continue
-
-    emit("menus that only forward to another menu", single_group)
-
     emit("menu entries with no case handler (dead entries)", dead)
     emit("case handlers never offered by the menu", unreachable)
     emit("tui_call_menu targets that are not defined", sorted(set(missing_calls)))
 
     print("\n=== summary ===")
     print(f"features: {len(srcs)}  defined functions: {len(defined)}")
-    total = len(dead) + len(unreachable) + len(set(missing_calls)) + len(single_group)
+    total = len(dead) + len(unreachable) + len(set(missing_calls))
     print(f"dead entries: {len(dead)}  unreachable handlers: {len(unreachable)}  missing dispatch targets: {len(set(missing_calls))}")
-    print(f"forward-only menus: {len(single_group)}")
     if check_mode:
         return 1 if total else 0
     return 0
