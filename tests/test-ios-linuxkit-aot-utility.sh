@@ -248,9 +248,9 @@ if ! link_rebuild; then
         IOSKIT_AOT_OUTPUT_DIR="${IOSKIT_AOT_OUTPUT_DIR:-}" IOSKIT_AOT_RECORDINGS_DIR="${IOSKIT_AOT_RECORDINGS_DIR:-}" bash -x -c '
             . "$1/src/features/117-ios-linuxkit-aot-utility.sh"
             true' _ "$PWD" 2>&1 | tail -5 >&2 || true
-        ( set -x; ios_aot_ready; echo "ready=$?"; ios_aot_images; echo "images=$?";
-          ios_aot_require_target build-arm64-linux; echo "target=$?";
-          ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR"; echo "path=$?" ) 2>&1 | tail -12 >&2
+        ( set -x; echo "reset"; ios_aot_ready; echo "ready=$?"; ios_aot_images; echo "images=$?";
+          ios_aot_require_target build-arm64-linux; echo "TARGET=$?";
+          ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR"; echo "PATHG=$?" ) 2>&1 | tail -12 >&2
     } 2>&1
     exit 1
 fi
