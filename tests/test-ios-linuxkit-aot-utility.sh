@@ -12,6 +12,7 @@ uname() { case "$1" in -s) echo Linux;; -m) echo aarch64;; esac; }
 tui_msg() { :; }
 tui_yesno() { return 0; }
 systui_ioskit_repo_present() { return 0; }
+ios_aot_host() { return 0; }
 systui_ioskit_gate_available() { return 0; }
 systui_ioskit_image_valid() { [ -d "$1" ]; }
 mkdir -p "$IOSKIT_AOT_ROOT/data" "$IOSKIT_AOT_RECORDER_DIR" "$IOSKIT_AOT_RECORDINGS_DIR"
@@ -135,6 +136,7 @@ cat > "$T/paths-probe.sh" <<'PROBE'
 set -eu
 . "$REPO/src/features/117-ios-linuxkit-aot-utility.sh"
 . "$REPO/src/features/111-ios-linuxkit-autoconfig-aot.sh"
+ios_aot_host() { return 0; }
 T=$1
 printf '%s\n' "$T/ws" "$T/ws/root" "$T/ws/rec" "$T/ws/out" "$T/ws/gad" "$T/ws/recb" "$T/ws/ev" > "$T/questions"
 tui_input() {
@@ -188,6 +190,7 @@ mkdir -p "$SYSTUI_TMP" "$IOSKIT_SRC_DIR"
 printf 'build-arm64-linux:\nrecord-arm64-aot:\n' > "$IOSKIT_SRC_DIR/Makefile"
 systui_ioskit_repo_present() { return 0; }
 systui_ioskit_gate_available() { return 0; }
+ios_aot_host() { return 0; }
 tui_msg() { :; }
 tui_yesno() { return 0; }
 log() { :; }
@@ -237,23 +240,7 @@ link_rebuild() {
     ios_aot_link || return 1
     [ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ]
 }
-if ! link_rebuild; then
-    {
-        echo 'rebuild over an existing directory was refused' >&2
-        echo "  out=$IOSKIT_AOT_OUTPUT_DIR exists=$([ -d "$IOSKIT_AOT_OUTPUT_DIR" ] && echo yes || echo no)" >&2
-        ls -la "${IOSKIT_AOT_OUTPUT_DIR%/*}" 2>&1 | head -10 >&2
-        echo "  guards: ready=$(ios_aot_ready >/dev/null 2>&1; echo $?) images=$(ios_aot_images >/dev/null 2>&1; echo $?) target=$(ios_aot_require_target build-arm64-linux >/dev/null 2>&1; echo $?) path=$(ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR" >/dev/null 2>&1; echo $?)" >&2
-        ls -A "$IOSKIT_AOT_RECORDINGS_DIR" 2>&1 | tr '\n' ' ' >&2; echo >&2
-        echo "  tui_yesno stub: $(declare -f tui_yesno)" >&2
-        IOSKIT_AOT_OUTPUT_DIR="${IOSKIT_AOT_OUTPUT_DIR:-}" IOSKIT_AOT_RECORDINGS_DIR="${IOSKIT_AOT_RECORDINGS_DIR:-}" bash -x -c '
-            . "$1/src/features/117-ios-linuxkit-aot-utility.sh"
-            true' _ "$PWD" 2>&1 | tail -5 >&2 || true
-        ( set -x; echo "reset"; ios_aot_ready; echo "ready=$?"; ios_aot_images; echo "images=$?";
-          ios_aot_require_target build-arm64-linux; echo "TARGET=$?";
-          ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR"; echo "PATHG=$?" ) 2>&1 | tail -12 >&2
-    } 2>&1
-    exit 1
-fi
+link_rebuild || { echo 'rebuild over an existing directory was refused' >&2; exit 1; }
 
 # 3. A failed recording keeps the previous set and leaves no staging directory.
 record_fail() {
