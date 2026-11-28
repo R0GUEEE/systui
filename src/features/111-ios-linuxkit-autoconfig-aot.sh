@@ -19,7 +19,7 @@ systui_ioskit_auto_get() { # key
 systui_ioskit_auto_set() { # key value
     local key="$1" val="$2" f tmp line
     case "$key" in
-        IOSKIT_AOT_ROOT|IOSKIT_AOT_GADGET_DIR|IOSKIT_AOT_RECORDER_DIR|IOSKIT_AOT_EVIDENCE_DIR|IOSKIT_AOT_DIR|IOSKIT_AOT_SEED_DIR|IOSKIT_AOT_RECORDINGS_DIR|IOSKIT_AOT_OUTPUT_DIR|        IOSKIT_AOT_BUN|IOSKIT_AOT_ENABLED|IOSKIT_PROFILE|IOSKIT_CC|IOSKIT_MESON|IOSKIT_NINJA) ;;
+        IOSKIT_AOT_ROOT|IOSKIT_AOT_GADGET_DIR|IOSKIT_AOT_RECORDER_DIR|IOSKIT_AOT_EVIDENCE_DIR|IOSKIT_AOT_DIR|IOSKIT_AOT_SEED_DIR|IOSKIT_AOT_RECORDINGS_DIR|IOSKIT_AOT_OUTPUT_DIR|IOSKIT_AOT_BUN|IOSKIT_AOT_ENABLED|IOSKIT_PROFILE|IOSKIT_CC|IOSKIT_MESON|IOSKIT_NINJA|IOSKIT_REPO_URL|IOSKIT_BRANCH|IOSKIT_SRC_DIR|IOSKIT_IMAGES_DIR|IOSKIT_DOWNLOAD_DIR|IOSKIT_AUTO_DEPS|IOSKIT_SETUP_PROFILE|IOSKIT_SETUP_STEPS) ;;
         *) return 2 ;;
     esac
     case "$val" in *$'\n'*) return 2 ;; esac
@@ -119,6 +119,143 @@ systui_ioskit_autoconfigure() {
     tui_yesno "Auto configure" "Use the detected paths and create missing working directories?\n\nExisting source and images are never deleted." || return 0
     systui_ioskit_apply_discovery || { tui_msg "Auto configure" "Could not persist the discovered configuration."; return 1; }
     tui_msg "Auto configure" "Configuration populated.\n\nSource: $IOSKIT_SRC_DIR\nImages: $IOSKIT_IMAGES_DIR\nDownloads: $IOSKIT_DOWNLOAD_DIR\nAOT: $(systui_ioskit_auto_get IOSKIT_AOT_DIR)"
+}
+
+# One guided profile for both tools.
+#
+# "Quick setup" asked a single yes/no and then ran package installation, a
+# clone, a build and (for AOT) nothing at all: the AOT flags were scattered
+# across Advanced → Source/Build/AOT. The profile records what the operator
+# actually wants, is shown on both setup screens, and drives the same steps in
+# the same order for each tool.
+#
+#   runtime  - clone/update, dependencies, release build  (ios-linuxkit)
+#   aot      - runtime + AOT workspace, recorder build     (Rootfs → AOT JIT)
+#   full     - runtime + aot + guest image import          (both)
+#
+# Values live in the shared auto config under IOSKIT_SETUP_PROFILE / _STEPS so
+# a later run, and both menus, read the same intent.
+systui_ioskit_profile() {
+    systui_ioskit_auto_get IOSKIT_SETUP_PROFILE 2>/dev/null || printf 'runtime\n'
+}
+
+systui_ioskit_profile_steps() { # [profile]
+    case "${1:-$(systui_ioskit_profile)}" in
+        runtime) printf 'source deps build\n' ;;
+        aot)     printf 'source deps build aot\n' ;;
+        full)    printf 'source deps build aot guest\n' ;;
+        *)       printf 'source deps build\n' ;;
+    esac
+}
+
+systui_ioskit_profile_label() {
+    case "${1:-$(systui_ioskit_profile)}" in
+        runtime) printf 'Runtime only — checkout, dependencies, release build\n' ;;
+        aot)     printf 'Runtime + AOT — also configures the AOT workspace and recorder\n' ;;
+        full)    printf 'Full — runtime, AOT and a guest rootfs\n' ;;
+        *)       printf 'Runtime only\n' ;;
+    esac
+}
+
+systui_ioskit_profile_menu() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Setup profile" \
+            "Current: $(systui_ioskit_profile_label)" \
+            runtime "Runtime only — checkout, dependencies, release build" \
+            aot     "Runtime + AOT — adds the AOT workspace and recorder build" \
+            full    "Full — adds a guest rootfs import as well" \
+            back    "Back" || return $?
+        case "$c" in
+            runtime|aot|full)
+                systui_ioskit_auto_set IOSKIT_SETUP_PROFILE "$c" || {
+                    tui_msg "Setup profile" "Could not save the profile."; continue; }
+                systui_ioskit_auto_set IOSKIT_SETUP_STEPS "$(systui_ioskit_profile_steps "$c")" 2>/dev/null || true
+                tui_msg "Setup profile" "Saved: $(systui_ioskit_profile_label "$c")" ;;
+            back|'') return 0 ;;
+        esac
+    done
+}
+
+# Run one guided setup under the saved profile. Every step is reported before
+# it starts so a long run is never a black box, and a step that is skipped is
+# named with its reason.
+# shellcheck disable=SC2120
+systui_ioskit_run_profile() { # [--dry-run] [profile]
+    local dry=0 profile step arch
+    [ "${1:-}" = --dry-run ] && { dry=1; shift; }
+    profile="${1:-$(systui_ioskit_profile)}"
+    arch=$(systui_ioskit_host_arch)
+    tui_msg "Guided setup" "Profile: $(systui_ioskit_profile_label "$profile")
+
+Steps: $(systui_ioskit_profile_steps "$profile")
+
+Source: $IOSKIT_SRC_DIR
+AOT workspace: $(systui_ioskit_aot_root)" || return 0
+    if [ "$dry" = 1 ]; then
+        printf 'Dry run — no changes.\nProfile: %s\nSteps: %s\n' \
+            "$(systui_ioskit_profile_label "$profile")" "$(systui_ioskit_profile_steps "$profile")"
+        return 0
+    fi
+    systui_ioskit_apply_discovery || return 1
+    for step in $(systui_ioskit_profile_steps "$profile"); do
+        case "$step" in
+            source)
+                if [ ! -d "$IOSKIT_SRC_DIR/.git" ]; then
+                    systui_ioskit_source_clone "$IOSKIT_REPO_URL" "$IOSKIT_BRANCH" "$IOSKIT_SRC_DIR" || return 1
+                elif ! systui_ioskit_source_update; then
+                    # A checkout that is not a usable git repository (a copied
+                    # tree, a broken .git) is a normal situation here, not a
+                    # fatal one: say so and continue with the build.
+                    printf 'Could not update the checkout at %s; continuing with it as it is.\n' "$IOSKIT_SRC_DIR"
+                fi
+                if [ -d "$IOSKIT_SRC_DIR/.git" ]; then
+                    run_cmd "Initialise ios-linuxkit submodules" git -C "$IOSKIT_SRC_DIR" submodule update --init --recursive || \
+                        printf 'Submodule initialisation failed; the build may report missing sources.\n'
+                fi
+                ;;
+            deps)
+                if [ "${IOSKIT_AUTO_DEPS:-1}" = 1 ]; then
+                    systui_ioskit_install_dependencies || return 1
+                else
+                    printf 'Skipped dependencies: IOSKIT_AUTO_DEPS=0\n'
+                fi
+                ;;
+            build)
+                if [ "$arch" = aarch64 ]; then
+                    systui_ioskit_run_build "$(systui_ioskit_build_target_for release)" || return 1
+                else
+                    printf 'Skipped the runtime build: this host is %s, the build needs AArch64.\n' "$arch"
+                fi
+                ;;
+            aot)
+                if [ "$arch" = aarch64 ]; then
+                    ios_aot_defaults 2>/dev/null || true
+                    ios_aot_save_paths "$IOSKIT_AOT_DIR" "$IOSKIT_AOT_ROOT" "$IOSKIT_AOT_RECORDINGS_DIR" \
+                        "$IOSKIT_AOT_OUTPUT_DIR" "$IOSKIT_AOT_GADGET_DIR" "$IOSKIT_AOT_RECORDER_DIR" \
+                        "$IOSKIT_AOT_EVIDENCE_DIR" || return 1
+                    ios_aot_build recorder || return 1
+                else
+                    printf 'Skipped the AOT recorder: it needs an AArch64 Linux host (this is %s).\nThe workspace is configured and can be built elsewhere.\n' "$arch"
+                fi
+                ;;
+            guest)
+                if [ "$dry" = 1 ]; then
+                    printf 'guest: would import the pinned rootfs if none is present\n'
+                elif [ "$(systui_ioskit_image_count)" -gt 0 ]; then
+                    printf 'Guest images already present (%s); nothing to import.\n' "$(systui_ioskit_image_count)"
+                else
+                    systui_ioskit_download_pinned || return 1
+                fi
+                ;;
+        esac
+    done
+    systui_ioskit_cache_invalidate
+    tui_msg "Guided setup" "Profile \"$profile\" finished.
+
+Source: $IOSKIT_SRC_DIR
+Images: $IOSKIT_IMAGES_DIR ($(systui_ioskit_image_count))
+AOT workspace: $(systui_ioskit_aot_root)"
 }
 
 systui_ioskit_complete_setup() {
@@ -247,13 +384,18 @@ systui_ioskit_setup_menu() {
     local c
     while true; do
         tui_capture_menu c tui_menu_no_tags "iOS-linuxkit setup" \
-            "Configure and install iOS-linuxkit for iSH-AOK.  Checkout: $(systui_ioskit_version)" \
-            auto     "Quick setup (recommended) — detect paths, install dependencies, clone/update and build" \
+            "Configure and install iOS-linuxkit for iSH-AOK.
+
+Checkout: $(systui_ioskit_version)
+Profile : $(systui_ioskit_profile_label)" \
+            auto     "Quick setup (recommended) — run the saved profile" \
+            profile  "Change the setup profile — runtime, runtime + AOT, or full" \
             detect   "Auto-detect configuration — populate paths and tools only" \
             advanced "Advanced setup — source, build, AOT and maintenance" \
             back     "Back" || return $?
         case "$c" in
-            auto)     systui_ioskit_complete_setup ;;
+            auto)     systui_ioskit_run_profile ;;
+            profile)  systui_ioskit_profile_menu ;;
             detect)   systui_ioskit_autoconfigure ;;
             advanced) systui_ioskit_advanced_setup_menu ;;
             back|'')  return 0 ;;

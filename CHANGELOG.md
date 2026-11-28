@@ -43,6 +43,23 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 - A transfer that reports success without adding a byte (a server closing
   cleanly mid-file) counts as a failure and is retried.
 
+### One setup profile for both tools
+
+- **`Quick setup` now runs a saved profile** instead of a fixed sequence:
+  `runtime` (checkout, dependencies, release build), `runtime + AOT`
+  (also configures the AOT workspace and builds the recorder) or `full`
+  (adds a guest rootfs import). The profile is stored in the shared config,
+  shown on both setup screens, and each step reports before it runs — a step
+  that cannot run (a release build on x86_64, the AOT recorder off AArch64)
+  says why instead of failing the run.
+- **The AOT screens share one workspace.** Rootfs → Ahead-of-time JIT derived
+  it from the checkout while its Toolchain submenu used `$HOME/ios-linuxkit-aot`,
+  so configuring one left the other showing a different path. The checkout's
+  `…/aot` is now canonical, every derived path is persisted the first time it
+  is computed, and choosing a workspace in either screen re-derives the rest.
+- **Every profile can be rehearsed**: the runner takes `--dry-run` and prints
+  the exact steps without touching the host.
+
 ### Guest rootfs image pin
 
 - **The pinned Alpine image moves to `alpine-minirootfs-3.24.4-aarch64`**

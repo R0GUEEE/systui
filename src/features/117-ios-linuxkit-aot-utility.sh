@@ -6,8 +6,16 @@ ios_aot_host() {
     [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = aarch64 ] ||
         { ios_aot_error 'AArch64 Linux is required; iOS app JIT is not provided.'; return 1; }
 }
+# One workspace for both AOT screens.
+#
+# The Rootfs → Ahead-of-time JIT entry and its Toolchain submenu used to derive
+# the workspace differently - $HOME/ios-linuxkit-aot against <checkout>/../aot -
+# so configuring one left the other showing something else. The default now
+# comes from the checkout (so a discovered installation keeps its AOT data next
+# to it) and every derived path is stored when it is first computed, which is
+# also what the status screens report.
 ios_aot_defaults() {
-    local key val
+    local key val changed=0
     if [ "${IOS_AOT_CONFIG_LOADED:-0}" != 1 ] && declare -F systui_ioskit_auto_get >/dev/null; then
         for key in IOSKIT_AOT_DIR IOSKIT_AOT_ROOT IOSKIT_AOT_RECORDINGS_DIR IOSKIT_AOT_OUTPUT_DIR IOSKIT_AOT_GADGET_DIR IOSKIT_AOT_RECORDER_DIR IOSKIT_AOT_EVIDENCE_DIR; do
             val=$(systui_ioskit_auto_get "$key" 2>/dev/null) || continue
@@ -15,13 +23,45 @@ ios_aot_defaults() {
         done
         IOS_AOT_CONFIG_LOADED=1
     fi
-    : "${IOSKIT_AOT_DIR:=${HOME}/ios-linuxkit-aot}"
-    : "${IOSKIT_AOT_ROOT:=$IOSKIT_AOT_DIR/training-fakefs}"
-    : "${IOSKIT_AOT_RECORDINGS_DIR:=$IOSKIT_AOT_DIR/recordings}"
-    : "${IOSKIT_AOT_OUTPUT_DIR:=$IOSKIT_AOT_DIR/build-aot}"
-    : "${IOSKIT_AOT_GADGET_DIR:=$IOSKIT_AOT_DIR/build-gadget}"
-    : "${IOSKIT_AOT_RECORDER_DIR:=$IOSKIT_AOT_DIR/build-recorder}"
-    : "${IOSKIT_AOT_EVIDENCE_DIR:=$IOSKIT_AOT_DIR/evidence}"
+    if [ -z "${IOSKIT_AOT_DIR:-}" ] && declare -F systui_ioskit_aot_root >/dev/null; then
+        IOSKIT_AOT_DIR=$(systui_ioskit_aot_root 2>/dev/null || true)
+    fi
+    if [ -z "${IOSKIT_AOT_DIR:-}" ]; then
+        case "${IOSKIT_SRC_DIR:-}" in
+            */src) IOSKIT_AOT_DIR="${IOSKIT_SRC_DIR%/src}/aot" ;;
+            *)     IOSKIT_AOT_DIR="${HOME}/ios-linuxkit-aot" ;;
+        esac
+    fi
+    # A workspace that was chosen explicitly re-derives the paths beside it:
+    # a caller setting only IOSKIT_AOT_DIR must not keep recording into the
+    # previous workspace. Paths set individually (typed in Configure) are left
+    # alone unless they point at a workspace that is no longer in use.
+    if [ -n "${_IOS_AOT_LAST_DIR:-}" ] && [ "$_IOS_AOT_LAST_DIR" != "$IOSKIT_AOT_DIR" ]; then
+        for key in IOSKIT_AOT_RECORDINGS_DIR IOSKIT_AOT_OUTPUT_DIR IOSKIT_AOT_GADGET_DIR \
+                   IOSKIT_AOT_RECORDER_DIR IOSKIT_AOT_EVIDENCE_DIR IOSKIT_AOT_ROOT; do
+            val=${!key:-}
+            case "$val" in
+                "$_IOS_AOT_LAST_DIR"/*) printf -v "$key" '%s' '' ;;
+            esac
+        done
+    fi
+    _IOS_AOT_LAST_DIR=$IOSKIT_AOT_DIR
+    : "${IOSKIT_AOT_ROOT:=${IOSKIT_AOT_DIR:?}/training-fakefs}"
+    : "${IOSKIT_AOT_RECORDINGS_DIR:=${IOSKIT_AOT_DIR:?}/recordings}"
+    : "${IOSKIT_AOT_OUTPUT_DIR:=${IOSKIT_AOT_DIR:?}/build-aot}"
+    : "${IOSKIT_AOT_GADGET_DIR:=${IOSKIT_AOT_DIR:?}/build-gadget}"
+    : "${IOSKIT_AOT_RECORDER_DIR:=${IOSKIT_AOT_DIR:?}/build-recorder}"
+    : "${IOSKIT_AOT_EVIDENCE_DIR:=${IOSKIT_AOT_DIR:?}/evidence}"
+
+    # Persist what was derived, so the two screens cannot disagree later.
+    if [ "$changed" = 0 ] && declare -F systui_ioskit_auto_get >/dev/null; then
+        for key in IOSKIT_AOT_DIR IOSKIT_AOT_ROOT IOSKIT_AOT_RECORDINGS_DIR IOSKIT_AOT_OUTPUT_DIR IOSKIT_AOT_GADGET_DIR IOSKIT_AOT_RECORDER_DIR IOSKIT_AOT_EVIDENCE_DIR; do
+            val=$(systui_ioskit_auto_get "$key" 2>/dev/null || true)
+            if [ "$val" != "${!key}" ] && declare -F systui_ioskit_auto_set >/dev/null; then
+                systui_ioskit_auto_set "$key" "${!key}" >/dev/null 2>&1 || true
+            fi
+        done
+    fi
 }
 ios_aot_path() {
     case "$1" in /*) ;; *) ios_aot_error 'Paths must be absolute.'; return 1;; esac

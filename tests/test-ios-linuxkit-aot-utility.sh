@@ -37,7 +37,10 @@ old=$IOSKIT_AOT_OUTPUT_DIR; IOSKIT_AOT_OUTPUT_DIR="$T/evil;touch $T/pwn"; : > "$
 ios_aot_link && fail 'unsafe path accepted'
 [ ! -e "$T/pwn" ] || fail 'unsafe path was executed'
 [ ! -s "$T/args" ] || fail 'a command ran with an unsafe path'
-IOSKIT_AOT_OUTPUT_DIR=$old
+# Point the output directory somewhere else under the same workspace: derived
+# AOT paths outside the canonical workspace are re-derived by ios_aot_defaults.
+tmpout="$T/alt-out"; mkdir -p "$tmpout"; chmod 0700 "$tmpout"
+IOSKIT_AOT_OUTPUT_DIR=$tmpout
 # An existing output directory is now replaced deliberately (the confirm is
 # stubbed to yes); a failed rebuild must leave nothing behind, so the step can
 # be retried instead of dead-ending on "refusing to overwrite".
@@ -290,3 +293,58 @@ if ! REPO=$(pwd) bash "$T/harden-probe.sh" "$T" 2>"$T/harden.err"; then
     fail 'AOT hardening regressions'
 fi
 echo 'AOT hardening regressions passed'
+
+# --- one workspace and one setup profile for both AOT screens ----------------
+cat > "$T/unity-probe.sh" <<'UNITY'
+set -eu
+. "$REPO/src/features/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-ios-linuxkit-manager.sh"
+. "$REPO/src/features/111-ios-linuxkit-autoconfig-aot.sh"
+. "$REPO/src/features/117-ios-linuxkit-aot-utility.sh"
+T=$1
+export HOME="$T/home"
+export SYSTUI_IOSKIT_AUTO_CONF="$T/home/auto.conf"
+mkdir -p "$HOME"
+tui_msg() { :; }
+tui_yesno() { return 0; }
+
+# 1. With a checkout, both entry points must name the same workspace.
+IOSKIT_SRC_DIR="$T/src"
+ios_aot_defaults
+[ "$IOSKIT_AOT_DIR" = "$(systui_ioskit_aot_root)" ] || {
+    echo "workspace mismatch: 117=$IOSKIT_AOT_DIR 111=$(systui_ioskit_aot_root)" >&2; exit 1; }
+case "$IOSKIT_AOT_DIR" in
+    */aot) ;;
+    *) echo "workspace not derived from the checkout: $IOSKIT_AOT_DIR" >&2; exit 1 ;;
+esac
+
+# 2. The derivation is stored, so a later reader sees the same path.
+grep -qx "IOSKIT_AOT_RECORDINGS_DIR=$IOSKIT_AOT_DIR/recordings" "$SYSTUI_IOSKIT_AUTO_CONF" || {
+    echo 'derived AOT paths were not persisted' >&2; exit 1; }
+
+# 3. A workspace chosen once wins over the derivation in both screens.
+systui_ioskit_auto_set IOSKIT_AOT_DIR "$T/custom" >/dev/null
+unset IOSKIT_AOT_DIR IOSKIT_AOT_ROOT IOSKIT_AOT_RECORDINGS_DIR IOSKIT_AOT_OUTPUT_DIR \
+      IOSKIT_AOT_GADGET_DIR IOSKIT_AOT_RECORDER_DIR IOSKIT_AOT_EVIDENCE_DIR IOS_AOT_CONFIG_LOADED
+ios_aot_defaults
+[ "$IOSKIT_AOT_DIR" = "$T/custom" ] || { echo "custom workspace ignored: $IOSKIT_AOT_DIR" >&2; exit 1; }
+[ "$IOSKIT_AOT_ROOT" = "$T/custom/training-fakefs" ] || {
+    echo "derived paths did not follow the custom workspace: root=$IOSKIT_AOT_ROOT" >&2
+    cat "$SYSTUI_IOSKIT_AUTO_CONF" >&2
+    exit 1; }
+[ "$(systui_ioskit_aot_root)" = "$T/custom" ] || { echo 'the 111 screen disagrees about the workspace' >&2; exit 1; }
+
+# 4. The setup profile is stored, read back, and expands to the same steps.
+systui_ioskit_auto_set IOSKIT_SETUP_PROFILE aot >/dev/null
+[ "$(systui_ioskit_profile)" = aot ] || { echo 'setup profile did not persist' >&2; exit 1; }
+[ "$(systui_ioskit_profile_steps)" = 'source deps build aot' ] || { echo 'aot profile steps wrong' >&2; exit 1; }
+[ "$(systui_ioskit_profile_steps full)" = 'source deps build aot guest' ] || { echo 'full profile steps wrong' >&2; exit 1; }
+
+# 5. A dry run reports the plan and changes nothing.
+before=$(cat "$SYSTUI_IOSKIT_AUTO_CONF" 2>/dev/null | wc -l)
+plan=$(systui_ioskit_run_profile --dry-run full 2>&1)
+after=$(cat "$SYSTUI_IOSKIT_AUTO_CONF" 2>/dev/null | wc -l)
+printf '%s\n' "$plan" | grep -q 'Dry run' || { echo 'dry run produced no plan' >&2; exit 1; }
+[ "$before" = "$after" ] || { echo 'dry run changed the configuration' >&2; exit 1; }
+UNITY
+REPO=$(pwd) bash "$T/unity-probe.sh" "$T" || fail 'unified workspace/profile regressions'
+echo 'Unified setup regressions passed'
