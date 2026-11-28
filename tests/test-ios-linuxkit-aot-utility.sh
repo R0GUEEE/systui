@@ -213,16 +213,25 @@ link_fail || { echo 'link left a directory after a failed configure' >&2; exit 1
 #    the description first, then the command: the artifact has to be created by
 #    the Build step, or the check afterwards rightly fails.
 link_rebuild() {
-    mkdir -p "$IOSKIT_AOT_OUTPUT_DIR"
+    # The directory may or may not exist at this point (the link step removes
+    # its output on failure). Either way the rebuild has to succeed, and the
+    # artifact must be created by the Build step, not before it.
+    local existed=no
+    [ -d "$IOSKIT_AOT_OUTPUT_DIR" ] && existed=yes
     run_cmd() {
         local desc=$1; shift
+        if [ "$desc" = 'Configure linked AOT' ]; then
+            [ -d "$IOSKIT_AOT_OUTPUT_DIR" ] || { echo 'configure ran before mkdir' >&2; return 1; }
+        fi
         if [ "$desc" = 'Build linked AOT' ]; then
+            [ -d "$IOSKIT_AOT_OUTPUT_DIR" ] || { echo 'build did not get its directory' >&2; return 1; }
             printf '#!/bin/sh\n' > "$IOSKIT_AOT_OUTPUT_DIR/ish"
             chmod +x "$IOSKIT_AOT_OUTPUT_DIR/ish"
         fi
         return 0
     }
-    ios_aot_link
+    ios_aot_link || return 1
+    [ "$existed" = no ] || [ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ]
 }
 link_rebuild || { echo 'rebuild over an existing directory was refused' >&2; exit 1; }
 
