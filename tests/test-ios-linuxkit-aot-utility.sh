@@ -245,6 +245,12 @@ if ! link_rebuild; then
         echo "  ios_aot_link source:" >&2
         declare -f ios_aot_link >&2
         echo "  tui_yesno stub: $(declare -f tui_yesno)" >&2
+        IOSKIT_AOT_OUTPUT_DIR="${IOSKIT_AOT_OUTPUT_DIR:-}" IOSKIT_AOT_RECORDINGS_DIR="${IOSKIT_AOT_RECORDINGS_DIR:-}" bash -x -c '
+            . "$1/src/features/117-ios-linuxkit-aot-utility.sh"
+            true' _ "$PWD" 2>&1 | tail -5 >&2 || true
+        ( set -x; ios_aot_ready; echo "ready=$?"; ios_aot_images; echo "images=$?";
+          ios_aot_require_target build-arm64-linux; echo "target=$?";
+          ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR"; echo "path=$?" ) 2>&1 | tail -12 >&2
     } 2>&1
     exit 1
 fi
