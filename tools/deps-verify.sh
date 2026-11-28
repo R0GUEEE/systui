@@ -96,7 +96,7 @@ check_group() { # <prefix> <comma-list>
     done
 }
 
-while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge _tier cmds; do
+while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge _tier cmds _zypper; do
     case "$canonical" in ''|'#'*) continue ;; esac
     case "${cmds:-}" in ''|'-') continue ;; esac
     mandatory=${cmds%%|*}

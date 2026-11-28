@@ -360,9 +360,9 @@ deps_rows() { # <column> <tiers-csv>
 # The manifest may split a "commands" field on "|": entries before the bar are
 # mandatory, entries after it are advisory and reported as "soft:tier:command".
 deps_missing_commands() { # <tiers-csv>
-    local tiers="$1" manifest canonical apt apk pacman dnf xbps emerge tier cmds
+    local tiers="$1" manifest canonical apt apk pacman dnf xbps emerge tier cmds _zypper
     manifest=$(deps_manifest_path) || return 1
-    while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge tier cmds || [ -n "${canonical:-}" ]; do
+    while IFS=$TAB read -r canonical apt apk pacman dnf xbps emerge tier cmds _zypper || [ -n "${canonical:-}" ]; do
         case "${canonical:-}" in ''|'#'*) continue ;; esac
         case ",${tiers}," in *",${tier:-},"*) ;; *) continue ;; esac
         [ -n "${cmds:-}" ] || continue

@@ -142,6 +142,15 @@ printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     optional pkg pkg pkg pkg pkg pkg core "sh|systui-advisory-command" > "$tmp/adv.tsv"
 check "advisory commands never fail the check" sh "$VERIFY" apt "$tmp/adv.tsv"
 
+# Regression: the manifest grew an optional tenth (zypper) column. Reading it
+# as part of the commands field made deps-verify demand a command literally
+# called "pkill<TAB>procps" on Debian.
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    rowten pkg pkg pkg pkg pkg pkg core "sh|systui-advisory-command" zypperpkg > "$tmp/ten.tsv"
+check "a tenth column does not leak into the command list" sh "$VERIFY" apt "$tmp/ten.tsv"
+check "the optional column is used for zypper" bash -c \
+    'sh "$1" --list-packages zypper "$2" | grep -qx zypperpkg' _ "$VERIFY" "$tmp/ten.tsv"
+
 printf '%s\n' 'Usage: tools/deps-verify.sh' > "$tmp/unused"
 check "deps-verify rejects an unknown family" bash -c '! sh "$1" slackware 2>/dev/null' _ "$VERIFY"
 
