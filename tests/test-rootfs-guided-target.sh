@@ -11,7 +11,17 @@ source "$repo/src/features/113-ish-aok-sysconfig-integration.sh"
 ROOTFS_BASE="$tmp/base"; mkdir "$ROOTFS_BASE"
 SYSTUI_TMP=$tmp; target_fixture="$ROOTFS_BASE/Devuan image"; confirm=no
 run_strict() { shift; "$@"; }
-tui_capture_menu() { local dest=$1; printf -v "$dest" '%s' "${menu_choice:-build}"; menu_choice=back; }
+# Rootfs is an index: the first answer picks the acquire group, the second the
+# action inside it. `menu_choice` unset means "just opened Rootfs"; it is set to
+# the action after the first level and back to "back" once used.
+tui_capture_menu() {
+    local dest=$1
+    case "${menu_choice-unset}" in
+        unset) printf -v "$dest" '%s' acquire; menu_choice=build ;;
+        back)  printf -v "$dest" '%s' back ;;
+        *)     printf -v "$dest" '%s' "$menu_choice"; menu_choice=back ;;
+    esac
+}
 tui_msg() { :; }
 tui_radio() { case $1 in *1/13*) echo devuan;; *2/13*|*Target\ architecture*) echo arm64;; *5/13*) echo sysvinit;; *12/13*) echo xz;; *) return 1;; esac; }
 tui_input() { case $1 in *8/13) printf '%s\n' "$target_fixture";; *) printf '%s\n' "$3";; esac; }

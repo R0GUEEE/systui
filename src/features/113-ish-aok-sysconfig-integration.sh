@@ -124,29 +124,80 @@ menu_rootfs() {
     local c
     while true; do
         tui_capture_menu c tui_menu_no_tags "Rootfs" \
-            "Build, download, repair and run Linux root filesystems:" \
-            aot       "Ahead-of-time JIT — installation, setup and configuration" \
-            bedrock   "Bedrock-AOK (install/manage multi-distro environment)" \
-            guestroots "AOK app roots — catalog, install, mount or enter" \
+"Build, acquire, run and inspect Linux root filesystems.
+iSH-AOK features and container resources are their own groups." \
+            acquire   "Build or download a rootfs — local build, prebuilt images, bootstrap tools" \
+            manage    "Use an existing rootfs — chroot workbench" \
+            distros   "Distro managers — tools that install and own distributions" \
+            containers "Containers & virtualization — runtimes and machines" \
+            ish       "iSH-AOK — AOT, Bedrock-AOK, app roots and iOS-linuxkit" \
+            back      "Back to main menu" || return $?
+        case "$c" in
+            acquire)  menu_rootfs_acquire ;;
+            manage)   menu_rootfs_manage ;;
+            distros)  tui_call_menu menu_rootfs_distro_managers "Distro managers" ;;
+            containers) tui_call_menu menu_rootfs_containers "Containers & virtualization" ;;
+            ish)      menu_rootfs_ish_aok ;;
+            back|'') return 0 ;;
+            *)        tui_msg "Error" "Unknown option: $c" ;;
+        esac
+    done
+}
+
+# Anything that produces a rootfs tree: a guided build, a prebuilt image, or
+# the low-level backend the build wizard uses.
+menu_rootfs_acquire() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Rootfs — build or acquire" \
+"Every route here ends with a rootfs tree you can open in the Workbench." \
             build     "Build a new local rootfs (guided; not an app install)" \
             download  "Download a prebuilt rootfs (always tar.gz)" \
-            workbench "Chroot workbench (manage rootfs)" \
-            bootstrap "Bootstrap tools" \
-            distros   "Distro managers" \
-            containers "Containers & virtualization" \
+            bootstrap "Bootstrap tools — debootstrap, mmdebstrap, pacstrap and friends" \
             back      "Back" || return $?
         case "$c" in
-            aot)       tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT" ;;
-            bedrock)   tui_call_menu menu_bedrock_aok "Bedrock-AOK" ;;
-            guestroots) tui_call_menu systui_aok_roots_menu "AOK app roots" ;;
             build)     rootfs_builder || true ;;
             download)  rootfs_download || true ;;
-            workbench) menu_rootfs_workbench || true ;;
             bootstrap) menu_rootfs_bootstrap_tools || true ;;
-            distros)   menu_rootfs_distro_managers || true ;;
-            containers) tui_call_menu menu_rootfs_containers "Containers & virtualization" ;;
-            back|'') return 0 ;;
-            *)         tui_msg "Error" "Unknown option: $c" ;;
+            back|'')   return 0 ;;
+        esac
+    done
+}
+
+# Operating a tree that already exists.
+menu_rootfs_manage() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Rootfs — use an existing tree" \
+"Enter, mount, modify, package or delete a rootfs that is already on disk." \
+            workbench "Chroot workbench — enter, mount, pack, configure and delete" \
+            back      "Back" || return $?
+        case "$c" in
+            workbench) menu_rootfs_workbench || true ;;
+            back|'')   return 0 ;;
+        esac
+    done
+}
+
+# iSH-AOK specific features. These operate on app images and the AOT toolchain
+# rather than on trees the Rootfs builder produced.
+menu_rootfs_ish_aok() {
+    local c
+    while true; do
+        tui_capture_menu c tui_menu_no_tags "Rootfs — iSH-AOK" \
+"iOS-linuxkit, Bedrock and the AOT toolchain. None of these install an
+app image for you." \
+            aot        "Ahead-of-time JIT — status, guided workflow and stages" \
+            bedrock    "Bedrock-AOK — install and manage a multi-distro environment" \
+            guestroots "AOK app roots — catalog, install, mount or enter" \
+            ioskit     "iOS-linuxkit — setup, guest images, tuning and diagnostics" \
+            back       "Back" || return $?
+        case "$c" in
+            aot)        tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT" ;;
+            bedrock)    tui_call_menu menu_bedrock_aok "Bedrock-AOK" ;;
+            guestroots) tui_call_menu systui_aok_roots_menu "AOK app roots" ;;
+            ioskit)     tui_call_menu menu_ios_linuxkit "iOS-linuxkit" ;;
+            back|'')    return 0 ;;
         esac
     done
 }

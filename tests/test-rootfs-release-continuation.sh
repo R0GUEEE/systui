@@ -15,7 +15,12 @@ case "$*" in
     *'--title Rootfs Builder 2/13 --'*) printf 'amd64\n' >&2 ;;
     *'--title Rootfs Builder 3/13 --'*) printf 'trixie\n' >&2 ;;
     *'--title Rootfs Builder 4/13 --'*) printf 'mmdebstrap\n' >&2 ;;
+    # Rootfs is an index: the first answer opens the acquire group, the second
+    # picks the guided build inside it.
     *'--title Rootfs --'*)
+        if [ -e "${FIXTURE_TRACE}.group" ]; then printf 'back\n' >&2
+        else : > "${FIXTURE_TRACE}.group"; printf 'acquire\n' >&2; fi ;;
+    *'--title Rootfs — build or acquire --'*)
         if [ -e "${FIXTURE_TRACE}.menu" ]; then printf 'back\n' >&2
         else : > "${FIXTURE_TRACE}.menu"; printf 'build\n' >&2; fi ;;
     *) printf 'Unexpected dialog: %s\n' "$*" >&2; exit 90 ;;
@@ -45,6 +50,8 @@ rootfs_backend_menu() {
     _systui_base_rootfs_backend_menu "$@" || return 1
     return 1  # deliberate stop before host dependencies or target operations
 }
+# menu_rootfs is an index now: acquire -> build runs the guided wizard.
+menu_rootfs_acquire() { rootfs_builder; }
 menu_rootfs
 PROBE
 # A timeout protects against accidental loops if the wizard exits too early.

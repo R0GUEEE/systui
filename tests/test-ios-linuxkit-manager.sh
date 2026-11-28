@@ -58,8 +58,13 @@ pass 'no exported functions'
 bash -n "$integration"
 
 grep -Fq 'menu_rootfs()' "$integration" || fail 'late integration does not own the Rootfs menu'
-grep -Fq 'aot       "Ahead-of-time JIT — installation, setup and configuration' "$integration" || fail 'Rootfs does not expose iOS-linuxkit'
+# Rootfs is an index of groups; the iSH-AOK features (AOT, Bedrock, app roots,
+# iOS-linuxkit) live in menu_rootfs_ish_aok inside the same module.
+grep -Fq 'ish       "iSH-AOK — AOT, Bedrock-AOK, app roots and iOS-linuxkit"' "$integration" || fail 'Rootfs does not expose the iSH-AOK group'
+grep -Fq 'aot        "Ahead-of-time JIT — status, guided workflow and stages"' "$integration" || fail 'iSH-AOK group does not expose AOT'
 grep -Fq 'tui_call_menu menu_ios_linuxkit_aot "Ahead-of-time JIT"' "$integration" || fail 'Rootfs iOS-linuxkit entry is not dispatched'
+grep -Fq 'ioskit     "iOS-linuxkit — setup, guest images, tuning and diagnostics"' "$integration" || fail 'iSH-AOK group does not expose iOS-linuxkit'
+grep -Fq 'tui_call_menu menu_ios_linuxkit "iOS-linuxkit"' "$integration" || fail 'iOS-linuxkit front door is not dispatched from the iSH-AOK group'
 # The System Configuration front door must not grow its own iOS-Linuxkit entry.
 # Only $base_file is inspected: the Rootfs integration legitimately owns an
 # `aot ... "Ahead-of-time JIT"` line (asserted above), so including it

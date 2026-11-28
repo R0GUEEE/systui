@@ -9,43 +9,66 @@ export SYSTUI_TMP_ROOT="$tmp" SYSTUI_LOGFILE="$tmp/log" SYSTUI_LIBDIR="$ROOT"
 . "$ROOT/src/core/loader.sh"
 systui_load_features "$ROOT/src/features/.load-order"
 # Preserve the real capture and dispatch helpers, replacing only the widget.
+#
+# Rootfs is an index of five groups; iSH-AOK features live one level down in
+# menu_rootfs_ish_aok. The stub answers group -> child menu -> back, so the
+# dispatch of both levels is exercised.
 tui_refresh_terminal_size() { :; }
 tui_menu_no_tags() {
     printf '%s\n' "$@" > "$tmp/rootfs-args"
-    if [ ! -e "$tmp/selected" ]; then touch "$tmp/selected"; echo bedrock; else echo back; fi
+    local depth
+    depth=0; [ -e "$tmp/selected" ] && depth=$(wc -l < "$tmp/selected")
+    case "$depth" in
+        0) echo ish; printf 'x\n' >> "$tmp/selected" ;;
+        1) echo aot; printf 'x\n' >> "$tmp/selected" ;;
+        *) echo back; printf 'x\n' >> "$tmp/selected" ;;
+    esac
 }
-menu_bedrock_aok() { echo invoked > "$tmp/opened"; }
+menu_ios_linuxkit_aot() { echo invoked > "$tmp/opened"; }
 menu_rootfs
-[ -f "$tmp/opened" ] || { echo 'Bedrock not dispatched' >&2; exit 1; }
-for tag in bedrock aot guestroots build download workbench bootstrap distros containers back; do
-    grep -qx "$tag" "$tmp/rootfs-args" || { echo "Missing rootfs entry: $tag" >&2; exit 1; }
+[ -f "$tmp/opened" ] || { echo 'AOT not dispatched through the iSH-AOK group' >&2; exit 1; }
+for tag in acquire manage distros containers ish back; do
+    grep -qx "$tag" "$tmp/rootfs-args" || { echo "Missing rootfs group: $tag" >&2; exit 1; }
 done
-# Dispatch is in the caller, not the command-substitution widget process.
-rm "$tmp/selected" "$tmp/opened"
+rm -f "$tmp/selected" "$tmp/opened"
+tui_menu_no_tags() {
+    local depth
+    depth=0; [ -e "$tmp/selected" ] && depth=$(wc -l < "$tmp/selected")
+    case "$depth" in
+        0) echo ish; printf 'x\n' >> "$tmp/selected" ;;
+        1) echo bedrock; printf 'x\n' >> "$tmp/selected" ;;
+        *) echo back; printf 'x\n' >> "$tmp/selected" ;;
+    esac
+}
 menu_bedrock_aok() { state=changed; }
 state=original; menu_rootfs; [ "$state" = changed ]
-# AOT has its own guarded dispatch and exact user-facing label.
-rm "$tmp/selected"
+rm -f "$tmp/selected"
 tui_menu_no_tags() {
-    printf '%s\n' "$@" > "$tmp/rootfs-args"
-    if [ ! -e "$tmp/selected" ]; then touch "$tmp/selected"; echo aot; else echo back; fi
-}
-menu_ios_linuxkit_aot() { aot_state=opened; }
-aot_state=closed; menu_rootfs; [ "$aot_state" = opened ]
-grep -Fxq 'Ahead-of-time JIT — installation, setup and configuration' "$tmp/rootfs-args"
-! grep -qx ioskit "$tmp/rootfs-args"
-# AOK guest roots are separate from the local bootstrap wizard.
-rm "$tmp/selected"
-tui_menu_no_tags() {
-    printf '%s\n' "$@" > "$tmp/rootfs-args"
-    if [ ! -e "$tmp/selected" ]; then touch "$tmp/selected"; echo guestroots; else echo back; fi
+    local depth
+    depth=0; [ -e "$tmp/selected" ] && depth=$(wc -l < "$tmp/selected")
+    case "$depth" in
+        0) echo ish; printf 'x\n' >> "$tmp/selected" ;;
+        1) echo guestroots; printf 'x\n' >> "$tmp/selected" ;;
+        *) echo back; printf 'x\n' >> "$tmp/selected" ;;
+    esac
 }
 systui_aok_roots_menu() { guestroots_state=opened; }
 guestroots_state=closed; menu_rootfs; [ "$guestroots_state" = opened ]
-grep -Fxq 'Build a new local rootfs (guided; not an app install)' "$tmp/rootfs-args"
+# The iSH-AOK group still offers the iOS-linuxkit front door.
+printf 'x\n' > "$tmp/selected"
+tui_menu_no_tags() { printf '%s\n' "$@" > "$tmp/ish-args"; echo back; return 0; }
+menu_rootfs_ish_aok
+for tag in aot bedrock guestroots ioskit back; do
+    grep -qx "$tag" "$tmp/ish-args" || { echo "Missing iSH-AOK entry: $tag" >&2; exit 1; }
+done
+# The acquire group still offers the guided builder.
+( tui_menu_no_tags() { printf '%s\n' "$@" > "$tmp/acq-args"; echo back; return 0; }; menu_rootfs_acquire )
+for tag in build download bootstrap back; do
+    grep -qx "$tag" "$tmp/acq-args" || { echo "Missing acquire entry: $tag" >&2; exit 1; }
+done
 # Cancellation exits; real widget errors propagate unchanged.
 tui_menu_no_tags() { return 1; }; menu_rootfs
 tui_menu_no_tags() { return 3; }; rc=0; menu_rootfs || rc=$?; [ "$rc" = 3 ]
 # Original widget should not contain the historical injection wrapper.
 ! declare -f tui_menu | grep -Eq 'menu_bedrock_aok|Bedrock-AOK'
-printf 'Bedrock rootfs full-manifest routing checks passed.\n'
+printf 'Rootfs grouping and full-manifest routing checks passed.\n'
