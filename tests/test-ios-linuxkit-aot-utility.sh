@@ -99,10 +99,15 @@ tui_capture_menu() {
     return 0
 }
 menu_ios_linuxkit_aot
+# Pure-shell matching: grep is slow on some hosts and not worth the risk in a
+# unit test.
+has_line() { local want=$1 line; while IFS= read -r line; do [ "$line" = "$want" ] && return 0; done < "$2"; return 1; }
 for tag in status workflow stages toolchain rollback about back; do
-    grep -qx -- "$tag" "$T/menu-tags" || fail "AOT menu lacks $tag"
+    has_line "$tag" "$T/menu-tags" || fail "AOT menu lacks $tag"
 done
-grep -q '^#sub' "$SPLIT" && [ "$(grep -c '^#sub' "$SPLIT")" -ge 2 ] || fail 'stages menu was not opened'
+subs=0
+while IFS= read -r line; do [ "$line" = "#sub" ] && subs=$((subs + 1)); done < "$SPLIT"
+[ "$subs" -ge 2 ] || fail 'stages menu was not opened'
 echo 'AOT menu structure tests passed'
 
 # --- guided workflow still runs every stage in order ------------------------
@@ -148,7 +153,8 @@ for pair in "IOSKIT_AOT_DIR=$T/ws" "IOSKIT_AOT_ROOT=$T/ws/root" \
             "IOSKIT_AOT_RECORDINGS_DIR=$T/ws/rec" "IOSKIT_AOT_OUTPUT_DIR=$T/ws/out" \
             "IOSKIT_AOT_GADGET_DIR=$T/ws/gad" "IOSKIT_AOT_RECORDER_DIR=$T/ws/recb" \
             "IOSKIT_AOT_EVIDENCE_DIR=$T/ws/ev"; do
-    grep -Fx -- "$pair" "$SYSTUI_IOSKIT_AUTO_CONF" >/dev/null || { echo "not saved: $pair" >&2; exit 1; }
+    has_exact_line() { local want=$1 line; while IFS= read -r line; do [ "$line" = "$want" ] && return 0; done < "$SYSTUI_IOSKIT_AUTO_CONF"; return 1; }
+    has_exact_line "$pair" || { echo "not saved: $pair" >&2; exit 1; }
 done
 [ "$IOSKIT_AOT_OUTPUT_DIR" = "$T/ws/out" ] || { echo 'live variable not updated' >&2; exit 1; }
 PROBE
