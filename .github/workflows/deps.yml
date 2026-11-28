@@ -55,7 +55,9 @@ jobs:
             pm: dnf
           - image: opensuse/tumbleweed:latest
             pm: zypper
-          - image: voidlinux/voidlinux:latest
+          # Void's official "full" image ships a working xbps database; the
+          # bare image fails its repo sync inside the runner's sandbox.
+          - image: ghcr.io/void-linux/void-glibc-full:latest
             pm: xbps
     steps:
       - uses: actions/checkout@v5
