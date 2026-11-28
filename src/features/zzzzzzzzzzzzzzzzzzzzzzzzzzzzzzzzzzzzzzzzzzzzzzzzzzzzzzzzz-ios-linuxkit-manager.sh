@@ -863,30 +863,86 @@ systui_ioskit_sha256() { # <file> -> hash
 # Download with the first available fetcher. curl and wget both follow
 # redirects and fail on an HTTP error, so a partial file can never be treated as
 # a successful download.
-# Timeouts are not optional here. A stalled transfer shows a complete-looking
-# progress bar and then waits forever without them, which is exactly what the
-# pinned Alpine import did. --speed-limit/--speed-time abandon a transfer that
-# has stopped moving; --max-time caps the whole request.
+# Timeouts are not optional here: a stalled transfer shows a complete-looking
+# progress bar and then waits forever without them, which is what the pinned
+# Alpine import did.
+#
+# --max-time is deliberately absent. It caps a healthy-but-large transfer as
+# hard as a stalled one, and any failure then restarts from zero. A transfer is
+# bounded by progress instead: --speed-limit/--speed-time abort once the
+# average rate drops below the floor, the wrapper retries a few times, and each
+# retry continues with -C - from the bytes already on disk.
 SYSTUI_IOSKIT_CONNECT_TIMEOUT="${SYSTUI_IOSKIT_CONNECT_TIMEOUT:-20}"
-SYSTUI_IOSKIT_STALL_SECONDS="${SYSTUI_IOSKIT_STALL_SECONDS:-60}"
+SYSTUI_IOSKIT_STALL_SECONDS="${SYSTUI_IOSKIT_STALL_SECONDS:-45}"
 SYSTUI_IOSKIT_STALL_BYTES="${SYSTUI_IOSKIT_STALL_BYTES:-1024}"
-SYSTUI_IOSKIT_MAX_SECONDS="${SYSTUI_IOSKIT_MAX_SECONDS:-1800}"
+SYSTUI_IOSKIT_ATTEMPTS="${SYSTUI_IOSKIT_ATTEMPTS:-6}"
 
-systui_ioskit_fetch() { # <url> <dest>
+systui_ioskit_file_size() { # <path>
+    if [ -f "$1" ]; then
+        wc -c < "$1" 2>/dev/null | tr -d ' '
+    else
+        printf '0\n'
+    fi
+}
+
+# One transfer attempt. Resumes when the partial file is already there.
+systui_ioskit_fetch_once() { # <url> <dest>
+    local url="$1" dest="$2" before
+    before=$(systui_ioskit_file_size "$dest")
     if systui_ioskit_have curl; then
-        curl -fL --progress-bar \
-            --connect-timeout "$SYSTUI_IOSKIT_CONNECT_TIMEOUT" \
-            --speed-limit "$SYSTUI_IOSKIT_STALL_BYTES" \
-            --speed-time "$SYSTUI_IOSKIT_STALL_SECONDS" \
-            --max-time "$SYSTUI_IOSKIT_MAX_SECONDS" \
-            --retry 2 --retry-delay 2 \
-            -o "$2" "$1"
+        if [ "$before" -gt 0 ]; then
+            curl -fL --progress-bar -C - \
+                --connect-timeout "$SYSTUI_IOSKIT_CONNECT_TIMEOUT" \
+                --speed-limit "$SYSTUI_IOSKIT_STALL_BYTES" \
+                --speed-time "$SYSTUI_IOSKIT_STALL_SECONDS" \
+                -o "$dest" "$url"
+        else
+            curl -fL --progress-bar \
+                --connect-timeout "$SYSTUI_IOSKIT_CONNECT_TIMEOUT" \
+                --speed-limit "$SYSTUI_IOSKIT_STALL_BYTES" \
+                --speed-time "$SYSTUI_IOSKIT_STALL_SECONDS" \
+                -o "$dest" "$url"
+        fi
     elif systui_ioskit_have wget; then
-        # wget's -T is a per-read timeout, which covers a stalled socket.
-        wget -T "$SYSTUI_IOSKIT_STALL_SECONDS" -O "$2" "$1"
+        # wget resumes by itself and -T is a per-read timeout.
+        wget -c -T "$SYSTUI_IOSKIT_STALL_SECONDS" -O "$dest" "$url"
     else
         return 127
     fi
+}
+
+# Fetch with retries. Prints its progress so a slow transfer in a capture
+# window does not look like a hang, and reports how many bytes it has each
+# attempt.
+systui_ioskit_fetch() { # <url> <dest>
+    local url="$1" dest="$2" attempt=1 rc size
+    if ! systui_ioskit_have curl && ! systui_ioskit_have wget; then
+        return 127
+    fi
+    while :; do
+        size=$(systui_ioskit_file_size "$dest")
+        printf 'Download attempt %s/%s: %s bytes on disk\n' "$attempt" \
+            "$SYSTUI_IOSKIT_ATTEMPTS" "$size"
+        systui_ioskit_fetch_once "$url" "$dest"
+        rc=$?
+        # curl reports success when the server closes cleanly, even if the file
+        # is short. With a resume offset and a known total, a transfer that made
+        # no progress is not a success.
+        if [ "$rc" -eq 0 ] && [ "$(systui_ioskit_file_size "$dest")" -le "$size" ] && [ "$size" -gt 0 ]; then
+            rc=1
+        fi
+        [ "$rc" -eq 0 ] && return 0
+        size=$(systui_ioskit_file_size "$dest")
+        printf 'Attempt %s failed (exit %s) after %s bytes; retrying in 3s\n' \
+            "$attempt" "$rc" "$size"
+        [ "$attempt" -lt "$SYSTUI_IOSKIT_ATTEMPTS" ] || {
+            printf 'Giving up after %s attempts. The partial file is kept:\n  %s\n' \
+                "$attempt" "$dest" >&2
+            return "$rc"
+        }
+        attempt=$((attempt + 1))
+        sleep 3
+    done
 }
 
 # Download to a staging file, verify, and only then move it into place. A
@@ -895,8 +951,17 @@ systui_ioskit_fetch() { # <url> <dest>
 systui_ioskit_download_verified() { # <url> <expected-sha256|-> <dest>
     local url="$1" sha="$2" dest="$3" part got
     part="$dest.part"
-    rm -f -- "$part"
-    run_cmd "Download $url" systui_ioskit_fetch "$url" "$part" || { rm -f -- "$part"; return 1; }
+    # A partial file from an earlier attempt is resumed, not discarded: a large
+    # image over a slow link must survive one dropped connection.
+    if [ -s "$part" ]; then
+        printf 'Resuming from %s bytes: %s\n' "$(systui_ioskit_file_size "$part")" "$part"
+    else
+        rm -f -- "$part"
+    fi
+    run_cmd "Download $url" systui_ioskit_fetch "$url" "$part" || {
+        printf 'Download failed; partial data kept at %s\n' "$part" >&2
+        return 1
+    }
     if [ -n "$sha" ] && [ "$sha" != '-' ]; then
         got=$(systui_ioskit_sha256 "$part" || true)
         if [ -z "$got" ]; then

@@ -28,6 +28,21 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 - **Status shows each artifact once**, with its path, instead of printing
   "Recordings" and "Evidence" twice.
 
+### Guest rootfs download — resume instead of restart
+
+- **A dropped connection no longer throws the transfer away.** The fetcher
+  resumes with `curl -C -` (or `wget -c`) from the bytes already on disk, and
+  retries six times with a short backoff before giving up and keeping the
+  partial file.
+- **`--max-time` is gone.** It capped a healthy large transfer exactly like a
+  stalled one, and the retry then started from zero. A transfer is bounded by
+  progress instead: `--speed-time`/`--speed-limit` abort once the rate collapses.
+- **Each attempt reports what it is doing**: the attempt number, the bytes
+  already on disk, and the exit status of a failed try. A download running in a
+  capture window no longer looks indistinguishable from a hang.
+- A transfer that reports success without adding a byte (a server closing
+  cleanly mid-file) counts as a failure and is retried.
+
 ### Guest rootfs import (Rootfs → iSH-AOK → iOS-linuxkit → Guest root filesystems)
 
 - **"Download and import the pinned Alpine rootfs" no longer hangs at 100%.**

@@ -53,11 +53,16 @@ fakefsify() { # <body>
 
 # --- 1. the fetcher is bounded ------------------------------------------------
 # A transfer that stalls used to wait forever with the bar already at 100%.
-fetch_body=$(declare -f systui_ioskit_fetch)
+fetch_body=$(declare -f systui_ioskit_fetch; declare -f systui_ioskit_fetch_once)
 contains() { case "$1" in *"$2"*) return 0 ;; *) printf '    missing: %s\n' "$2"; return 1 ;; esac; }
 check "fetch sets a connect timeout" contains "$fetch_body" "--connect-timeout"
 check "fetch abandons a stalled transfer" contains "$fetch_body" "--speed-time"
-check "fetch has an absolute cap" contains "$fetch_body" "--max-time"
+# --max-time was removed: it capped healthy large transfers and forced a
+# restart from zero. A transfer is bounded by progress and retried instead.
+check "fetch resumes instead of restarting" contains "$fetch_body" "-C -"
+check "fetch retries a failed transfer" contains "$fetch_body" "SYSTUI_IOSKIT_ATTEMPTS"
+not_contains() { case "$1" in *"$2"*) printf '    unexpected: %s\n' "$2"; return 1 ;; *) return 0 ;; esac; }
+check "fetch no longer caps the whole transfer" not_contains "$fetch_body" "--max-time"
 
 # A stall must be abandoned quickly, not merely eventually: with a 3s window
 # the call has to come back in single-digit seconds, not after curl's default
@@ -85,7 +90,7 @@ PY
     server=$!
     sleep 1
     start=$(date +%s)
-    SYSTUI_IOSKIT_STALL_SECONDS=3 SYSTUI_IOSKIT_MAX_SECONDS=15 \
+    SYSTUI_IOSKIT_STALL_SECONDS=3 SYSTUI_IOSKIT_ATTEMPTS=2 \
         systui_ioskit_fetch "http://127.0.0.1:$port/x.tar.gz" "$T/stall.out" >/dev/null 2>&1
     rc=$?
     elapsed=$(( $(date +%s) - start ))
