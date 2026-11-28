@@ -7,6 +7,36 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 
 ## 1.3.0 — 2026-11-27
 
+### Ahead-of-time JIT (Rootfs → Ahead-of-time JIT)
+
+- **`Configure paths` saved the wrong values.** The save loop iterated the
+  directory *values* and then asked for `"${!p}"` by name, so all seven
+  settings (`IOSKIT_AOT_DIR`, `_ROOT`, `_RECORDINGS_DIR`, `_OUTPUT_DIR`,
+  `_GADGET_DIR`, `_RECORDER_DIR`, `_EVIDENCE_DIR`) ended up holding the last
+  directory typed. Saving is now one explicit write per setting through
+  `ios_aot_save_paths`, which updates the live variables only after the file
+  is written.
+- **`Install training guest packages` was inverted.** Answering *No* returned
+  success and skipped the work; answering *Yes* ran it and then failed with a
+  bare status 1 on any error. It now refuses on *No*, reports a real message on
+  failure, and verifies `import zlib` inside the guest afterwards.
+- **Builds honour the artifact path.** A target that ignores its output
+  variable now has its `ish` adopted into the configured directory
+  (`ios_aot_adopt_artifact`) instead of failing with "ish is missing"; an
+  existing binary is never replaced.
+- **Cancelling is side-effect free.** `Build`, `Record`, `Link` and `Validate`
+  ask before creating their output directory instead of after.
+- **Validation evidence must be fresh.** The old check passed whenever the
+  evidence directory existed, which it always did. Validation now fails unless
+  this run wrote a new file into it.
+- **The guided workflow asks for paths once.** The second `Configure paths`
+  pass (seven prompts to re-point one rootfs) became `ios_aot_paths_root_only`.
+- **One AOT menu instead of two competing ones.** Rootfs → Ahead-of-time JIT is
+  now an index — Status / Guided workflow / Run one stage / Toolchain /
+  Shell / About — with the stages in pipeline order one level down. The saved
+  toolchain menu (Bun workspace, recorder build, gate checks) is reachable as
+  *Toolchain* rather than being shadowed.
+
 ### Repository cleanup
 
 - Removed `tools/rewrite-function-aliases.py`: it was a one-off migration that

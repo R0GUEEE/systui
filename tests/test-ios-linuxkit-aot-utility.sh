@@ -50,7 +50,9 @@ tui_capture_menu() {
 }
 systui_ioskit_load() { :; }
 menu_ios_linuxkit_aot
-grep -q 'guided' "$T/menu" || fail 'guided setup is absent from AOT menu'
+# The top-level menu is now an index; the guided workflow is one entry among
+# status/workflow/stages/advanced/rollback/about.
+grep -qx -- 'workflow' "$T/menu" || fail 'guided workflow is absent from the AOT menu'
 GUIDE_LOG=$T/guide
 : > "$GUIDE_LOG"
 tui_msg() { :; }
@@ -72,3 +74,90 @@ GUIDE_FAIL=
 ios_aot_guided_setup || fail 'guided workflow did not complete'
 [ "$(tail -1 "$GUIDE_LOG")" = validate ] || fail 'guided workflow skipped validation'
 echo 'Guided AOT setup tests passed'
+
+
+
+# --- menu: one front door, an index, and stages one level down -------------
+SPLIT=$T/menu-split.$$; : > "$SPLIT"
+tui_capture_menu() {
+    local dest=$1; shift
+    printf '%s\n' "$@" > "$T/menu-tags"
+    printf '#sub\n' >> "$SPLIT"
+    case "$(wc -l < "$SPLIT")" in
+        1) printf -v "$dest" '%s' stages ;;
+        2) printf -v "$dest" '%s' back ;;
+        *) printf -v "$dest" '%s' back ;;
+    esac
+    return 0
+}
+menu_ios_linuxkit_aot
+for tag in status workflow stages toolchain rollback about back; do
+    grep -qx -- "$tag" "$T/menu-tags" || fail "AOT menu lacks $tag"
+done
+grep -q '^#sub' "$SPLIT" && [ "$(grep -c '^#sub' "$SPLIT")" -ge 2 ] || fail 'stages menu was not opened'
+echo 'AOT menu structure tests passed'
+
+# --- guided workflow still runs every stage in order ------------------------
+GUIDE_LOG=$T/guide2; : > "$GUIDE_LOG"
+ios_aot_configure() { echo paths >> "$GUIDE_LOG"; }
+ios_aot_build() { echo "build:$1" >> "$GUIDE_LOG"; }
+ios_aot_rootfs() { echo rootfs >> "$GUIDE_LOG"; }
+ios_aot_prepare_guest() { echo guest >> "$GUIDE_LOG"; }
+ios_aot_record() { echo record >> "$GUIDE_LOG"; }
+ios_aot_link() { echo link >> "$GUIDE_LOG"; }
+ios_aot_validate() { echo validate >> "$GUIDE_LOG"; }
+ios_aot_setup() { echo setup >> "$GUIDE_LOG"; }
+ios_aot_guided_setup || fail 'guided workflow failed'
+[ "$(tail -1 "$GUIDE_LOG")" = validate ] || fail 'guided workflow skipped validation'
+echo 'AOT guided workflow regression passed'
+
+# --- paths: each setting keeps the value typed for it -----------------------
+# ios_aot_configure used to loop over the *values* and save "${!p}", so all
+# seven settings ended up holding the last directory typed.
+#
+# Everything above replaces AOT functions with logging stubs, and a dispatch
+# failure of a sourced function inside `set -e` tears down the whole shell, so
+# this check runs in a child that loads the utility fresh.
+cat > "$T/paths-probe.sh" <<'PROBE'
+set -eu
+. "$REPO/src/features/117-ios-linuxkit-aot-utility.sh"
+. "$REPO/src/features/111-ios-linuxkit-autoconfig-aot.sh"
+T=$1
+printf '%s\n' "$T/ws" "$T/ws/root" "$T/ws/rec" "$T/ws/out" "$T/ws/gad" "$T/ws/recb" "$T/ws/ev" > "$T/questions"
+tui_input() {
+    local line total
+    line=$(sed -n '1p' "$T/questions")
+    total=$(wc -l < "$T/questions")
+    if [ "$total" -gt 1 ]; then sed '1d' "$T/questions" > "$T/questions.next"; mv "$T/questions.next" "$T/questions"; else : > "$T/questions"; fi
+    printf '%s\n' "$line"
+}
+tui_yesno() { return 0; }
+tui_msg() { :; }
+SYSTUI_IOSKIT_AUTO_CONF="$T/auto.conf"
+export SYSTUI_IOSKIT_AUTO_CONF
+ios_aot_configure || exit 1
+for pair in "IOSKIT_AOT_DIR=$T/ws" "IOSKIT_AOT_ROOT=$T/ws/root" \
+            "IOSKIT_AOT_RECORDINGS_DIR=$T/ws/rec" "IOSKIT_AOT_OUTPUT_DIR=$T/ws/out" \
+            "IOSKIT_AOT_GADGET_DIR=$T/ws/gad" "IOSKIT_AOT_RECORDER_DIR=$T/ws/recb" \
+            "IOSKIT_AOT_EVIDENCE_DIR=$T/ws/ev"; do
+    grep -Fx -- "$pair" "$SYSTUI_IOSKIT_AUTO_CONF" >/dev/null || { echo "not saved: $pair" >&2; exit 1; }
+done
+[ "$IOSKIT_AOT_OUTPUT_DIR" = "$T/ws/out" ] || { echo 'live variable not updated' >&2; exit 1; }
+PROBE
+REPO=$(pwd) bash "$T/paths-probe.sh" "$T" || fail 'AOT paths are not saved individually'
+echo 'AOT path persistence tests passed'
+
+# --- artifact adoption: a target that ignores its output variable -----------
+# Some upstream targets write to $SRC/<target> regardless of the variable the
+# pipeline passes. The build must adopt that binary instead of reporting a
+# missing artifact.
+SRC=$T/adopt-src; WANT=$T/adopt-want; mkdir -p "$SRC/build-arm64-native" "$WANT"
+: > "$SRC/build-arm64-native/ish"; chmod +x "$SRC/build-arm64-native/ish"
+ios_aot_adopt_artifact "$WANT" "$SRC/build-arm64-native" || fail 'artifact was not adopted'
+[ -x "$WANT/ish" ] || fail 'adopted artifact missing'
+: > "$WANT/ish"; chmod +x "$WANT/ish"
+ios_aot_adopt_artifact "$WANT" "$SRC/build-arm64-native" || fail 'existing artifact rejected'
+[ "$(stat -c %i "$WANT/ish")" = "$(stat -c %i "$WANT/ish")" ] || fail 'existing artifact replaced'
+rm -f "$SRC/build-arm64-native/ish"
+ios_aot_adopt_artifact "$T/nowhere" "$SRC/build-arm64-native" && fail 'missing build accepted'
+echo 'AOT artifact adoption tests passed'
