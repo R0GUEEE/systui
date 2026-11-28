@@ -242,8 +242,8 @@ if ! link_rebuild; then
         echo 'rebuild over an existing directory was refused' >&2
         echo "  out=$IOSKIT_AOT_OUTPUT_DIR exists=$([ -d "$IOSKIT_AOT_OUTPUT_DIR" ] && echo yes || echo no)" >&2
         ls -la "${IOSKIT_AOT_OUTPUT_DIR%/*}" 2>&1 | head -10 >&2
-        echo "  ios_aot_link source:" >&2
-        declare -f ios_aot_link >&2
+        echo "  guards: ready=$(ios_aot_ready >/dev/null 2>&1; echo $?) images=$(ios_aot_images >/dev/null 2>&1; echo $?) target=$(ios_aot_require_target build-arm64-linux >/dev/null 2>&1; echo $?) path=$(ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR" >/dev/null 2>&1; echo $?)" >&2
+        ls -A "$IOSKIT_AOT_RECORDINGS_DIR" 2>&1 | tr '\n' ' ' >&2; echo >&2
         echo "  tui_yesno stub: $(declare -f tui_yesno)" >&2
         IOSKIT_AOT_OUTPUT_DIR="${IOSKIT_AOT_OUTPUT_DIR:-}" IOSKIT_AOT_RECORDINGS_DIR="${IOSKIT_AOT_RECORDINGS_DIR:-}" bash -x -c '
             . "$1/src/features/117-ios-linuxkit-aot-utility.sh"
