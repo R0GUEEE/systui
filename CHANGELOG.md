@@ -7,6 +7,28 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 
 ## 1.3.0 — 2026-11-27
 
+### Guest rootfs import (Rootfs → iSH-AOK → iOS-linuxkit → Guest root filesystems)
+
+- **"Download and import the pinned Alpine rootfs" no longer hangs at 100%.**
+  The fetcher had no timeouts, so a server or proxy that stopped sending left
+  `curl` waiting indefinitely with the progress bar already complete.
+  Transfers now cap the connect phase (`--connect-timeout 20`), abandon a
+  transfer that stops moving (`--speed-time`, `--speed-limit`), and have an
+  absolute ceiling (`--max-time 1800`); all three are adjustable through
+  `SYSTUI_IOSKIT_*` environment variables. `wget` gets the equivalent read
+  timeout.
+- **A re-run reuses the verified archive** instead of downloading again, and
+  prints which archive it is using. A mismatched archive is fetched again.
+- **Imports are atomic.** `fakefsify` now writes into a staging directory that
+  is renamed into place only after it looks like a rootfs. A failed or
+  interrupted import leaves no half-image (which previously *looked* installed,
+  because any directory with `data/` or `bin/` counted), and replacing an
+  existing image restores the previous one if the new import fails.
+- **Both `fakefsify` argument shapes work.** The iSH-AOK build takes a flags
+  directory first (`<flags dir> <tarball> <output> <flags…>`); the upstream
+  tool takes `<tarball> <output>`. The importer asks the binary's usage line
+  rather than guessing, and removes the flags directory afterwards.
+
 ### Ahead-of-time JIT (Rootfs → Ahead-of-time JIT)
 
 - **`Configure paths` saved the wrong values.** The save loop iterated the

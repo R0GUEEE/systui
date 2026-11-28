@@ -863,11 +863,27 @@ systui_ioskit_sha256() { # <file> -> hash
 # Download with the first available fetcher. curl and wget both follow
 # redirects and fail on an HTTP error, so a partial file can never be treated as
 # a successful download.
+# Timeouts are not optional here. A stalled transfer shows a complete-looking
+# progress bar and then waits forever without them, which is exactly what the
+# pinned Alpine import did. --speed-limit/--speed-time abandon a transfer that
+# has stopped moving; --max-time caps the whole request.
+SYSTUI_IOSKIT_CONNECT_TIMEOUT="${SYSTUI_IOSKIT_CONNECT_TIMEOUT:-20}"
+SYSTUI_IOSKIT_STALL_SECONDS="${SYSTUI_IOSKIT_STALL_SECONDS:-60}"
+SYSTUI_IOSKIT_STALL_BYTES="${SYSTUI_IOSKIT_STALL_BYTES:-1024}"
+SYSTUI_IOSKIT_MAX_SECONDS="${SYSTUI_IOSKIT_MAX_SECONDS:-1800}"
+
 systui_ioskit_fetch() { # <url> <dest>
     if systui_ioskit_have curl; then
-        curl -fL --progress-bar -o "$2" "$1"
+        curl -fL --progress-bar \
+            --connect-timeout "$SYSTUI_IOSKIT_CONNECT_TIMEOUT" \
+            --speed-limit "$SYSTUI_IOSKIT_STALL_BYTES" \
+            --speed-time "$SYSTUI_IOSKIT_STALL_SECONDS" \
+            --max-time "$SYSTUI_IOSKIT_MAX_SECONDS" \
+            --retry 2 --retry-delay 2 \
+            -o "$2" "$1"
     elif systui_ioskit_have wget; then
-        wget -O "$2" "$1"
+        # wget's -T is a per-read timeout, which covers a stalled socket.
+        wget -T "$SYSTUI_IOSKIT_STALL_SECONDS" -O "$2" "$1"
     else
         return 127
     fi
@@ -1084,7 +1100,7 @@ EOF
 
 # Import one already-downloaded tarball into the images directory.
 systui_ioskit_import_tarball() { # <tarball> <image-name>
-    local tarball="$1" name="$2" dest fakefsify
+    local tarball="$1" name="$2" dest fakefsify stage backup proxy=0
     if ! systui_ioskit_image_name_ok "$name"; then
         tui_msg "Import" "Invalid image name: $name"
         return 1
@@ -1094,6 +1110,14 @@ systui_ioskit_import_tarball() { # <tarball> <image-name>
         tui_msg "Import" "fakefsify is not built.\n\nIt is produced by the build in tools/fakefsify. Run Build first, then import."
         return 1
     fi
+    # The iSH-AOK brand of the tool takes a directory of output flags instead
+    # of an image path: "<flags dir> <tarball> <output> <flags>...". Asking the
+    # binary is the only reliable test; guessing from the name is not.
+    # The usage line puts the flags directory first ("<flags dir> <tarball>
+    # <output>"); the upstream tool is "<tarball> <output>" with no flags dir.
+    case "$("$fakefsify" --help 2>&1 | head -n 20)" in
+        *"<flags dir>"*|*"<flagsdir>"*|*"flags dir>"*) proxy=1 ;;
+    esac
     if [ -z "${IOSKIT_IMAGES_DIR:-}" ]; then
         tui_msg "Import" "The images directory is not configured; refusing to write anything."
         return 1
@@ -1101,24 +1125,57 @@ systui_ioskit_import_tarball() { # <tarball> <image-name>
     dest="$IOSKIT_IMAGES_DIR/$name"
     if [ -e "$dest" ]; then
         tui_yesno "Import" "Already exists:\n$dest\n\nReplace it?" || return 0
-        rm -rf -- "${IOSKIT_IMAGES_DIR:?}/$name"
     fi
     mkdir -p "$IOSKIT_IMAGES_DIR" 2>/dev/null || true
-    run_cmd "Import rootfs into $name" "$fakefsify" "$tarball" "$dest" || return 1
-    systui_ioskit_cache_invalidate
-    if systui_ioskit_image_valid "$dest"; then
-        if [ -z "$IOSKIT_DEFAULT_IMAGE" ]; then
-            systui_ioskit_conf_set IOSKIT_DEFAULT_IMAGE "$name" >/dev/null 2>&1 || true
+    # Unpack beside the destination and swap at the end: an interrupted or
+    # failed fakefsify must not leave a half-image that looks installed, and it
+    # must not destroy a working image that was already there.
+    stage="$IOSKIT_IMAGES_DIR/.import-$name.$$"
+    backup="$IOSKIT_IMAGES_DIR/.old-$name.$$"
+    rm -rf -- "$stage" "$backup"
+    if [ "$proxy" = 1 ]; then
+        flags="$stage.flags"
+        mkdir -p "$flags" || { tui_msg "Import" "Could not create $flags"; return 1; }
+        rm -f -- "$stage"
+        # A failing proxy must be reported the same way as a failing importer.
+        if ! run_cmd "Import rootfs into $name" "$fakefsify" "$tarball" "$stage" "$flags"; then
+            rm -rf -- "$flags" "$stage"
+            tui_msg "Import" "fakefsify did not complete; nothing was installed and any existing image was left untouched.\
+\
+Check ${LOGFILE:-the systui log}."
+            return 1
         fi
-        tui_msg "Import" "Imported:\n$dest"
-    else
-        tui_msg "Import" "fakefsify finished, but $dest does not look like a root filesystem.\n\nCheck the tool output in ${LOGFILE:-the systui log}."
+        rm -rf -- "$flags"
+    elif ! run_cmd "Import rootfs into $name" "$fakefsify" "$tarball" "$stage"; then
+        rm -rf -- "$stage"
+        tui_msg "Import" "fakefsify did not complete; nothing was installed and any existing image was left untouched.\n\nCheck ${LOGFILE:-the systui log}."
+        return 1
     fi
+    if ! systui_ioskit_image_valid "$stage"; then
+        rm -rf -- "$stage"
+        tui_msg "Import" "fakefsify finished, but the result does not look like a root filesystem.\n\nThe staged copy was removed; any existing image was left untouched. See ${LOGFILE:-the systui log}."
+        return 1
+    fi
+    if [ -e "$dest" ]; then
+        mv -- "$dest" "$backup" || { rm -rf -- "$stage"; tui_msg "Import" "Could not move the existing image aside."; return 1; }
+    fi
+    if ! mv -- "$stage" "$dest"; then
+        [ -e "$backup" ] && mv -- "$backup" "$dest"
+        rm -rf -- "$stage"
+        tui_msg "Import" "Could not install the imported image; the previous one was restored."
+        return 1
+    fi
+    rm -rf -- "$backup"
+    systui_ioskit_cache_invalidate
+    if [ -z "$IOSKIT_DEFAULT_IMAGE" ]; then
+        systui_ioskit_conf_set IOSKIT_DEFAULT_IMAGE "$name" >/dev/null 2>&1 || true
+    fi
+    tui_msg "Import" "Imported:\n$dest"
     return 0
 }
 
 systui_ioskit_download_pinned() {
-    local pin url sha name dl existing
+    local pin url sha name dl existing arch
     pin=$(systui_ioskit_rootfs_pin)
     url=${pin%% *}
     sha=${pin#* }
@@ -1127,16 +1184,20 @@ systui_ioskit_download_pinned() {
     name=${name%.tar.gz}
     [ -n "$name" ] || name="rootfs"
 
-    tui_yesno "Download rootfs" "Source: $(systui_ioskit_rootfs_pin_source)\n\nURL:\n$url\n\nSHA-256:\n$sha\n\nDownload to $IOSKIT_DOWNLOAD_DIR and import as:\n$name" || return 0
+    tui_yesno "Download rootfs" "Source: $(systui_ioskit_rootfs_pin_source)\n\nURL:\n$url\n\nSHA-256:\n$sha\n\nArchive: $IOSKIT_DOWNLOAD_DIR/${url##*/}\nImport as: $name\n\nA stalled transfer is abandoned after ${SYSTUI_IOSKIT_STALL_SECONDS}s without data, so this cannot hang at 100%." || return 0
 
     mkdir -p "$IOSKIT_DOWNLOAD_DIR" 2>/dev/null || true
     dl="$IOSKIT_DOWNLOAD_DIR/${url##*/}"
 
+    # Re-running after an interrupted import must not download again: a
+    # complete archive is kept next to the images and verified on every use.
     existing=''
     [ -f "$dl" ] && existing=$(systui_ioskit_sha256 "$dl" || true)
-    if [ "$existing" = "$sha" ]; then
-        tui_msg "Download rootfs" "Already downloaded and verified:\n$dl"
+    if [ "$existing" = "$sha" ] && [ -n "$sha" ]; then
+        printf 'Download: %s already present and verified\n' "$dl"
     else
+        [ -n "$existing" ] && [ "$existing" != "$sha" ] &&
+            printf 'Download: existing archive does not match the pin; fetching again\n'
         if ! systui_ioskit_have curl && ! systui_ioskit_have wget; then
             tui_msg "Download rootfs" "Neither curl nor wget is installed.\n\nInstall one, or download the archive yourself and use \"Import a local rootfs tarball\":\n\n$url"
             return 1
@@ -1148,7 +1209,6 @@ systui_ioskit_download_pinned() {
         tui_msg "Download rootfs" "tar is not installed; cannot inspect the archive.\n\nArchive: $dl"
         return 1
     fi
-    local arch
     arch=$(systui_ioskit_archive_arch "$dl")
     if [ "$arch" != aarch64 ]; then
         tui_yesno "Download rootfs" "The archive architecture reported as \"$arch\", not aarch64.\n\nios-linuxkit runs ARM64 guests only. Import it anyway?" || return 0
