@@ -885,6 +885,20 @@ systui_ioskit_file_size() { # <path>
     fi
 }
 
+# Size the server reports for <url>, or nothing when it does not say.
+systui_ioskit_remote_size() { # <url>
+    local out
+    if systui_ioskit_have curl; then
+        out=$(curl -fsIL --connect-timeout "$SYSTUI_IOSKIT_CONNECT_TIMEOUT" "$1" 2>/dev/null |
+            tr -d '\r' | awk 'tolower($1) == "content-length:" { size = $2 } END { print size }')
+    elif systui_ioskit_have wget; then
+        out=$(wget -S --spider -T "$SYSTUI_IOSKIT_STALL_SECONDS" "$1" 2>&1 |
+            awk 'tolower($1) == "content-length:" { size = $2 } END { print size }')
+    fi
+    case "$out" in ''|*[!0-9]*) return 0 ;; esac
+    printf '%s\n' "$out"
+}
+
 # One transfer attempt. Resumes when the partial file is already there.
 systui_ioskit_fetch_once() { # <url> <dest>
     local url="$1" dest="$2" before
@@ -911,24 +925,45 @@ systui_ioskit_fetch_once() { # <url> <dest>
     fi
 }
 
+# Compare what was downloaded with what the server said it would send.
+# Returns 0 when the file is complete, 1 when it is short, 2 when the server
+# did not say (no Content-Length, which is legal).
+systui_ioskit_size_ok() { # <path> <expected-bytes>
+    local have="$1" want="$2"
+    [ -n "$want" ] && [ "$want" -gt 0 ] 2>/dev/null || return 2
+    [ "$have" -ge "$want" ] && return 0
+    return 1
+}
+
 # Fetch with retries. Prints its progress so a slow transfer in a capture
 # window does not look like a hang, and reports how many bytes it has each
 # attempt.
 systui_ioskit_fetch() { # <url> <dest>
-    local url="$1" dest="$2" attempt=1 rc size
+    local url="$1" dest="$2" attempt=1 rc size before want
     if ! systui_ioskit_have curl && ! systui_ioskit_have wget; then
         return 127
     fi
+    # What the server says the full file weighs. Unknown is fine (chunked or
+    # a proxy that hides it); it only decides the "already complete" check.
+    want=$(systui_ioskit_remote_size "$url" 2>/dev/null || true)
     while :; do
         size=$(systui_ioskit_file_size "$dest")
-        printf 'Download attempt %s/%s: %s bytes on disk\n' "$attempt" \
-            "$SYSTUI_IOSKIT_ATTEMPTS" "$size"
+        # A file that already holds every byte must not be fetched again: a
+        # resume against a complete file is a 416 and looks like a failure on
+        # every attempt, forever.
+        if systui_ioskit_size_ok "$size" "$want"; then
+            printf 'Already complete: %s bytes at %s\n' "$size" "$dest"
+            return 0
+        fi
+        printf 'Download attempt %s/%s: %s bytes on disk%s\n' "$attempt" \
+            "$SYSTUI_IOSKIT_ATTEMPTS" "$size" \
+            "$( [ -n "$want" ] && printf ' of %s' "$want" )"
+        before=$size
         systui_ioskit_fetch_once "$url" "$dest"
         rc=$?
         # curl reports success when the server closes cleanly, even if the file
-        # is short. With a resume offset and a known total, a transfer that made
-        # no progress is not a success.
-        if [ "$rc" -eq 0 ] && [ "$(systui_ioskit_file_size "$dest")" -le "$size" ] && [ "$size" -gt 0 ]; then
+        # is short. Judge by bytes, not by exit status alone.
+        if [ "$rc" -eq 0 ] && [ "$(systui_ioskit_file_size "$dest")" -le "$before" ] && [ "$size" -gt 0 ]; then
             rc=1
         fi
         [ "$rc" -eq 0 ] && return 0

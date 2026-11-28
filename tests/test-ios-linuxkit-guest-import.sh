@@ -61,6 +61,8 @@ check "fetch abandons a stalled transfer" contains "$fetch_body" "--speed-time"
 # restart from zero. A transfer is bounded by progress and retried instead.
 check "fetch resumes instead of restarting" contains "$fetch_body" "-C -"
 check "fetch retries a failed transfer" contains "$fetch_body" "SYSTUI_IOSKIT_ATTEMPTS"
+check "fetch checks the size the server promised" contains "$fetch_body" "systui_ioskit_size_ok"
+check "a complete file is not fetched again" contains "$fetch_body" "Already complete"
 not_contains() { case "$1" in *"$2"*) printf '    unexpected: %s\n' "$2"; return 1 ;; *) return 0 ;; esac; }
 check "fetch no longer caps the whole transfer" not_contains "$fetch_body" "--max-time"
 
