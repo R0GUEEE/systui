@@ -7,7 +7,6 @@ rootfs.sh
 sysconfig.sh
 ultimate-provision.sh
 zz-rootfs-distro-managers.sh
-zz-rootfs-distro-manager-multiselect.sh
 zzz-bedrock-aok.sh
 zzzz-bedrock-aok-menu-fixes.sh
 zzzzz-bedrock-aok-ui-fixes.sh
@@ -33,7 +32,6 @@ zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-extra-web-images.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-oci-sources.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-download-location-final.sh
 zzzzzzzzzzzzzzzzzzzzzzzz-local-files.sh
-zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh
 zzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-workbench-manage.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzz-common-openssh.sh
 zzzzzzzzzzzzzzzzzzzzzzzzzzz-rootfs-ish-engines.sh

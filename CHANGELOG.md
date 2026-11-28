@@ -7,6 +7,28 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 
 ## 1.3.0 — 2026-11-27
 
+### Repository cleanup
+
+- Removed `tools/rewrite-function-aliases.py`: it was a one-off migration that
+  rewrote `eval "$(declare -f fn | sed …)"` into parameter expansion. No such
+  call site is left, and nothing referenced the script.
+- Removed a committed `__pycache__/*.pyc` build artifact and added a
+  `.gitignore` (`__pycache__/`, `*.pyc`, `build/`, `dist/`, `*.ipa`, `*.log`,
+  `Payload/`, `.DS_Store`).
+- Merged `FEATURE-MAP.md` into `IOS-APP.md` as a "Where the app ends and systui
+  begins" section — the two documents described the same boundary from two
+  angles and only linked to each other.
+- Deleted two feature modules whose every definition was already superseded by
+  a later module in `.load-order`:
+  `zz-rootfs-distro-manager-multiselect.sh` (its bulk installer and menu are
+  provided by `zzzzzzzzzzzzzz-multi-install-optimizer.sh` and
+  `zzz-rootfs-distro-managers-extended.sh`) and
+  `zzzzzzzzzzzzzzzzzzzzzzzzz-provision-direct.sh` (its
+  `menu_ultimate_provision` was replaced by the final provision module, and the
+  `export -f` it carried is scrubbed by the loader on iSH anyway). The
+  multiselect test went with it; the live behaviour stays covered by
+  `tests/test-multi-install-optimizer.sh`.
+
 ### Dependencies
 
 - **`docs/DEPENDENCIES.md` is generated from `share/systui-deps.tsv`** and
