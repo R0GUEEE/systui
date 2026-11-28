@@ -180,6 +180,7 @@ echo 'AOT artifact adoption tests passed'
 # Loaded fresh in a child so the stubs above cannot interfere.
 cat > "$T/harden-probe.sh" <<'PROBE'
 set -eu
+trap 'echo "FAIL at line $LINENO: $BASH_COMMAND" >&2' ERR
 . "$REPO/src/features/117-ios-linuxkit-aot-utility.sh"
 T=$1
 export SYSTUI_TMP="$T/tmp" IOSKIT_SRC_DIR="$T/src"
