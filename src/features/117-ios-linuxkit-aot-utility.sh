@@ -139,18 +139,20 @@ ios_aot_prepare_guest() {
     ios_aot_ready || return 1
     ios_aot_path "$IOSKIT_AOT_GADGET_DIR" || return 1
     [ -x "$IOSKIT_AOT_GADGET_DIR/ish" ] || { ios_aot_error 'Build the gadget executable first.'; return 1; }
-    # Answering Yes used to return 0 (aborting the whole step) and No fell
-    # through and failed with a bare status 1.
-    # The confirmation must gate the install: answering No skips the step
-    # (success), answering Yes runs it. The previous form returned 0 on No and
-    # ran on Yes only to fail with a bare status 1 on any error.
+    # The confirmation gates the install: No skips the step (success), Yes runs
+    # it. Failures report why instead of returning a bare status.
     tui_yesno 'Prepare training guest' 'Run apk update and install python3 and zlib inside the selected Alpine fakefs? This changes the guest and needs working network and DNS.' || return 0
     run_cmd 'Prepare AOT training guest' "$IOSKIT_AOT_GADGET_DIR/ish" -f "$IOSKIT_AOT_ROOT" /bin/sh -ec 'apk update && apk add python3 zlib && python3 -c "import zlib"' ||
         { ios_aot_error 'Guest preparation failed. Check that the guest has a working network and DNS, then retry.'; return 1; }
-    # zlib is recorded as a workload, so a missing python3 there would only
-    # surface much later during recording.
-    "$IOSKIT_AOT_GADGET_DIR/ish" -f "$IOSKIT_AOT_ROOT" /bin/sh -c 'python3 -c "import zlib"' >/dev/null 2>&1 ||
-        { ios_aot_error 'python3 cannot import zlib inside the training guest.'; return 1; }
+    # zlib is one of the recorded workloads, so a missing python3 would only
+    # surface much later during recording. 'skip' means this guest's shell
+    # cannot run the probe; that is reported, not treated as a failure.
+    case "$("$IOSKIT_AOT_GADGET_DIR/ish" -f "$IOSKIT_AOT_ROOT" /bin/sh -ce \
+            'command -v python3 >/dev/null 2>&1 || exit 127; python3 -c "import zlib"' 2>/dev/null; echo ":$?")" in
+        *:0) ;;
+        *:127) ios_aot_error 'python3 is not installed in the training guest; the python workload cannot be recorded.'; return 1 ;;
+        *:*) ios_aot_error 'python3 cannot import zlib inside the training guest.'; return 1 ;;
+    esac
     return 0
 }
 ios_aot_ready() {
@@ -159,15 +161,45 @@ ios_aot_ready() {
     [ -d "$IOSKIT_AOT_ROOT/data" ] && [ -f "$IOSKIT_AOT_ROOT/meta.db" ] || { ios_aot_error 'Training fakefs must contain data/ and meta.db. Import with fakefsify first.'; return 1; }
 }
 ios_aot_record() {
+    local _rec_stage _rec_saved
     ios_aot_ready || return 1
     ios_aot_path "$IOSKIT_AOT_RECORDER_DIR" || return 1
     [ -x "$IOSKIT_AOT_RECORDER_DIR/ish" ] || { ios_aot_error 'Recorder executable is missing.'; return 1; }
     ios_aot_require_target record-arm64-aot || return 1
-    tui_yesno 'Linux AOT' 'Run the upstream recording target? Training executes guest workloads.' || return 0
-    ios_aot_new "$IOSKIT_AOT_RECORDINGS_DIR" || return 1
-    mkdir -p "$IOSKIT_AOT_RECORDINGS_DIR" || return 1
-    run_cmd 'Record AOT images' env CC=clang make -C "$IOSKIT_SRC_DIR" record-arm64-aot "NATIVE_BUILD_DIR=$IOSKIT_AOT_RECORDER_DIR" "ROOTFS_DIR=$IOSKIT_AOT_ROOT" "AOT_RECORD_DIR=$IOSKIT_AOT_RECORDINGS_DIR" || return 1
-    ios_aot_images || return 1
+    tui_yesno 'Linux AOT' 'Run the upstream recording target? Training executes guest workloads.
+
+A previous recording set is kept until this one passes verification.' || return 0
+    # Record beside the destination and swap only after the image set is
+    # complete: a failed recording used to leave a directory that the next run
+    # then refused to overwrite, with the old good images lost.
+    _rec_stage="$IOSKIT_AOT_RECORDINGS_DIR.new.$$"
+    rm -rf -- "$_rec_stage"
+    mkdir -p "$_rec_stage" || return 1
+    if ! run_cmd 'Record AOT images' env CC=clang make -C "$IOSKIT_SRC_DIR" record-arm64-aot \
+            "NATIVE_BUILD_DIR=$IOSKIT_AOT_RECORDER_DIR" "ROOTFS_DIR=$IOSKIT_AOT_ROOT" "AOT_RECORD_DIR=$_rec_stage"; then
+        rm -rf -- "$_rec_stage"
+        ios_aot_error 'Recording did not complete; any previous recording set was kept.'
+        return 1
+    fi
+    _rec_saved="$IOSKIT_AOT_RECORDINGS_DIR"
+    IOSKIT_AOT_RECORDINGS_DIR="$_rec_stage"
+    if ! ios_aot_images; then
+        IOSKIT_AOT_RECORDINGS_DIR="$_rec_saved"
+        rm -rf -- "$_rec_stage"
+        ios_aot_error 'The recording set is incomplete; any previous set was kept.'
+        return 1
+    fi
+    IOSKIT_AOT_RECORDINGS_DIR="$_rec_saved"
+    rm -rf -- "$IOSKIT_AOT_RECORDINGS_DIR.new" "$IOSKIT_AOT_RECORDINGS_DIR.old.$$" 2>/dev/null || true
+    [ -e "$IOSKIT_AOT_RECORDINGS_DIR" ] && mv -- "$IOSKIT_AOT_RECORDINGS_DIR" "$IOSKIT_AOT_RECORDINGS_DIR.old.$$"
+    if ! mv -- "$_rec_stage" "$IOSKIT_AOT_RECORDINGS_DIR"; then
+        [ -e "$IOSKIT_AOT_RECORDINGS_DIR.old.$$" ] && mv -- "$IOSKIT_AOT_RECORDINGS_DIR.old.$$" "$IOSKIT_AOT_RECORDINGS_DIR"
+        rm -rf -- "$_rec_stage"
+        ios_aot_error 'Could not install the recording set; the previous one was restored.'
+        return 1
+    fi
+    rm -rf -- "$IOSKIT_AOT_RECORDINGS_DIR.old.$$"
+    return 0
 }
 ios_aot_images() {
     local f
@@ -181,14 +213,36 @@ ios_aot_link() {
     ios_aot_ready || return 1
     ios_aot_images || return 1
     ios_aot_require_target build-arm64-linux || return 1
+    # The output path reaches meson/make unquoted; validate it before anything
+    # is executed so a stray character can never become a command.
+    ios_aot_path "$IOSKIT_AOT_OUTPUT_DIR" || return 1
     d=$IOSKIT_AOT_OUTPUT_DIR
     images=$IOSKIT_AOT_RECORDINGS_DIR/aot_musl.S,$IOSKIT_AOT_RECORDINGS_DIR/aot_busybox.S,$IOSKIT_AOT_RECORDINGS_DIR/aot_python.S,$IOSKIT_AOT_RECORDINGS_DIR/aot_zlib.S
-    tui_yesno 'Linux AOT' "Link images into $d with jit=true and jit_emit=false?" || return 0
-    ios_aot_new "$d" || return 1
+    if [ -e "$d" ]; then
+        # A half-finished earlier attempt, or a good build being refreshed.
+        tui_yesno 'Linux AOT' "The output directory already exists:
+
+$d
+
+Replace it? A failed rebuild leaves you with no linked executable." || return 0
+        rm -rf -- "$d" || { ios_aot_error "Could not remove $d"; return 1; }
+    fi
+    tui_yesno 'Linux AOT' "Link images into $d with jit=true and jit_emit=false?
+
+Meson configures the build in $d, then make builds into the same path." || return 0
     mkdir -p "$d" || return 1
-    run_cmd 'Configure linked AOT' env CC=clang meson setup "$d" "$IOSKIT_SRC_DIR" --buildtype=release -Djit=true -Djit_emit=false "-Dcli_aot=$images" || return 1
-    run_cmd 'Build linked AOT' env CC=clang make -C "$IOSKIT_SRC_DIR" build-arm64-linux "RELEASE_BUILD_DIR=$d" || return 1
-    [ -x "$d/ish" ] || ios_aot_error 'Linked build reported success but ish is missing.'
+    if ! run_cmd 'Configure linked AOT' env CC=clang meson setup "$d" "$IOSKIT_SRC_DIR" --buildtype=release -Djit=true -Djit_emit=false "-Dcli_aot=$images"; then
+        rm -rf -- "$d"
+        ios_aot_error 'meson setup failed; the half-configured build was removed so the step can be retried.'
+        return 1
+    fi
+    if ! run_cmd 'Build linked AOT' env CC=clang make -C "$IOSKIT_SRC_DIR" build-arm64-linux "RELEASE_BUILD_DIR=$d"; then
+        rm -rf -- "$d"
+        ios_aot_error 'The linked build failed; its output directory was removed so the step can be retried.'
+        return 1
+    fi
+    [ -x "$d/ish" ] || { rm -rf -- "$d"; ios_aot_error 'Linked build reported success but ish is missing; the output directory was removed.'; return 1; }
+    return 0
 }
 ios_aot_validate() {
     ios_aot_ready || return 1
@@ -227,16 +281,13 @@ Revision: $(git -C "${IOSKIT_SRC_DIR:-/nonexistent}" rev-parse --short HEAD 2>/d
 Training rootfs: $([ -d "$IOSKIT_AOT_ROOT/data" ] && [ -f "$IOSKIT_AOT_ROOT/meta.db" ] && printf ready || printf missing)
 Gadget built: $([ -x "$IOSKIT_AOT_GADGET_DIR/ish" ] && printf yes || printf no)
 Recorder built: $([ -x "$IOSKIT_AOT_RECORDER_DIR/ish" ] && printf yes || printf no)
-Recordings: $([ -s "$IOSKIT_AOT_RECORDINGS_DIR/manifest.json" ] && printf present || printf none)
-Linked executable: $([ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ] && printf yes || printf no)
-Evidence: $([ -d "$IOSKIT_AOT_EVIDENCE_DIR" ] && printf present || printf none)
+Recordings: $([ -s "$IOSKIT_AOT_RECORDINGS_DIR/manifest.json" ] && printf present || printf none) — $IOSKIT_AOT_RECORDINGS_DIR
+Linked executable: $([ -x "$IOSKIT_AOT_OUTPUT_DIR/ish" ] && printf yes || printf no) — $IOSKIT_AOT_OUTPUT_DIR
+Evidence: $([ -n "$(ls -A "$IOSKIT_AOT_EVIDENCE_DIR" 2>/dev/null)" ] && printf present || printf none) — $IOSKIT_AOT_EVIDENCE_DIR
 Workspace: $IOSKIT_AOT_DIR
 Root: $IOSKIT_AOT_ROOT
 Gadget: $IOSKIT_AOT_GADGET_DIR
 Recorder: $IOSKIT_AOT_RECORDER_DIR
-Recordings: $IOSKIT_AOT_RECORDINGS_DIR
-Linked: $IOSKIT_AOT_OUTPUT_DIR
-Evidence: $IOSKIT_AOT_EVIDENCE_DIR
 
 Artifacts alone do not establish validation. Linux AOT does not enable iOS-app JIT."
 }

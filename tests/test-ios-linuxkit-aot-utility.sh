@@ -20,24 +20,32 @@ mkdir -p "$IOSKIT_AOT_ROOT/data" "$IOSKIT_AOT_RECORDER_DIR" "$IOSKIT_AOT_RECORDI
 for f in manifest.json workload.sh aot_musl.S aot_busybox.S aot_python.S aot_zlib.S; do echo x > "$IOSKIT_AOT_RECORDINGS_DIR/$f"; done
 run_cmd() { printf '%s\n' "$@" >> "$T/args"; return "${MOCK_RC:-0}"; }
 fail() { echo "FAIL: $*" >&2; exit 1; }
-ios_aot_record && fail 'existing recordings accepted'
-[ ! -f "$T/args" ] || fail 'record command ran on existing output'
+# Record now stages beside the destination, so it may run with existing
+# recordings; what must never happen is a silent success on a failed run.
+MOCK_RC=1 ios_aot_record && fail 'failed recording reported success'
+unset MOCK_RC
+[ "$(head -1 "$IOSKIT_AOT_RECORDINGS_DIR/manifest.json")" = x ] || fail 'previous recordings were lost'
+[ -z "$(ls -d "$IOSKIT_AOT_RECORDINGS_DIR".new.* 2>/dev/null)" ] || fail 'recording staging directory left behind'
 ios_aot_link && fail 'missing linked binary accepted'
 [ -f "$T/args" ] || fail 'link not invoked'
 grep -Fx -- "-Dcli_aot=$IOSKIT_AOT_RECORDINGS_DIR/aot_musl.S,$IOSKIT_AOT_RECORDINGS_DIR/aot_busybox.S,$IOSKIT_AOT_RECORDINGS_DIR/aot_python.S,$IOSKIT_AOT_RECORDINGS_DIR/aot_zlib.S" "$T/args" >/dev/null || fail 'image argument changed'
 # Unsafe make/Meson path is rejected before any command can interpret it.
 rm -f "$T/args"
-old=$IOSKIT_AOT_OUTPUT_DIR; IOSKIT_AOT_OUTPUT_DIR="$T/evil;touch $T/pwn"
+# A path the build system cannot safely quote is rejected before anything runs.
+old=$IOSKIT_AOT_OUTPUT_DIR; IOSKIT_AOT_OUTPUT_DIR="$T/evil;touch $T/pwn"; : > "$T/args"
 ios_aot_link && fail 'unsafe path accepted'
-[ ! -e "$T/pwn" ] && [ ! -e "$T/args" ] || fail 'unsafe command executed'
+[ ! -e "$T/pwn" ] || fail 'unsafe path was executed'
+[ ! -s "$T/args" ] || fail 'a command ran with an unsafe path'
 IOSKIT_AOT_OUTPUT_DIR=$old
-mkdir -p "$IOSKIT_AOT_OUTPUT_DIR"
-ios_aot_link && fail 'existing output accepted'
-[ ! -e "$T/args" ] || fail 'command ran on existing output'
-rmdir "$IOSKIT_AOT_OUTPUT_DIR"
+# An existing output directory is now replaced deliberately (the confirm is
+# stubbed to yes); a failed rebuild must leave nothing behind, so the step can
+# be retried instead of dead-ending on "refusing to overwrite".
+mkdir -p "$IOSKIT_AOT_OUTPUT_DIR"; : > "$T/args"
 MOCK_RC=42; export MOCK_RC
 ios_aot_link && fail 'failed setup reported success'
 unset MOCK_RC
+[ ! -e "$IOSKIT_AOT_OUTPUT_DIR" ] || fail 'failed link left its output directory'
+mkdir -p "$IOSKIT_AOT_OUTPUT_DIR"; rmdir "$IOSKIT_AOT_OUTPUT_DIR"
 rm -f "$T/args" "$IOSKIT_AOT_RECORDINGS_DIR/aot_zlib.S"
 ios_aot_link && fail 'missing image accepted'
 [ ! -e "$T/args" ] || fail 'command ran with missing image'
@@ -161,3 +169,104 @@ ios_aot_adopt_artifact "$WANT" "$SRC/build-arm64-native" || fail 'existing artif
 rm -f "$SRC/build-arm64-native/ish"
 ios_aot_adopt_artifact "$T/nowhere" "$SRC/build-arm64-native" && fail 'missing build accepted'
 echo 'AOT artifact adoption tests passed'
+
+# --- hardening: retries, staging and guest probes ---------------------------
+# Loaded fresh in a child so the stubs above cannot interfere.
+cat > "$T/harden-probe.sh" <<'PROBE'
+set -eu
+. "$REPO/src/features/117-ios-linuxkit-aot-utility.sh"
+T=$1
+export SYSTUI_TMP="$T/tmp" IOSKIT_SRC_DIR="$T/src"
+mkdir -p "$SYSTUI_TMP" "$IOSKIT_SRC_DIR"
+# ios_aot_source refuses a checkout without a Makefile.
+printf 'build-arm64-linux:\nrecord-arm64-aot:\n' > "$IOSKIT_SRC_DIR/Makefile"
+systui_ioskit_repo_present() { return 0; }
+systui_ioskit_gate_available() { return 0; }
+tui_msg() { :; }
+tui_yesno() { return 0; }
+log() { :; }
+ios_aot_defaults
+IOSKIT_AOT_ROOT="$T/root"; IOSKIT_AOT_RECORDINGS_DIR="$T/rec"; IOSKIT_AOT_OUTPUT_DIR="$T/out"
+IOSKIT_AOT_GADGET_DIR="$T/gad"; IOSKIT_AOT_RECORDER_DIR="$T/recdir"; IOSKIT_AOT_EVIDENCE_DIR="$T/ev"
+mkdir -p "$IOSKIT_AOT_ROOT/data" "$IOSKIT_AOT_RECORDINGS_DIR" "$IOSKIT_AOT_RECORDER_DIR"
+: > "$IOSKIT_AOT_ROOT/meta.db"
+printf '#!/bin/sh\nexit 0\n' > "$IOSKIT_AOT_RECORDER_DIR/ish"; chmod +x "$IOSKIT_AOT_RECORDER_DIR/ish"
+for f in manifest.json workload.sh aot_musl.S aot_busybox.S aot_python.S aot_zlib.S; do echo GOOD > "$IOSKIT_AOT_RECORDINGS_DIR/$f"; done
+
+# 1. A failed meson configuration must not leave the output directory, or the
+#    step can never be retried.
+link_fail() {
+    # run_cmd gets the description, then the command: never execute the real
+    # meson/make here, and fail at the configure step.
+    run_cmd() {
+        local desc=$1; shift
+        case "$desc" in "Configure linked AOT") return 1 ;; esac
+        return 0
+    }
+    ios_aot_link || return 0
+    return 1
+}
+link_fail || { echo 'link left a directory after a failed configure' >&2; exit 1; }
+[ ! -e "$IOSKIT_AOT_OUTPUT_DIR" ] || { echo 'output dir survived failed meson' >&2; exit 1; }
+
+# 2. Rebuilding over an existing output directory is allowed. run_cmd receives
+#    the description first, then the command: the artifact has to be created by
+#    the Build step, or the check afterwards rightly fails.
+link_rebuild() {
+    mkdir -p "$IOSKIT_AOT_OUTPUT_DIR"
+    run_cmd() {
+        local desc=$1; shift
+        if [ "$desc" = 'Build linked AOT' ]; then
+            printf '#!/bin/sh\n' > "$IOSKIT_AOT_OUTPUT_DIR/ish"
+            chmod +x "$IOSKIT_AOT_OUTPUT_DIR/ish"
+        fi
+        return 0
+    }
+    ios_aot_link
+}
+link_rebuild || { echo 'rebuild over an existing directory was refused' >&2; exit 1; }
+
+# 3. A failed recording keeps the previous set and leaves no staging directory.
+record_stub() { :; }
+record_fail() {
+    run_cmd() {
+        local d=$1; shift
+        case "$d" in *Record*) return 1 ;; *) return 0 ;; esac
+    }
+    ios_aot_record && return 1 || return 0
+}
+record_fail || { echo 'failed recording reported success' >&2; exit 1; }
+[ "$(head -1 "$IOSKIT_AOT_RECORDINGS_DIR/manifest.json")" = GOOD ] || { echo 'previous recordings lost' >&2; exit 1; }
+set -- "$T"/rec.new.*; [ ! -e "$1" ] || { echo 'staging directory left behind' >&2; exit 1; }
+
+# 4. A successful recording replaces the set atomically.
+record_ok() {
+    run_cmd() {
+        local desc=$1; shift
+        case "$desc" in
+            *Record*)
+                for a in "$@"; do case "$a" in AOT_RECORD_DIR=*) d=${a#*=} ;; esac; done
+                for f in manifest.json workload.sh aot_musl.S aot_busybox.S aot_python.S aot_zlib.S; do echo NEW > "$d/$f"; done
+                return 0 ;;
+        esac
+        return 0
+    }
+    ios_aot_record
+}
+record_ok || { echo 'valid recording rejected' >&2; exit 1; }
+[ "$(head -1 "$IOSKIT_AOT_RECORDINGS_DIR/manifest.json")" = NEW ] || { echo 'recording not swapped' >&2; exit 1; }
+
+# 5. Guest probes distinguish "no python3" from "no zlib", and pass otherwise.
+guest_probe() {
+    mkdir -p "$IOSKIT_AOT_GADGET_DIR"
+    printf '#!/bin/sh\n%s\n' "$1" > "$IOSKIT_AOT_GADGET_DIR/ish"; chmod +x "$IOSKIT_AOT_GADGET_DIR/ish"
+}
+guest_probe 'case "$*" in *"command -v python3"*) exit 127 ;; *) exit 0 ;; esac'
+ios_aot_prepare_guest >/dev/null 2>&1 && { echo 'missing python3 accepted' >&2; exit 1; }
+guest_probe 'case "$*" in *"python3 -c"*) exit 1 ;; *) exit 0 ;; esac'
+ios_aot_prepare_guest >/dev/null 2>&1 && { echo 'broken zlib accepted' >&2; exit 1; }
+guest_probe 'exit 0'
+ios_aot_prepare_guest || { echo 'healthy guest rejected' >&2; exit 1; }
+PROBE
+REPO=$(pwd) bash "$T/harden-probe.sh" "$T" || fail 'AOT hardening regressions'
+echo 'AOT hardening regressions passed'

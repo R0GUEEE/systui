@@ -7,6 +7,27 @@ All notable changes to systui. The version shown in the TUI, `install.sh
 
 ## 1.3.0 — 2026-11-27
 
+### Ahead-of-time JIT — deep-analysis fixes
+
+- **`Link AOT executable` dead-ended after one failure.** meson/make wrote
+  straight into the output directory, so a failed attempt left it behind and
+  the next attempt hit "Refusing to overwrite" with no way out. The step now
+  asks before replacing an existing build, and removes its own output when the
+  configure, build or artifact check fails, so it can always be retried.
+- **`Record images` could destroy a good recording set.** Recording now goes
+  into a staging directory that is swapped in only after all six artifacts
+  verify; a failed or incomplete run keeps the previous set and leaves no
+  staging directory behind.
+- **The linked output path is validated before anything runs.** It reaches
+  meson and make unquoted, and an unvalidated path containing `;` became a
+  command — now rejected up front with the same rules as every other AOT path.
+- **Guest preparation distinguishes its two failures.** "python3 is not
+  installed" and "python3 cannot import zlib" are reported separately (they
+  need different fixes), and the probe no longer depends on the shell
+  supporting `-ec` combined options.
+- **Status shows each artifact once**, with its path, instead of printing
+  "Recordings" and "Evidence" twice.
+
 ### Guest rootfs import (Rootfs → iSH-AOK → iOS-linuxkit → Guest root filesystems)
 
 - **"Download and import the pinned Alpine rootfs" no longer hangs at 100%.**
